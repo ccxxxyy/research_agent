@@ -19,6 +19,7 @@ The ReAct pattern runs the following loop:
 from __future__ import annotations
 
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.prebuilt import create_react_agent
 
 from research_agent.llm.provider import ModelRouter
@@ -47,6 +48,7 @@ def build_simple_agent(
     model_router: ModelRouter,
     tools: list[BaseTool] | None = None,
     prompt: str = SIMPLE_AGENT_PROMPT,
+    checkpointer: BaseCheckpointSaver | None = None,
 ):
     """Build a single ReAct-style agent with Function Calling enabled.
 
@@ -59,9 +61,21 @@ def build_simple_agent(
         model_router: Resolves the model for the "retriever" tier (light, fast).
         tools: Tools to expose. Defaults to :data:`DEFAULT_TOOLS`.
         prompt: System prompt that explains the toolbox to the LLM.
+        checkpointer: Optional LangGraph checkpointer. When supplied, the
+            agent supports multi-turn conversations keyed by ``thread_id``
+            and can resume from the last persisted step after a process
+            restart. Without it, every invocation starts fresh.
 
     Returns:
         A compiled LangGraph app that can be invoked with ``ainvoke``.
+
+    Usage:
+        Provide a ``thread_id`` in the runnable config to persist state::
+
+            agent = build_simple_agent(router, checkpointer=saver)
+            cfg = {"configurable": {"thread_id": "session-42"}}
+            await agent.ainvoke({"messages": [HumanMessage("hi")]}, config=cfg)
+            # Subsequent calls with the same thread_id see prior messages.
     """
     tools = tools if tools is not None else DEFAULT_TOOLS
     model = model_router.for_agent(AgentName.RETRIEVER)
@@ -70,4 +84,5 @@ def build_simple_agent(
         model=model,
         tools=tools,
         prompt=prompt,
+        checkpointer=checkpointer,
     )
