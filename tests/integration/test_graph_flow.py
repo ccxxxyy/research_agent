@@ -4,21 +4,30 @@ These tests require LLM API keys and validate the end-to-end graph execution.
 Run with: pytest tests/integration/ -m integration
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 from langchain_core.runnables import RunnableConfig
 
-# Mark all tests in this module as integration tests
+from research_agent.rag.retriever import HybridRetriever
+
 pytestmark = pytest.mark.integration
 
 
 class TestGraphFlow:
     @pytest.mark.asyncio
     async def test_graph_compiles(self, model_router, checkpointer, memory_store):
-        """Verify the graph compiles without errors."""
+        """Verify the graph compiles without errors.
+
+        A stub retriever is sufficient: compilation does not execute nodes,
+        it only wires the retriever into ``partial(...)`` closures.
+        """
         from research_agent.graph.supervisor import build_research_graph
 
+        fake_retriever = MagicMock(spec=HybridRetriever)
         graph = build_research_graph(
             model_router=model_router,
+            hybrid_retriever=fake_retriever,
             checkpointer=checkpointer,
             memory_store=memory_store,
         )
@@ -30,8 +39,10 @@ class TestGraphFlow:
         """Full end-to-end test of the research pipeline."""
         from research_agent.graph.supervisor import build_research_graph
 
+        fake_retriever = MagicMock(spec=HybridRetriever)
         graph = build_research_graph(
             model_router=model_router,
+            hybrid_retriever=fake_retriever,
             checkpointer=checkpointer,
             memory_store=memory_store,
         )

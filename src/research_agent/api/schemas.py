@@ -66,6 +66,31 @@ class ChatResponse(BaseModel):
     sources: list[dict[str, str]] = []
 
 
+# ---------- Supervisor (Phase 3) ----------
+
+
+class SupervisorChatRequest(BaseModel):
+    """Request body for the minimal multi-agent supervisor."""
+
+    message: str = Field(..., min_length=1, max_length=4000)
+    thread_id: str | None = Field(
+        None,
+        description="Conversation thread; omit to start a new isolated session.",
+    )
+    recursion_limit: int | None = Field(
+        None,
+        ge=4,
+        le=50,
+        description="Optional LangGraph recursion cap (defaults to framework default).",
+    )
+
+
+class SupervisorChatResponse(BaseModel):
+    reply: str
+    thread_id: str
+    message_count: int = 0
+
+
 # ---------- Knowledge ----------
 
 class KnowledgeUploadRequest(BaseModel):

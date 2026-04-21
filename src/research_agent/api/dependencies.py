@@ -16,6 +16,10 @@ def get_graph(request: Request) -> CompiledStateGraph:
     return request.app.state.graph
 
 
+def get_supervisor_graph(request: Request) -> CompiledStateGraph:
+    return request.app.state.supervisor_graph
+
+
 def get_model_router(request: Request) -> ModelRouter:
     return request.app.state.model_router
 
@@ -33,6 +37,7 @@ def get_memory_manager(request: Request) -> MemoryManager:
 
 
 GraphDep = Annotated[CompiledStateGraph, Depends(get_graph)]
+SupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_supervisor_graph)]
 ModelRouterDep = Annotated[ModelRouter, Depends(get_model_router)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 MemoryDep = Annotated[MemoryManager, Depends(get_memory_manager)]

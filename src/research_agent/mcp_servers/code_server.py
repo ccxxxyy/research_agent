@@ -9,7 +9,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-mcp = FastMCP("CodeExecutor", description="Execute Python code in a sandbox")
+mcp = FastMCP("CodeExecutor")
 
 
 @mcp.tool()
@@ -35,6 +35,7 @@ async def execute_python(code: str, timeout_seconds: int = 30) -> dict:
 
     safe_globals: dict[str, Any] = {
         "__builtins__": {
+            # --- Pure functions / data constructors ---
             "print": print,
             "range": range,
             "len": len,
@@ -44,20 +45,43 @@ async def execute_python(code: str, timeout_seconds: int = 30) -> dict:
             "abs": abs,
             "round": round,
             "sorted": sorted,
+            "reversed": reversed,
             "enumerate": enumerate,
             "zip": zip,
             "map": map,
             "filter": filter,
+            "any": any,
+            "all": all,
             "list": list,
             "dict": dict,
             "set": set,
             "tuple": tuple,
+            "frozenset": frozenset,
             "str": str,
             "int": int,
             "float": float,
             "bool": bool,
             "type": type,
             "isinstance": isinstance,
+            "repr": repr,
+            "hash": hash,
+            # --- Exception hierarchy ---
+            # Without these, *any* ``raise ValueError(...)`` in user code
+            # fails with NameError before the real error even surfaces,
+            # which is a trap for analyst scripts that routinely do
+            # ``if df.empty: raise ValueError('no data')``.
+            "Exception": Exception,
+            "BaseException": BaseException,
+            "ValueError": ValueError,
+            "TypeError": TypeError,
+            "KeyError": KeyError,
+            "IndexError": IndexError,
+            "AttributeError": AttributeError,
+            "ZeroDivisionError": ZeroDivisionError,
+            "ArithmeticError": ArithmeticError,
+            "RuntimeError": RuntimeError,
+            "StopIteration": StopIteration,
+            # --- Constants ---
             "True": True,
             "False": False,
             "None": None,
