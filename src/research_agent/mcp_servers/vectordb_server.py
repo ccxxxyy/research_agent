@@ -1,10 +1,24 @@
-"""MCP Server — Vector database operations for knowledge base management."""
+"""MCP Server — Generic vector DB (DEPRECATED).
+
+.. deprecated:: Phase 3
+    This generic Chroma wrapper was a Phase-0 skeleton placeholder whose
+    tool implementations return synthetic placeholder data. In Phase 4
+    the actual RAG path is provided directly inside the LangGraph nodes
+    (``graph/nodes/retriever.py``) using the shared
+    ``research_agent.rag.retriever.HybridRetriever`` backed by a real
+    Chroma collection of A-share research reports, not through MCP.
+
+    Exposing Chroma as an MCP tool was ultimately deemed an unnecessary
+    indirection — the retriever is a LangChain ``Runnable`` already.
+
+    Do NOT add new tools here. Do NOT wire this server into any Agent.
+"""
 
 from __future__ import annotations
 
 from fastmcp import FastMCP
 
-mcp = FastMCP("VectorDB", description="Vector database search and management")
+mcp = FastMCP("VectorDB")
 
 
 @mcp.tool()

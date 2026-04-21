@@ -9,7 +9,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from research_agent.api.routes import chat, health, knowledge, research
+from research_agent.api.routes import chat, health, knowledge, research, supervisor
 from research_agent.config import get_settings
 from research_agent.observability.logging import setup_logging
 
@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     checkpointer = await init_checkpointer(settings.database.postgres_sync_uri)
     memory_store = await init_memory_store(settings.database.postgres_sync_uri)
 
+    from research_agent.graph.minimal_supervisor import build_minimal_supervisor
     from research_agent.graph.supervisor import build_research_graph
     from research_agent.llm.provider import ModelRouter
     from research_agent.rag.embedder import create_embeddings
@@ -49,7 +50,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         memory_store=memory_store,
     )
 
+    supervisor_graph = build_minimal_supervisor(
+        model_router=model_router,
+        checkpointer=checkpointer,
+    )
+
     app.state.graph = graph
+    app.state.supervisor_graph = supervisor_graph
     app.state.model_router = model_router
     app.state.memory_store = memory_store
     app.state.settings = settings
@@ -77,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(research.router)
     app.include_router(chat.router)
     app.include_router(knowledge.router)
+    app.include_router(supervisor.router)
 
     return app
 

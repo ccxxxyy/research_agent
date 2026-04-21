@@ -1,4 +1,13 @@
-"""MCP Server — Document parsing tools for PDF, Markdown, and text files."""
+"""MCP Server — Generic document parser (DEPRECATED).
+
+.. deprecated:: Phase 3
+    This generic PDF/Markdown parser was a Phase-0 skeleton placeholder.
+    In Phase 4 it is REPLACED by ``pdf_report_server`` which is purpose-
+    built around 巨潮资讯 research-report PDFs, including page-level
+    citation metadata and table extraction tuned to financial layouts.
+
+    Do NOT add new tools here. Do NOT wire this server into any Agent.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +15,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-mcp = FastMCP("DocumentParser", description="Parse and extract content from documents")
+mcp = FastMCP("DocumentParser")
 
 
 @mcp.tool()
