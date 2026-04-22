@@ -50,6 +50,7 @@ def _stdio_server_spec(module: str) -> dict[str, Any]:
 
 CODE_SERVER_MODULE = "research_agent.mcp_servers.code_server"
 ECHO_SERVER_MODULE = "research_agent.mcp_servers.echo_server"
+FIN_DATA_SERVER_MODULE = "research_agent.mcp_servers.fin_data_server"
 
 
 async def load_code_server_tools() -> list[BaseTool]:
@@ -79,6 +80,29 @@ async def load_echo_server_tools() -> list[BaseTool]:
     return await client.get_tools()
 
 
+async def load_fin_data_server_tools() -> list[BaseTool]:
+    """Spawn the ``fin_data_server`` over stdio and return its tool list.
+
+    Exposes five A-share data tools, each prefixed with ``fin_`` by
+    ``tool_name_prefix=True``:
+
+    - ``fin_get_stock_basic_info``
+    - ``fin_get_stock_price_history``
+    - ``fin_get_financial_abstract``
+    - ``fin_get_financial_indicators``
+    - ``fin_search_stock_by_name``
+
+    The first call to the MCP subprocess will load ``akshare`` and may
+    take ~1 second for its internal deferred imports; subsequent tool
+    invocations reuse the already-warm process.
+    """
+    client = MultiServerMCPClient(
+        {"fin": _stdio_server_spec(FIN_DATA_SERVER_MODULE)},
+        tool_name_prefix=True,
+    )
+    return await client.get_tools()
+
+
 def extract_text_content(value: object) -> str:
     """Flatten the content-block list returned by langchain-mcp-adapters.
 
@@ -103,7 +127,9 @@ def extract_text_content(value: object) -> str:
 __all__ = [
     "CODE_SERVER_MODULE",
     "ECHO_SERVER_MODULE",
+    "FIN_DATA_SERVER_MODULE",
     "extract_text_content",
     "load_code_server_tools",
     "load_echo_server_tools",
+    "load_fin_data_server_tools",
 ]
