@@ -44,6 +44,7 @@ dependencies = [
     "rich",
     "langchain-huggingface>=1.2.2",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "akshare>=1.18.56",
 ]
 
 [project.optional-dependencies]
@@ -87,3 +88,6 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "network: tests that hit live third-party HTTP endpoints (akshare, xueqiu, sina). Skip in offline CI with ``pytest -m 'not network'``.",
+]
