@@ -51,6 +51,7 @@ def _stdio_server_spec(module: str) -> dict[str, Any]:
 CODE_SERVER_MODULE = "research_agent.mcp_servers.code_server"
 ECHO_SERVER_MODULE = "research_agent.mcp_servers.echo_server"
 FIN_DATA_SERVER_MODULE = "research_agent.mcp_servers.fin_data_server"
+PDF_REPORT_SERVER_MODULE = "research_agent.mcp_servers.pdf_report_server"
 
 
 async def load_code_server_tools() -> list[BaseTool]:
@@ -103,6 +104,31 @@ async def load_fin_data_server_tools() -> list[BaseTool]:
     return await client.get_tools()
 
 
+async def load_pdf_report_server_tools() -> list[BaseTool]:
+    """Spawn the ``pdf_report_server`` over stdio and return its tool list.
+
+    Exposes four disclosure-PDF tools, each prefixed with ``pdf_`` by
+    ``tool_name_prefix=True``:
+
+    - ``pdf_search_announcements`` — list cninfo announcements with
+      pre-derived ``pdf_url`` fields.
+    - ``pdf_download_pdf`` — cache-aware download into
+      ``./data/pdf_cache/``.
+    - ``pdf_parse_pdf_pages`` — bounded page-range text extraction
+      (max 20 pages per call).
+    - ``pdf_extract_pdf_metadata`` — page count / title / author /
+      size.
+
+    The subprocess imports ``pypdf`` and ``httpx`` lazily at tool-call
+    time, so launch is fast even on cold starts.
+    """
+    client = MultiServerMCPClient(
+        {"pdf": _stdio_server_spec(PDF_REPORT_SERVER_MODULE)},
+        tool_name_prefix=True,
+    )
+    return await client.get_tools()
+
+
 def extract_text_content(value: object) -> str:
     """Flatten the content-block list returned by langchain-mcp-adapters.
 
@@ -128,8 +154,10 @@ __all__ = [
     "CODE_SERVER_MODULE",
     "ECHO_SERVER_MODULE",
     "FIN_DATA_SERVER_MODULE",
+    "PDF_REPORT_SERVER_MODULE",
     "extract_text_content",
     "load_code_server_tools",
     "load_echo_server_tools",
     "load_fin_data_server_tools",
+    "load_pdf_report_server_tools",
 ]
