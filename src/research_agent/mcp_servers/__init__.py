@@ -40,6 +40,14 @@ Active servers (wired into Agents as of Phase 3+)
     财富 → 雪球 / 新浪 to survive upstream outages. Will be wired into
     the ``data_expert`` specialist in Phase 4.4.
 
+``pdf_report_server`` (Phase 4.2)
+    Disclosure / research-report PDFs from 巨潮资讯. Four tools:
+    ``search_announcements``, ``download_pdf`` (hashed on-disk cache
+    under ``./data/pdf_cache/``), ``parse_pdf_pages`` (bounded 20-page
+    window per call), ``extract_pdf_metadata``. Will feed Phase 4.5's
+    RAG ingestion pipeline and the ``report_expert`` specialist in
+    Phase 4.4.
+
 Deprecated servers (NOT re-exported)
 ------------------------------------
 ``search_server``
@@ -47,7 +55,7 @@ Deprecated servers (NOT re-exported)
     finance-specific ``news_server`` (东方财富 RSS + 雪球讨论).
 
 ``document_server``
-    Generic PDF / Markdown parser → replaced in Phase 4 by
+    Generic PDF / Markdown parser → superseded by
     ``pdf_report_server`` (巨潮资讯 research-report PDFs with page-
     level citation metadata).
 
@@ -66,7 +74,12 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING
 
-ACTIVE_SERVERS: tuple[str, ...] = ("echo_server", "code_server", "fin_data_server")
+ACTIVE_SERVERS: tuple[str, ...] = (
+    "echo_server",
+    "code_server",
+    "fin_data_server",
+    "pdf_report_server",
+)
 """Submodule names that are part of this package's public API."""
 
 DEPRECATED_SERVERS: tuple[str, ...] = (
@@ -100,7 +113,12 @@ def __getattr__(name: str):
 
 
 if TYPE_CHECKING:  # pragma: no cover - helps type checkers & IDE autocomplete
-    from research_agent.mcp_servers import code_server, echo_server, fin_data_server
+    from research_agent.mcp_servers import (
+        code_server,
+        echo_server,
+        fin_data_server,
+        pdf_report_server,
+    )
 
 
 __all__ = [
@@ -109,4 +127,5 @@ __all__ = [
     "code_server",
     "echo_server",
     "fin_data_server",
+    "pdf_report_server",
 ]
