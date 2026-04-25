@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request, status
 from langgraph.graph.state import CompiledStateGraph
 
 from research_agent.config import Settings
@@ -18,6 +18,29 @@ def get_graph(request: Request) -> CompiledStateGraph:
 
 def get_supervisor_graph(request: Request) -> CompiledStateGraph:
     return request.app.state.supervisor_graph
+
+
+def get_research_supervisor_graph(request: Request) -> CompiledStateGraph:
+    """Return the Phase-4.5 financial-research supervisor graph.
+
+    The lifespan tries to compile this graph eagerly; if MCP tool
+    discovery fails (e.g. network is down, ``uv`` is missing, etc.)
+    the attribute is left unset and we surface a 503 here rather
+    than an opaque ``AttributeError`` inside the route handler. A
+    503 (vs. 500) signals to clients that the server is reachable
+    but the downstream MCP dependency is not ready.
+    """
+    graph = getattr(request.app.state, "research_supervisor_graph", None)
+    if graph is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Research supervisor is not available: MCP tool "
+                "discovery failed during application startup. Check "
+                "the server logs for the underlying error."
+            ),
+        )
+    return graph
 
 
 def get_model_router(request: Request) -> ModelRouter:
@@ -38,6 +61,9 @@ def get_memory_manager(request: Request) -> MemoryManager:
 
 GraphDep = Annotated[CompiledStateGraph, Depends(get_graph)]
 SupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_supervisor_graph)]
+ResearchSupervisorGraphDep = Annotated[
+    CompiledStateGraph, Depends(get_research_supervisor_graph)
+]
 ModelRouterDep = Annotated[ModelRouter, Depends(get_model_router)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 MemoryDep = Annotated[MemoryManager, Depends(get_memory_manager)]

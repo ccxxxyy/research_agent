@@ -24,6 +24,8 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from loguru import logger
 
+from research_agent.memory._pg_reachability import is_postgres_reachable
+
 
 async def init_checkpointer(
     postgres_uri: str | None = None,
@@ -52,23 +54,37 @@ async def init_checkpointer(
           because LangGraph may access the saver from worker threads.
     """
     if postgres_uri:
-        try:
-            from psycopg.rows import dict_row
-            from psycopg_pool import ConnectionPool
-            from langgraph.checkpoint.postgres import PostgresSaver
-
-            pool: ConnectionPool = ConnectionPool(
-                conninfo=postgres_uri,
-                kwargs={"row_factory": dict_row},
-            )
-            checkpointer = PostgresSaver(conn=pool)
-            checkpointer.setup()
-            logger.info("Checkpointer initialized: PostgresSaver")
-            return checkpointer
-        except Exception as e:
+        if not is_postgres_reachable(postgres_uri):
+            # Skip the pool entirely. ``ConnectionPool`` is eager and
+            # would otherwise spawn a background reconnection loop
+            # that pollutes logs every few minutes AND, on the
+            # Windows ProactorEventLoop, has been observed to starve
+            # the FastAPI request handlers (a /health call hung for
+            # 25+ minutes in testing). See _pg_reachability.py for
+            # the full incident notes.
             logger.warning(
-                "PostgresSaver init failed ({}), trying sqlite/memory fallback", e
+                "Postgres not reachable at startup; skipping PostgresSaver "
+                "and falling back to sqlite/memory."
             )
+        else:
+            try:
+                from psycopg.rows import dict_row
+                from psycopg_pool import ConnectionPool
+                from langgraph.checkpoint.postgres import PostgresSaver
+
+                pool: ConnectionPool = ConnectionPool(
+                    conninfo=postgres_uri,
+                    kwargs={"row_factory": dict_row},
+                )
+                checkpointer = PostgresSaver(conn=pool)
+                checkpointer.setup()
+                logger.info("Checkpointer initialized: PostgresSaver")
+                return checkpointer
+            except Exception as e:
+                logger.warning(
+                    "PostgresSaver init failed ({}), trying sqlite/memory fallback",
+                    e,
+                )
 
     if sqlite_path is not None:
         try:

@@ -1,4 +1,4 @@
-"""Specialist single-tool agents for the minimal supervisor demo.
+"""Specialist single-tool agents for supervisor graphs.
 
 Design rationale
 ----------------
@@ -8,17 +8,26 @@ team of single-purpose agents is more interpretable, easier to rate-
 limit per capability, and cleaner to scale (swap one specialist without
 touching the others).
 
-This module builds three such specialists, all using the Phase-1
-native toolset:
+Specialists come in two flavors:
 
-    math_expert  — owns ``calculate``
-    time_expert  — owns ``get_current_time``
-    text_analyst — owns ``get_word_count``
+1. Phase-3 toy specialists (Python-local @tool functions) that serve
+   the minimal supervisor demo:
+
+       math_expert  — owns ``calculate``
+       time_expert  — owns ``get_current_time``
+       text_analyst — owns ``get_word_count``
+
+2. Phase-4 production specialists (MCP-delivered tools) that serve the
+   research supervisor:
+
+       coder_expert  — owns ``code_execute_python``
+       data_expert   — owns the 5 ``fin_*`` A-share data tools
+       report_expert — owns the 4 ``pdf_*`` 巨潮资讯 disclosure tools
 
 Each is a ``create_react_agent`` compiled graph with:
   * its own ``name`` (used by ``langgraph_supervisor`` as the handoff tag)
-  * a single tool in its toolbox
-  * a prompt that describes ONLY that capability
+  * a focused toolbelt
+  * a prompt that enumerates ONLY that capability
 
 Keeping prompts tight reduces hallucinated tool calls and gives the
 supervisor clear signals about who is best for each subtask.
@@ -132,6 +141,77 @@ def build_text_analyst(model_router: ModelRouter):
     )
 
 
+DATA_EXPERT_PROMPT = """\
+You are the A-share Data Expert. Your toolbelt is the ``fin_*``
+family of tools backed by akshare (the exact prefix may differ; rely
+on the tool names the runtime hands you):
+
+  - ``fin_search_stock_by_name``     — fuzzy-match a company name to
+    a 6-digit A-share ticker when the user gave a name, not a code.
+  - ``fin_get_stock_basic_info``     — company profile (industry,
+    market cap, IPO date, latest price). Multi-source (东财→雪球).
+  - ``fin_get_stock_price_history``  — daily OHLCV + summary stats
+    over a recent window. Multi-source (东财→新浪).
+  - ``fin_get_financial_abstract``   — revenue / net income / cash
+    flow / EPS by reporting period (核心三表摘要).
+  - ``fin_get_financial_indicators`` — ROE / ROA / margins / leverage
+    ratios by reporting period.
+
+Rules
+1. If the caller gave a company name instead of a 6-digit ticker,
+   FIRST call ``fin_search_stock_by_name`` to resolve it. Never guess.
+2. Only call tools that the user's request actually needs. A question
+   about recent price action does NOT need the financial abstract.
+3. Every tool returns a dict. If it contains an ``"error"`` key the
+   call failed — surface the error briefly and stop; do NOT loop.
+4. Summarize the fetched data in 2-4 concise sentences. Quote
+   numbers directly; don't round silently. Do NOT invent fields the
+   tool did not return.
+5. If the request is not about A-share market/fundamental data, say
+   so and return — the supervisor will route elsewhere.
+"""
+
+REPORT_EXPERT_PROMPT = """\
+You are the Disclosure / Research Report Expert. Your toolbelt is
+the ``pdf_*`` family of tools backed by 巨潮资讯 (the exact prefix
+may differ; rely on the tool names the runtime hands you):
+
+  - ``pdf_search_announcements``     — list disclosures for a ticker
+    in a date range, optionally filtered by category (``年报``,
+    ``半年报``, ``一季报``, ``三季报``, ``业绩预告``, ...). Each row
+    comes with a ready-to-use ``pdf_url``.
+  - ``pdf_download_pdf``             — fetch and cache a PDF; repeat
+    calls are free.
+  - ``pdf_extract_pdf_metadata``     — document-level (num_pages,
+    title, author, size). Call this BEFORE parsing a long report to
+    learn its length.
+  - ``pdf_parse_pdf_pages``          — extract text from a page range
+    (``end_page - start_page + 1 <= 20``). Scan long documents in
+    several calls.
+
+Standard workflow for a "extract key sections from <company>'s <period>
+annual/quarterly report" request:
+  1. ``pdf_search_announcements`` with the right ``category`` and
+     ``start_date``/``end_date``.
+  2. Pick the most recent row whose ``pdf_url`` is not null.
+  3. ``pdf_download_pdf`` → get ``local_path``.
+  4. ``pdf_extract_pdf_metadata`` → confirm ``num_pages``.
+  5. ``pdf_parse_pdf_pages`` → extract the 1-3 page windows most
+     likely to contain the section the user asked about (e.g. 主要
+     财务指标, 经营情况讨论与分析, 风险因素). Do NOT try to read the
+     whole document.
+
+Rules
+1. ALWAYS derive dates as ``YYYYMMDD`` strings for the search tool.
+2. If a tool returns a dict with an ``"error"`` key, surface it
+   briefly and stop; do not retry blindly.
+3. Quote extracted text as short excerpts (<200 chars each), always
+   together with the source page number. Never paraphrase numbers.
+4. If the request is not about A-share disclosures / reports, say
+   so and return — the supervisor will route elsewhere.
+"""
+
+
 def build_coder_expert(
     model_router: ModelRouter,
     mcp_tools: Sequence[BaseTool],
@@ -174,15 +254,92 @@ def build_coder_expert(
     )
 
 
+def build_data_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """A-share fundamentals / market-data specialist (``fin_data_server``).
+
+    Consumes the 5 ``fin_*`` tools spawned by
+    :func:`research_agent.mcp_servers.client_factory.load_fin_data_server_tools`.
+
+    Uses :attr:`AgentName.ANALYST` (→ MEDIUM tier) rather than
+    RETRIEVER because the prompt requires modest reasoning over the
+    returned dicts (choosing which tool to call, noticing
+    source-fallback metadata, and composing a short narrative). LIGHT
+    tier empirically confused the tool-selection step on a few
+    realistic prompts we drafted for Phase-4.4 regression.
+
+    Args:
+        model_router: Shared router.
+        mcp_tools: Tools returned by ``load_fin_data_server_tools()``.
+            Must be non-empty.
+
+    Raises:
+        ValueError: If ``mcp_tools`` is empty.
+    """
+    if not mcp_tools:
+        raise ValueError(
+            "data_expert requires the fin_data_server MCP tools; got "
+            "an empty sequence. Did you forget to "
+            "``await load_fin_data_server_tools()``?"
+        )
+    return create_react_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        prompt=DATA_EXPERT_PROMPT,
+        name="data_expert",
+    )
+
+
+def build_report_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """Disclosure / research-report specialist (``pdf_report_server``).
+
+    Consumes the 4 ``pdf_*`` tools spawned by
+    :func:`research_agent.mcp_servers.client_factory.load_pdf_report_server_tools`.
+
+    Uses :attr:`AgentName.ANALYST` (MEDIUM tier) for the same reason
+    as ``data_expert``: the multi-step workflow (search → download →
+    metadata → page-windowed parse) needs coherent planning across
+    tool calls, not just classification.
+
+    Args:
+        model_router: Shared router.
+        mcp_tools: Tools returned by ``load_pdf_report_server_tools()``.
+            Must be non-empty.
+
+    Raises:
+        ValueError: If ``mcp_tools`` is empty.
+    """
+    if not mcp_tools:
+        raise ValueError(
+            "report_expert requires the pdf_report_server MCP tools; "
+            "got an empty sequence. Did you forget to "
+            "``await load_pdf_report_server_tools()``?"
+        )
+    return create_react_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        prompt=REPORT_EXPERT_PROMPT,
+        name="report_expert",
+    )
+
+
 SPECIALIST_BUILDERS = {
     "math_expert": build_math_expert,
     "time_expert": build_time_expert,
     "text_analyst": build_text_analyst,
     "coder_expert": build_coder_expert,
+    "data_expert": build_data_expert,
+    "report_expert": build_report_expert,
 }
 """Registry for looking up specialists by name — used by tests and demos.
 
-Note that ``coder_expert`` takes an extra ``mcp_tools`` argument and
-therefore has a different signature from the others. Callers that
-iterate this registry generically should branch on the key.
+The three MCP-backed specialists (``coder_expert``, ``data_expert``,
+``report_expert``) take an extra ``mcp_tools`` argument and therefore
+have a different signature from the three toy specialists. Callers
+that iterate this registry generically should branch on the key.
 """
