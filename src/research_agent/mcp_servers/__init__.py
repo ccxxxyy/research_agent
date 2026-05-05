@@ -44,9 +44,17 @@ Active servers (wired into Agents as of Phase 3+)
     Disclosure / research-report PDFs from 巨潮资讯. Four tools:
     ``search_announcements``, ``download_pdf`` (hashed on-disk cache
     under ``./data/pdf_cache/``), ``parse_pdf_pages`` (bounded 20-page
-    window per call), ``extract_pdf_metadata``. Will feed Phase 4.5's
-    RAG ingestion pipeline and the ``report_expert`` specialist in
-    Phase 4.4.
+    window per call), ``extract_pdf_metadata``. Feeds the
+    ``report_expert`` specialist in Phase 4.4.
+
+``knowledge_server`` (Phase 4.6)
+    User-uploaded PDF library with hybrid retrieval (vector + BM25)
+    and corrective-RAG quality signals. Four tools:
+    ``ingest_pdf``, ``search`` (returns ``quality`` ∈
+    {high,medium,low} so the agent can decide to rewrite + retry),
+    ``list_collections``, ``delete_collection``. Persists to
+    ``./data/knowledge_db/`` via Chroma. Wired into the
+    ``knowledge_expert`` specialist of the research supervisor.
 
 Deprecated servers (NOT re-exported)
 ------------------------------------
@@ -79,6 +87,7 @@ ACTIVE_SERVERS: tuple[str, ...] = (
     "code_server",
     "fin_data_server",
     "pdf_report_server",
+    "knowledge_server",
 )
 """Submodule names that are part of this package's public API."""
 
@@ -117,6 +126,7 @@ if TYPE_CHECKING:  # pragma: no cover - helps type checkers & IDE autocomplete
         code_server,
         echo_server,
         fin_data_server,
+        knowledge_server,
         pdf_report_server,
     )
 
@@ -127,5 +137,6 @@ __all__ = [
     "code_server",
     "echo_server",
     "fin_data_server",
+    "knowledge_server",
     "pdf_report_server",
 ]
