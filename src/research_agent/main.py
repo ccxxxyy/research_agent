@@ -17,13 +17,15 @@ from research_agent.observability.logging import setup_logging
 
 
 async def _try_build_research_supervisor(model_router, checkpointer):
-    """Best-effort compile of the Phase-4.5 research supervisor.
+    """Best-effort compile of the Phase-4.5 / 4.6 research supervisor.
 
-    MCP tool discovery spawns three stdio subprocesses in parallel.
-    If any of them fails (missing dependency, network timeout, etc.)
-    we degrade gracefully: the surviving specialists are still
-    wired in, and ``get_research_supervisor_graph`` surfaces a 503
-    only when *all three* failed. Startup never dies because of MCP.
+    Tool discovery runs four loaders in parallel: three MCP-stdio
+    subprocesses (fin_data, pdf_report, code) plus the in-process
+    knowledge-tools loader. If any of them fails (missing dependency,
+    network timeout, etc.) we degrade gracefully: the surviving
+    specialists are still wired in, and ``get_research_supervisor_graph``
+    surfaces a 503 only when **every** specialist's tool discovery
+    failed. Startup never dies because of an unavailable backend.
 
     Returns the compiled graph, or ``None`` if no specialist could
     be loaded.
@@ -32,28 +34,40 @@ async def _try_build_research_supervisor(model_router, checkpointer):
     from research_agent.mcp_servers.client_factory import (
         load_code_server_tools,
         load_fin_data_server_tools,
+        load_knowledge_tools_inproc,
         load_pdf_report_server_tools,
     )
 
+    # NOTE: ``load_knowledge_tools_inproc`` is the in-process replacement
+    # for the (deprecated) MCP-stdio ``load_knowledge_server_tools``.
+    # The other three loaders still spawn MCP subprocesses — those
+    # servers' import chains are light enough that the stdio path is
+    # stable. See ``knowledge_server.py`` for why knowledge is special.
     results = await asyncio.gather(
         load_fin_data_server_tools(),
         load_pdf_report_server_tools(),
         load_code_server_tools(),
+        load_knowledge_tools_inproc(),
         return_exceptions=True,
     )
-    names = ("fin_data_server", "pdf_report_server", "code_server")
+    names = (
+        "fin_data_server",
+        "pdf_report_server",
+        "code_server",
+        "knowledge_tools_inproc",
+    )
     tools: dict[str, list] = {}
     for name, r in zip(names, results):
         if isinstance(r, Exception):
-            logger.warning("MCP tool discovery failed for {}: {}", name, r)
+            logger.warning("Tool discovery failed for {}: {}", name, r)
             tools[name] = []
         else:
             tools[name] = list(r)
-            logger.info("MCP tools discovered for {}: {}", name, len(tools[name]))
+            logger.info("Tools discovered for {}: {}", name, len(tools[name]))
 
     if not any(tools.values()):
         logger.error(
-            "All three MCP servers failed to provide tools; "
+            "All tool sources failed to provide tools; "
             "research supervisor will be unavailable."
         )
         return None
@@ -64,6 +78,7 @@ async def _try_build_research_supervisor(model_router, checkpointer):
             data_tools=tools["fin_data_server"] or None,
             report_tools=tools["pdf_report_server"] or None,
             coder_tools=tools["code_server"] or None,
+            knowledge_tools=tools["knowledge_tools_inproc"] or None,
             checkpointer=checkpointer,
         )
     except Exception:  # noqa: BLE001
@@ -87,28 +102,49 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     memory_store = await init_memory_store(settings.database.postgres_sync_uri)
 
     from research_agent.graph.minimal_supervisor import build_minimal_supervisor
-    from research_agent.graph.supervisor import build_research_graph
     from research_agent.llm.provider import ModelRouter
-    from research_agent.rag.embedder import create_embeddings
-    from research_agent.rag.retriever import HybridRetriever
-
-    from langchain_chroma import Chroma
 
     model_router = ModelRouter(settings.llm)
 
-    embeddings = create_embeddings(settings.llm)
-    vectorstore = Chroma(
-        collection_name="research_agent",
-        embedding_function=embeddings,
-    )
-    hybrid_retriever = HybridRetriever(vectorstore=vectorstore)
+    # Phase-3 ``build_research_graph`` was backed by ``langchain_chroma``,
+    # which we removed during the FAISS migration (see
+    # ``mcp_servers/knowledge_server.py``). The Phase-3 RAG endpoint is
+    # therefore gracefully disabled here — Phase-4.5 / 4.6 superseded it
+    # with the in-process FAISS-backed ``knowledge_expert``. We keep the
+    # ``app.state.graph`` slot for backwards compatibility with the
+    # ``/research`` route (it 503s when this attribute is None).
+    graph = None
+    try:
+        from langchain_chroma import Chroma  # type: ignore[import-not-found]
 
-    graph = build_research_graph(
-        model_router=model_router,
-        hybrid_retriever=hybrid_retriever,
-        checkpointer=checkpointer,
-        memory_store=memory_store,
-    )
+        from research_agent.graph.supervisor import build_research_graph
+        from research_agent.rag.embedder import create_embeddings
+        from research_agent.rag.retriever import HybridRetriever
+
+        embeddings = create_embeddings(settings.llm)
+        vectorstore = Chroma(
+            collection_name="research_agent",
+            embedding_function=embeddings,
+        )
+        hybrid_retriever = HybridRetriever(vectorstore=vectorstore)
+        graph = build_research_graph(
+            model_router=model_router,
+            hybrid_retriever=hybrid_retriever,
+            checkpointer=checkpointer,
+            memory_store=memory_store,
+        )
+        logger.info("Phase-3 research graph compiled (Chroma available).")
+    except ImportError:
+        logger.warning(
+            "langchain_chroma not installed; Phase-3 /research route "
+            "will return 503. Use the Phase-4 /supervisor or /knowledge "
+            "endpoints instead."
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Failed to compile the Phase-3 research graph; "
+            "/research route will return 503."
+        )
 
     supervisor_graph = build_minimal_supervisor(
         model_router=model_router,

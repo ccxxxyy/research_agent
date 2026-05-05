@@ -52,6 +52,7 @@ CODE_SERVER_MODULE = "research_agent.mcp_servers.code_server"
 ECHO_SERVER_MODULE = "research_agent.mcp_servers.echo_server"
 FIN_DATA_SERVER_MODULE = "research_agent.mcp_servers.fin_data_server"
 PDF_REPORT_SERVER_MODULE = "research_agent.mcp_servers.pdf_report_server"
+KNOWLEDGE_SERVER_MODULE = "research_agent.mcp_servers.knowledge_server"
 
 
 async def load_code_server_tools() -> list[BaseTool]:
@@ -129,6 +130,64 @@ async def load_pdf_report_server_tools() -> list[BaseTool]:
     return await client.get_tools()
 
 
+async def load_knowledge_server_tools() -> list[BaseTool]:
+    """**Deprecated** — kept only for backwards compatibility.
+
+    The MCP-stdio delivery path for ``knowledge_server`` is unstable
+    on Windows + Python 3.13: after a successful ``ingest_pdf`` the
+    fastmcp stdout writer never flushes the JSON-RPC response back to
+    the parent. See ``knowledge_server.py`` module docstring for the
+    full forensic trail.
+
+    Production code should call
+    :func:`load_knowledge_tools_inproc` instead, which returns the
+    same four tools with the same ``knowledge_*`` names but invokes
+    them in-process (no subprocess, no JSON-RPC framing, no stdio
+    pipes).
+
+    This function is preserved so older scripts / tests don't break,
+    but it raises immediately on first use to make the deprecation
+    impossible to miss.
+    """
+    raise RuntimeError(
+        "load_knowledge_server_tools (MCP-stdio) is deprecated; "
+        "use load_knowledge_tools_inproc() instead. The stdio path "
+        "is known to deadlock on Windows + Python 3.13 with the "
+        "FAISS/sentence-transformers import chain — see "
+        "knowledge_server.py for the diagnosis."
+    )
+
+
+async def load_knowledge_tools_inproc() -> list[BaseTool]:
+    """Return the four knowledge-base tools as in-process LangChain tools.
+
+    Same toolbelt the (legacy) MCP-stdio loader produced — same names,
+    same arg shapes, same return dicts — but delivered through
+    ``research_agent.tools.knowledge_tools.KNOWLEDGE_TOOLS`` instead
+    of an MCP subprocess. The signature is kept ``async`` so callers
+    can swap loaders without changing call sites.
+
+    Tools returned (each is a ``StructuredTool``):
+
+    - ``knowledge_ingest_pdf``      — load → chunk → embed → write to
+      a persistent FAISS collection under ``./data/knowledge_db/``.
+    - ``knowledge_search``          — hybrid retrieval (vector + BM25)
+      with corrective-RAG quality signals (``quality`` ∈
+      ``{high, medium, low}``, plus per-hit scores).
+    - ``knowledge_list_collections`` — enumerate persisted collections.
+    - ``knowledge_delete_collection`` — idempotent housekeeping.
+
+    Cost profile: importing this loader pulls in
+    ``langchain_text_splitters`` + ``faiss-cpu`` (~9 s the first
+    time, cached thereafter). The bge-small embedding model is
+    *not* loaded until the first ``ingest_pdf`` / ``search`` call
+    (~3–17 s cold, sub-second warm).
+    """
+    from research_agent.tools.knowledge_tools import KNOWLEDGE_TOOLS
+
+    return list(KNOWLEDGE_TOOLS)
+
+
 def extract_text_content(value: object) -> str:
     """Flatten the content-block list returned by langchain-mcp-adapters.
 
@@ -154,10 +213,13 @@ __all__ = [
     "CODE_SERVER_MODULE",
     "ECHO_SERVER_MODULE",
     "FIN_DATA_SERVER_MODULE",
+    "KNOWLEDGE_SERVER_MODULE",
     "PDF_REPORT_SERVER_MODULE",
     "extract_text_content",
     "load_code_server_tools",
     "load_echo_server_tools",
     "load_fin_data_server_tools",
+    "load_knowledge_server_tools",
+    "load_knowledge_tools_inproc",
     "load_pdf_report_server_tools",
 ]

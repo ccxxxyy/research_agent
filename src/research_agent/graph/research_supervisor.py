@@ -13,20 +13,24 @@ data surface the Agent will hit in production:
 
               ┌──────────────────────────────────┐
               │       research_supervisor        │  ← HEAVY tier LLM
-              └──┬─────────────┬─────────────┬───┘
-                 │             │             │
-                 ▼             ▼             ▼
-           data_expert   report_expert   coder_expert
-           (fin_data)    (pdf_report)    (code_server)
+              └─┬────────┬───────────┬─────────┬─┘
+                │        │           │         │
+                ▼        ▼           ▼         ▼
+          data_expert report_expert coder_expert knowledge_expert
+          (fin_data)  (pdf_report)  (code_server) (knowledge_server)
 
-Typical flow for "分析 宁德时代 2023 年业绩":
+Typical flow for "分析 宁德时代 2023 年业绩 + ESG 披露中提到的碳中和承诺":
 
   1. supervisor → data_expert : pull financial abstract + indicators
   2. supervisor → report_expert: locate 2023 annual-report PDF and
      extract the 经营情况 / 风险因素 sections
   3. supervisor → coder_expert: compute derived ratios or sanity-
      check numbers from the two previous outputs
-  4. supervisor writes a final synthesis.
+  4. supervisor → knowledge_expert: search the user's previously
+     ingested ESG library for "碳中和" mentions (corrective-RAG:
+     the agent reads the per-call ``quality`` signal and rewrites
+     the query if hits are weak, up to 3 attempts)
+  5. supervisor writes a final synthesis.
 
 Design choices that matter for interview-grade storytelling
 -----------------------------------------------------------
@@ -62,6 +66,7 @@ from loguru import logger
 from research_agent.agents.specialists import (
     build_coder_expert,
     build_data_expert,
+    build_knowledge_expert,
     build_report_expert,
 )
 from research_agent.llm.provider import ModelRouter
@@ -112,6 +117,26 @@ SUPERVISOR_PROMPT_CODER = """\
       computation that the other specialists did not pre-compute.
 """
 
+SUPERVISOR_PROMPT_KNOWLEDGE = """\
+  - knowledge_expert : the USER's private PDF library, indexed in a
+      persistent Chroma vector store with hybrid (vector + BM25)
+      retrieval. Toolbelt:
+        * knowledge_list_collections — enumerate user collections
+        * knowledge_ingest_pdf       — chunk + embed a local PDF
+                                       into a collection
+        * knowledge_search           — hybrid search; returns a
+                                       ``quality`` label so the
+                                       expert runs an internal
+                                       corrective-RAG loop
+        * knowledge_delete_collection
+      Delegate when the user asks something only the user's own
+      uploaded documents could answer: "我之前上传的 ESG 报告里
+      关于碳中和怎么写的"、"我那份招股说明书里的募投项目"、
+      或追问"把这份报告灌进我的知识库并按xx检索". Do NOT route
+      generic A-share market or public-disclosure questions here —
+      this expert only sees what the user has personally uploaded.
+"""
+
 # NOTE: These rules are *invariant* across team compositions. They
 # must NEVER mention a specific specialist by name, because the team
 # is assembled at runtime and absent specialists would otherwise leak
@@ -148,7 +173,13 @@ Your job
 """
 
 
-def _build_supervisor_prompt(*, has_data: bool, has_report: bool, has_coder: bool) -> str:
+def _build_supervisor_prompt(
+    *,
+    has_data: bool,
+    has_report: bool,
+    has_coder: bool,
+    has_knowledge: bool,
+) -> str:
     """Assemble the supervisor prompt to match the actual team roster.
 
     Listing a specialist the graph does NOT contain would produce
@@ -163,6 +194,8 @@ def _build_supervisor_prompt(*, has_data: bool, has_report: bool, has_coder: boo
         parts.append(SUPERVISOR_PROMPT_REPORT)
     if has_coder:
         parts.append(SUPERVISOR_PROMPT_CODER)
+    if has_knowledge:
+        parts.append(SUPERVISOR_PROMPT_KNOWLEDGE)
     parts.append("\n" + SUPERVISOR_PROMPT_RULES)
     return "".join(parts)
 
@@ -173,15 +206,17 @@ def build_research_supervisor(
     data_tools: Sequence[BaseTool] | None = None,
     report_tools: Sequence[BaseTool] | None = None,
     coder_tools: Sequence[BaseTool] | None = None,
+    knowledge_tools: Sequence[BaseTool] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     supervisor_tier: ModelTier = ModelTier.HEAVY,
 ) -> CompiledStateGraph:
-    """Compile the Phase-4.4 financial-research supervisor graph.
+    """Compile the Phase-4.4 / 4.6 financial-research supervisor graph.
 
     The graph includes exactly the specialists whose tool lists were
     supplied (non-empty). A supervisor with zero specialists would be
     useless, so at least one of ``data_tools`` / ``report_tools`` /
-    ``coder_tools`` must be non-empty — we fail loudly otherwise.
+    ``coder_tools`` / ``knowledge_tools`` must be non-empty — we fail
+    loudly otherwise.
 
     Args:
         model_router: Shared router (supervisor uses
@@ -197,6 +232,9 @@ def build_research_supervisor(
         coder_tools: Output of
             :func:`research_agent.mcp_servers.client_factory.load_code_server_tools`.
             When omitted or empty, ``coder_expert`` is not added.
+        knowledge_tools: Output of
+            :func:`research_agent.mcp_servers.client_factory.load_knowledge_server_tools`.
+            When omitted or empty, ``knowledge_expert`` is not added.
         checkpointer: Optional LangGraph checkpointer for per-``thread_id``
             conversation persistence.
         supervisor_tier: Override supervisor model tier. Defaults to
@@ -212,12 +250,13 @@ def build_research_supervisor(
     has_data = bool(data_tools)
     has_report = bool(report_tools)
     has_coder = bool(coder_tools)
+    has_knowledge = bool(knowledge_tools)
 
-    if not (has_data or has_report or has_coder):
+    if not (has_data or has_report or has_coder or has_knowledge):
         raise ValueError(
             "build_research_supervisor needs at least one specialist's "
             "tools. Supply data_tools and/or report_tools and/or "
-            "coder_tools — all three were empty."
+            "coder_tools and/or knowledge_tools — all four were empty."
         )
 
     agents: list = []
@@ -232,10 +271,16 @@ def build_research_supervisor(
     if has_coder:
         agents.append(build_coder_expert(model_router, coder_tools or []))
         roster.append("coder_expert")
+    if has_knowledge:
+        agents.append(build_knowledge_expert(model_router, knowledge_tools or []))
+        roster.append("knowledge_expert")
 
     supervisor_model = model_router.get_model(supervisor_tier)
     prompt = _build_supervisor_prompt(
-        has_data=has_data, has_report=has_report, has_coder=has_coder
+        has_data=has_data,
+        has_report=has_report,
+        has_coder=has_coder,
+        has_knowledge=has_knowledge,
     )
 
     workflow = create_supervisor(
@@ -259,5 +304,6 @@ __all__ = [
     "SUPERVISOR_PROMPT_DATA",
     "SUPERVISOR_PROMPT_REPORT",
     "SUPERVISOR_PROMPT_CODER",
+    "SUPERVISOR_PROMPT_KNOWLEDGE",
     "SUPERVISOR_PROMPT_RULES",
 ]

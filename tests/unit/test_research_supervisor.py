@@ -22,12 +22,14 @@ from langgraph.checkpoint.memory import MemorySaver
 from research_agent.agents.specialists import (
     SPECIALIST_BUILDERS,
     build_data_expert,
+    build_knowledge_expert,
     build_report_expert,
 )
 from research_agent.config import LLMConfig
 from research_agent.graph.research_supervisor import (
     SUPERVISOR_PROMPT_CODER,
     SUPERVISOR_PROMPT_DATA,
+    SUPERVISOR_PROMPT_KNOWLEDGE,
     SUPERVISOR_PROMPT_REPORT,
     _build_supervisor_prompt,
     build_research_supervisor,
@@ -84,6 +86,16 @@ def fake_coder_tools() -> list[BaseTool]:
 
 
 @pytest.fixture
+def fake_knowledge_tools() -> list[BaseTool]:
+    return [
+        _fake_tool("knowledge_ingest_pdf"),
+        _fake_tool("knowledge_search"),
+        _fake_tool("knowledge_list_collections"),
+        _fake_tool("knowledge_delete_collection"),
+    ]
+
+
+@pytest.fixture
 def router() -> ModelRouter:
     # Fake credentials — compile-time only, no network calls happen here.
     cfg = LLMConfig(
@@ -102,8 +114,10 @@ class TestSpecialistBuilders:
     def test_registry_contains_new_specialists(self) -> None:
         assert "data_expert" in SPECIALIST_BUILDERS
         assert "report_expert" in SPECIALIST_BUILDERS
+        assert "knowledge_expert" in SPECIALIST_BUILDERS
         assert SPECIALIST_BUILDERS["data_expert"] is build_data_expert
         assert SPECIALIST_BUILDERS["report_expert"] is build_report_expert
+        assert SPECIALIST_BUILDERS["knowledge_expert"] is build_knowledge_expert
 
     def test_data_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="fin_data_server"):
@@ -112,6 +126,10 @@ class TestSpecialistBuilders:
     def test_report_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="pdf_report_server"):
             build_report_expert(router, [])
+
+    def test_knowledge_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
+        with pytest.raises(ValueError, match="knowledge_server"):
+            build_knowledge_expert(router, [])
 
     def test_data_expert_compiles_with_tools(
         self, router: ModelRouter, fake_data_tools: list[BaseTool]
@@ -129,6 +147,13 @@ class TestSpecialistBuilders:
         assert hasattr(agent, "ainvoke")
         assert getattr(agent, "name", None) == "report_expert"
 
+    def test_knowledge_expert_compiles_with_tools(
+        self, router: ModelRouter, fake_knowledge_tools: list[BaseTool]
+    ) -> None:
+        agent = build_knowledge_expert(router, fake_knowledge_tools)
+        assert hasattr(agent, "ainvoke")
+        assert getattr(agent, "name", None) == "knowledge_expert"
+
 
 # ---------------------------------------------------------------------------
 # Prompt assembly
@@ -136,26 +161,40 @@ class TestSpecialistBuilders:
 
 
 class TestSupervisorPrompt:
-    def test_all_three_specialists_listed(self) -> None:
+    def test_all_four_specialists_listed(self) -> None:
         prompt = _build_supervisor_prompt(
-            has_data=True, has_report=True, has_coder=True
+            has_data=True, has_report=True, has_coder=True, has_knowledge=True
         )
         assert "data_expert" in prompt
         assert "report_expert" in prompt
         assert "coder_expert" in prompt
+        assert "knowledge_expert" in prompt
         # Section texts actually appended.
         assert SUPERVISOR_PROMPT_DATA in prompt
         assert SUPERVISOR_PROMPT_REPORT in prompt
         assert SUPERVISOR_PROMPT_CODER in prompt
+        assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
 
     def test_missing_specialists_are_not_mentioned(self) -> None:
         """Mentioning a specialist that doesn't exist in the team would
         cause the supervisor to emit ``transfer_to_<missing>`` tool
         calls that fail at runtime. This is the property we guard."""
         prompt = _build_supervisor_prompt(
-            has_data=True, has_report=False, has_coder=False
+            has_data=True, has_report=False, has_coder=False, has_knowledge=False
         )
         assert "data_expert" in prompt
+        assert "report_expert" not in prompt
+        assert "coder_expert" not in prompt
+        assert "knowledge_expert" not in prompt
+
+    def test_knowledge_only_prompt_omits_other_experts(self) -> None:
+        """Symmetric guard for the knowledge_expert-only team."""
+        prompt = _build_supervisor_prompt(
+            has_data=False, has_report=False, has_coder=False, has_knowledge=True
+        )
+        assert "knowledge_expert" in prompt
+        assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
+        assert "data_expert" not in prompt
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
 
@@ -164,13 +203,17 @@ class TestSupervisorPrompt:
         invent numbers", etc.) are non-negotiable — they must appear
         regardless of team composition."""
         for flags in [
-            (True, False, False),
-            (False, True, False),
-            (False, False, True),
-            (True, True, True),
+            (True, False, False, False),
+            (False, True, False, False),
+            (False, False, True, False),
+            (False, False, False, True),
+            (True, True, True, True),
         ]:
             prompt = _build_supervisor_prompt(
-                has_data=flags[0], has_report=flags[1], has_coder=flags[2]
+                has_data=flags[0],
+                has_report=flags[1],
+                has_coder=flags[2],
+                has_knowledge=flags[3],
             )
             assert "hand off" in prompt.lower() or "hand-off" in prompt.lower()
             assert "Never invent" in prompt
@@ -188,23 +231,26 @@ class TestBuildResearchSupervisor:
         fake_data_tools: list[BaseTool],
         fake_report_tools: list[BaseTool],
         fake_coder_tools: list[BaseTool],
+        fake_knowledge_tools: list[BaseTool],
     ) -> None:
         graph = build_research_supervisor(
             model_router=router,
             data_tools=fake_data_tools,
             report_tools=fake_report_tools,
             coder_tools=fake_coder_tools,
+            knowledge_tools=fake_knowledge_tools,
             checkpointer=MemorySaver(),
         )
         assert hasattr(graph, "ainvoke")
         assert hasattr(graph, "get_graph")
 
-        # The three specialists should appear as subgraph nodes.
+        # All four specialists should appear as subgraph nodes.
         # ``get_graph()`` returns a nx-like object; its ``nodes`` is a dict.
         node_names = set(graph.get_graph().nodes.keys())
         assert "data_expert" in node_names
         assert "report_expert" in node_names
         assert "coder_expert" in node_names
+        assert "knowledge_expert" in node_names
 
     def test_data_only_compiles(
         self, router: ModelRouter, fake_data_tools: list[BaseTool]
@@ -216,6 +262,7 @@ class TestBuildResearchSupervisor:
         assert "data_expert" in node_names
         assert "report_expert" not in node_names
         assert "coder_expert" not in node_names
+        assert "knowledge_expert" not in node_names
 
     def test_report_only_compiles(
         self, router: ModelRouter, fake_report_tools: list[BaseTool]
@@ -226,6 +273,21 @@ class TestBuildResearchSupervisor:
         node_names = set(graph.get_graph().nodes.keys())
         assert "report_expert" in node_names
         assert "data_expert" not in node_names
+        assert "knowledge_expert" not in node_names
+
+    def test_knowledge_only_compiles(
+        self, router: ModelRouter, fake_knowledge_tools: list[BaseTool]
+    ) -> None:
+        """A knowledge-only team is the smoke configuration for the
+        Phase-4.6 RAG closure — guard that it compiles standalone."""
+        graph = build_research_supervisor(
+            model_router=router, knowledge_tools=fake_knowledge_tools
+        )
+        node_names = set(graph.get_graph().nodes.keys())
+        assert "knowledge_expert" in node_names
+        assert "data_expert" not in node_names
+        assert "report_expert" not in node_names
+        assert "coder_expert" not in node_names
 
     def test_empty_inputs_raise(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="at least one specialist"):
@@ -240,4 +302,5 @@ class TestBuildResearchSupervisor:
                 data_tools=[],
                 report_tools=[],
                 coder_tools=[],
+                knowledge_tools=[],
             )

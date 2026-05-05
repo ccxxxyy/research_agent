@@ -14,12 +14,19 @@ dependencies = [
     "langchain-community",
     "langchain-text-splitters",
     "langchain-mcp-adapters",
-    "langchain-chroma",
     # === MCP ===
     "mcp",
     "fastmcp",
     # === RAG ===
-    "chromadb",
+    # NOTE: We deliberately use FAISS (faiss-cpu) instead of Chroma. On
+    # Windows, importing chromadb inside an MCP-stdio subprocess corrupts
+    # the JSON-RPC channel between the parent client and the FastMCP
+    # server (see _stdio_firewall.py for the full forensic trail).
+    # FAISS has no telemetry, no background threads, and a much simpler
+    # persistence model (single .faiss file + sidecar pickle), which is
+    # both more reliable and a better fit for the 10s-1000s-of-chunks
+    # personal-knowledge scale we target.
+    "faiss-cpu",
     "sentence-transformers",
     "unstructured[md,pdf]",
     "rank-bm25",
@@ -61,6 +68,10 @@ dev = [
 [project.scripts]
 research-agent = "research_agent.main:cli"
 
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -90,4 +101,6 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "network: tests that hit live third-party HTTP endpoints (akshare, xueqiu, sina). Skip in offline CI with ``pytest -m 'not network'``.",
+    "slow: tests that load heavy ML model weights (e.g. HuggingFace embedders) or run multi-second pipelines end-to-end. Opt-in via ``pytest -m slow``; skipped by default with ``pytest -m 'not slow'``.",
+    "integration: end-to-end / cross-component tests that bring up FastAPI, MCP subprocesses, or a full graph. Run with ``pytest -m integration``; routinely skipped in unit-only flows.",
 ]

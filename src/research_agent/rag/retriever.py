@@ -1,11 +1,33 @@
-"""Hybrid retriever combining vector search (semantic) and BM25 (keyword)."""
+"""Hybrid retriever combining vector search (semantic) and BM25 (keyword).
+
+Phase-3 component, currently dormant
+------------------------------------
+This module dates from Phase-3 when the project ran on Chroma.
+``langchain_chroma`` is no longer a project dependency (we migrated
+the production knowledge plane to FAISS — see
+``mcp_servers/knowledge_server.py``), so the type hint on
+``__init__`` is intentionally a forward reference (``"Any"`` for
+practical purposes); the class still works against any vector store
+that exposes ``asimilarity_search`` / ``aadd_documents``.
+
+The class is kept importable so the (now optional) Phase-3
+``/research`` route and its test fixtures keep type-checking, but at
+runtime it is only instantiated when ``langchain_chroma`` happens to
+be installed (see ``main.py`` lifespan).
+"""
 
 from __future__ import annotations
 
-from langchain_chroma import Chroma
+from typing import TYPE_CHECKING, Any
+
 from langchain_core.documents import Document
 from loguru import logger
 from rank_bm25 import BM25Okapi
+
+if TYPE_CHECKING:  # pragma: no cover
+    # Imported only for type checkers; ``langchain_chroma`` is not a
+    # runtime dependency anymore.
+    from langchain_chroma import Chroma
 
 
 class HybridRetriever:
@@ -18,7 +40,7 @@ class HybridRetriever:
 
     def __init__(
         self,
-        vectorstore: Chroma,
+        vectorstore: "Chroma | Any",
         documents: list[Document] | None = None,
         bm25_weight: float = 0.4,
         vector_weight: float = 0.6,

@@ -20,9 +20,12 @@ Specialists come in two flavors:
 2. Phase-4 production specialists (MCP-delivered tools) that serve the
    research supervisor:
 
-       coder_expert  — owns ``code_execute_python``
-       data_expert   — owns the 5 ``fin_*`` A-share data tools
-       report_expert — owns the 4 ``pdf_*`` 巨潮资讯 disclosure tools
+       coder_expert     — owns ``code_execute_python``
+       data_expert      — owns the 5 ``fin_*`` A-share data tools
+       report_expert    — owns the 4 ``pdf_*`` 巨潮资讯 disclosure tools
+       knowledge_expert — owns the 4 ``knowledge_*`` user-PDF library
+                          tools, with an explicit corrective-RAG loop
+                          driven by the per-call ``quality`` signal.
 
 Each is a ``create_react_agent`` compiled graph with:
   * its own ``name`` (used by ``langgraph_supervisor`` as the handoff tag)
@@ -169,6 +172,61 @@ Rules
    tool did not return.
 5. If the request is not about A-share market/fundamental data, say
    so and return — the supervisor will route elsewhere.
+"""
+
+KNOWLEDGE_EXPERT_PROMPT = """\
+You are the User Knowledge Base Expert. Your toolbelt is the
+``knowledge_*`` family of tools backed by a persistent Chroma
+vector store (the exact prefix may differ; rely on the tool names
+the runtime hands you):
+
+  - ``knowledge_list_collections``  — enumerate the user's existing
+    collections with their chunk counts.
+  - ``knowledge_ingest_pdf``        — load → chunk → embed → write
+    a single PDF into a collection. Use ONLY when the user explicitly
+    supplies a local PDF path (e.g. via the supervisor having just
+    called ``pdf_download_pdf``). Never invent file paths.
+  - ``knowledge_search``            — hybrid (vector + BM25) search
+    over a collection. Returns up to ``top_k`` hits AND a top-level
+    ``quality`` label ∈ {"high", "medium", "low"} plus a numeric
+    ``top_score`` ∈ [0, 1]. Each hit carries ``source``, ``page``,
+    and ``vector_score`` so you can cite faithfully.
+  - ``knowledge_delete_collection`` — housekeeping; call only when
+    the user explicitly asks to wipe a collection.
+
+Corrective-RAG loop you MUST follow
+-----------------------------------
+1. Resolve the collection FIRST. If the user named one, use it. If
+   they did not, call ``knowledge_list_collections`` and pick the
+   one whose name best matches the topic. If there are NO
+   collections, tell the user the library is empty and stop —
+   don't fabricate citations.
+2. Issue an initial ``knowledge_search`` with the user's question
+   verbatim and ``top_k=5``.
+3. INSPECT the response:
+     • If ``quality == "high"`` → answer the user, citing 2-4 of the
+       top hits with their ``source`` (basename only) and ``page``.
+     • If ``quality == "medium"`` → answer with the available
+       evidence, but flag the uncertainty: "证据较弱，建议补充原文
+       核对". Do not invent missing details.
+     • If ``quality == "low"`` → REWRITE the query and call
+       ``knowledge_search`` again. Strategies:
+         (a) add domain-specific keywords the user implied
+             (e.g. "碳中和" → "碳中和 2030 减排目标 范围1 范围2")
+         (b) split a compound question into the most search-friendly
+             single sub-question
+         (c) replace pronouns with the noun they refer to
+       Allow at most THREE search calls total per user turn. If
+       quality is still "low" after the third call, tell the user
+       which queries you tried and that the library does not
+       contain the answer.
+4. NEVER paraphrase quoted snippets — quote them inline with
+   sensible truncation ("...") if they exceed ~120 characters.
+5. NEVER claim a citation that the tool did not return. If a hit
+   has ``page=None`` or empty ``source``, omit the page from the
+   citation rather than guessing.
+6. If the request is not about searching the user's PDF library,
+   say so and return — the supervisor will route elsewhere.
 """
 
 REPORT_EXPERT_PROMPT = """\
@@ -328,6 +386,44 @@ def build_report_expert(
     )
 
 
+def build_knowledge_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """User-knowledge-base specialist (``knowledge_server``).
+
+    Consumes the 4 ``knowledge_*`` tools spawned by
+    :func:`research_agent.mcp_servers.client_factory.load_knowledge_server_tools`.
+
+    Uses :attr:`AgentName.ANALYST` (MEDIUM tier) for the same reason
+    as ``data_expert`` and ``report_expert``: the corrective-RAG loop
+    requires the agent to read the ``quality`` signal in each
+    ``knowledge_search`` response and DECIDE whether to rewrite the
+    query — that is reasoning, not classification, so LIGHT tier
+    routinely fails to retry on low-quality hits.
+
+    Args:
+        model_router: Shared router.
+        mcp_tools: Tools returned by ``load_knowledge_server_tools()``.
+            Must be non-empty.
+
+    Raises:
+        ValueError: If ``mcp_tools`` is empty.
+    """
+    if not mcp_tools:
+        raise ValueError(
+            "knowledge_expert requires the knowledge_server MCP tools; "
+            "got an empty sequence. Did you forget to "
+            "``await load_knowledge_server_tools()``?"
+        )
+    return create_react_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        prompt=KNOWLEDGE_EXPERT_PROMPT,
+        name="knowledge_expert",
+    )
+
+
 SPECIALIST_BUILDERS = {
     "math_expert": build_math_expert,
     "time_expert": build_time_expert,
@@ -335,6 +431,7 @@ SPECIALIST_BUILDERS = {
     "coder_expert": build_coder_expert,
     "data_expert": build_data_expert,
     "report_expert": build_report_expert,
+    "knowledge_expert": build_knowledge_expert,
 }
 """Registry for looking up specialists by name — used by tests and demos.
 
