@@ -119,14 +119,15 @@ SUPERVISOR_PROMPT_CODER = """\
 
 SUPERVISOR_PROMPT_KNOWLEDGE = """\
   - knowledge_expert : the USER's private PDF library, indexed in a
-      persistent Chroma vector store with hybrid (vector + BM25)
-      retrieval. Toolbelt:
+      persistent FAISS vector store with hybrid (vector + BM25 +
+      cross-encoder rerank) retrieval. Toolbelt:
         * knowledge_list_collections — enumerate user collections
         * knowledge_ingest_pdf       — chunk + embed a local PDF
                                        into a collection
-        * knowledge_search           — hybrid search; returns a
-                                       ``quality`` label so the
-                                       expert runs an internal
+        * knowledge_search           — hybrid search with reranking;
+                                       returns a ``quality`` label
+                                       and per-hit ``rerank_score``
+                                       so the expert runs an internal
                                        corrective-RAG loop
         * knowledge_delete_collection
       Delegate when the user asks something only the user's own

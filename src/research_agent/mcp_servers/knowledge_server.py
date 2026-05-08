@@ -195,6 +195,35 @@ return enough text to blow the LLM's context window.
 QUALITY_HIGH_THRESHOLD = 0.65
 QUALITY_MEDIUM_THRESHOLD = 0.40
 
+RERANK_OVERFETCH_MULTIPLIER = 3
+"""How many extra candidates to draw from RRF before reranking.
+
+The cross-encoder is most useful when it has slack to re-order:
+asking the bi-encoder + BM25 for ``top_k * 3`` candidates and
+trimming after rerank typically promotes 1-2 items per query that
+RRF alone would have buried. We cap at a small multiplier to keep
+the per-call latency bounded — see :class:`CrossEncoderReranker`'s
+own ``max_pairs`` guard for the second layer of protection.
+"""
+
+
+def _reranker_enabled() -> bool:
+    """Read the ``KNOWLEDGE_RERANKER_ENABLED`` env var at call time.
+
+    Read fresh on every call (not cached at import) so unit tests
+    can monkeypatch ``os.environ`` to flip the switch between
+    cases without re-importing the module.
+    """
+    raw = _os.environ.get("KNOWLEDGE_RERANKER_ENABLED", "1").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+# Lazy singleton: built on first ``_maybe_rerank`` call. Keeping the
+# import deferred means a process that never asks for reranking
+# (smoke tests, tooling) doesn't pay the ~1 s sentence_transformers
+# import cost on module load.
+_RERANKER: Any | None = None
+
 # ---------------------------------------------------------------------
 # Lazy module-level caches
 #
@@ -748,13 +777,69 @@ def _hybrid_fuse(
     return sorted(fused.values(), key=lambda r: r["rrf_score"], reverse=True)
 
 
+async def _maybe_rerank(
+    query: str, candidates: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Optionally rerank ``candidates`` with a local cross-encoder.
+
+    Returns the input list unchanged when:
+      * the ``KNOWLEDGE_RERANKER_ENABLED`` env var is falsey, or
+      * the reranker model fails to load (e.g. ``sentence_
+        transformers`` not importable on this host), or
+      * the underlying ``CrossEncoder.predict`` call raises.
+
+    In every fallback path each candidate still ends up with a
+    ``rerank_score`` key (set to ``None``) so the response shape is
+    stable regardless of whether reranking actually ran. Callers
+    must therefore tolerate ``rerank_score is None``.
+
+    The function is intentionally tolerant: search is the agent's
+    primary tool and breaking it because an optional reranker
+    misbehaved would be the wrong trade-off.
+    """
+    if not candidates:
+        return candidates
+    if not _reranker_enabled():
+        for c in candidates:
+            c.setdefault("rerank_score", None)
+        return candidates
+
+    global _RERANKER
+    try:
+        if _RERANKER is None:
+            from research_agent.rag.reranker import CrossEncoderReranker
+
+            _RERANKER = CrossEncoderReranker()
+            logger.info("Cross-encoder reranker initialised for knowledge_server")
+        return await _RERANKER.rerank(query, candidates)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Reranker unavailable ({}); falling back to RRF order", exc
+        )
+        for c in candidates:
+            c.setdefault("rerank_score", None)
+        return candidates
+
+
 @mcp.tool()
 async def search(
     query: str,
     collection: str = "default",
     top_k: int = 5,
 ) -> dict:
-    """Hybrid retrieval (vector + BM25) over an ingested collection.
+    """Hybrid retrieval (vector + BM25 + optional cross-encoder rerank).
+
+    Pipeline::
+
+        FAISS (top_k * 3) ─┐
+                           ├─ RRF fuse ─→ cross-encoder rerank ─→ trim
+        BM25  (top_k * 3) ─┘    (over-fetch)        (optional)    (top_k)
+
+    The reranker step uses a local ``BAAI/bge-reranker-base``
+    cross-encoder; toggle via the ``KNOWLEDGE_RERANKER_ENABLED`` env
+    var. When disabled or unavailable the pipeline degrades
+    gracefully to RRF order — the response shape is identical, just
+    with ``rerank_score: null`` on every hit.
 
     The response is shaped to make a CORRECTIVE-RAG agent's life easy:
     it carries per-hit scores AND a top-level ``quality`` label. The
@@ -782,10 +867,17 @@ async def search(
             top_score, mean_score, unique_sources,
             results: [
                 {content, source, page,
-                 vector_score, bm25_score, rrf_score,
+                 vector_score, bm25_score, rrf_score, rerank_score,
                  vector_rank, bm25_rank}
             ]
         }``
+
+        ``rerank_score`` is a float when the cross-encoder ran and
+        ``None`` when reranking was disabled / unavailable. The
+        ``quality`` label is computed from ``vector_score`` (whose
+        bands are calibrated for normalised cosine), not from the
+        cross-encoder's logits, so the corrective-RAG agent loop
+        keeps a stable signal across reranker on/off configurations.
 
         On failure: ``{error, context}``.
     """
@@ -806,10 +898,20 @@ async def search(
         )
     top_k = min(top_k, MAX_TOP_K)
 
-    def _search() -> dict[str, Any]:
+    def _collect_candidates() -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
+        """Sync phase: load FAISS, run vector + BM25, fuse via RRF.
+
+        Returns ``(candidates, None)`` on the happy path — the
+        candidate list is over-fetched (``top_k * RERANK_OVERFETCH_
+        MULTIPLIER``) so the async reranker has slack to re-order.
+
+        Returns ``(None, early_response)`` for cold-start cases
+        (collection missing / empty) so the caller can short-circuit
+        without paying the reranker startup cost.
+        """
         store = _load_faiss_store(collection)
         if store is None or len(store.index_to_docstore_id) == 0:
-            return {
+            return None, {
                 "collection": collection,
                 "query": query,
                 "top_k_returned": 0,
@@ -824,8 +926,9 @@ async def search(
                 ),
             }
 
-        # Over-fetch from each retriever, then fuse and trim.
-        retrieve_k = max(top_k * 3, 10)
+        # Over-fetch from each retriever so the cross-encoder has
+        # room to promote items the bi-encoder ranked lower.
+        retrieve_k = max(top_k * RERANK_OVERFETCH_MULTIPLIER, 10)
         try:
             raw_vec = store.similarity_search_with_score(query, k=retrieve_k)
         except Exception:  # noqa: BLE001
@@ -850,43 +953,14 @@ async def search(
         bm25_raw = bm25.search(query, top_k=retrieve_k)
         bm25_hits = [(idx, score, bm25.docs[idx]) for idx, score in bm25_raw]
 
-        fused = _hybrid_fuse(vector_hits, bm25_hits)[:top_k]
-
-        results: list[dict[str, Any]] = []
-        for rec in fused:
-            meta = rec["metadata"] or {}
-            results.append(
-                {
-                    "content": rec["content"],
-                    "source": meta.get("source", ""),
-                    "page": meta.get("page"),
-                    "vector_score": round(rec["vector_score"], 4),
-                    "bm25_score": round(rec["bm25_score"], 4),
-                    "rrf_score": round(rec["rrf_score"], 6),
-                    "vector_rank": rec["vector_rank"],
-                    "bm25_rank": rec["bm25_rank"],
-                }
-            )
-
-        scores = [r["vector_score"] for r in results]
-        top_score = max(scores) if scores else 0.0
-        mean_score = sum(scores) / len(scores) if scores else 0.0
-        unique_sources = len({r["source"] for r in results if r["source"]})
-        quality = _classify_quality(top_score, mean_score, unique_sources)
-
-        return {
-            "collection": collection,
-            "query": query,
-            "top_k_returned": len(results),
-            "quality": quality,
-            "top_score": round(top_score, 4),
-            "mean_score": round(mean_score, 4),
-            "unique_sources": unique_sources,
-            "results": results,
-        }
+        # Hand the full fused list to the reranker — trimming to
+        # ``top_k`` happens AFTER reranking, otherwise we'd lose the
+        # very candidates the cross-encoder is meant to promote.
+        candidates = _hybrid_fuse(vector_hits, bm25_hits)[:retrieve_k]
+        return candidates, None
 
     try:
-        return await asyncio.to_thread(_search)
+        candidates, early = await asyncio.to_thread(_collect_candidates)
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,
@@ -894,6 +968,56 @@ async def search(
                 f"search(query={query!r}, collection={collection!r}, top_k={top_k})"
             ),
         )
+
+    if early is not None:
+        return early
+
+    assert candidates is not None  # narrows for type checkers
+
+    # Reranking is best-effort: ``_maybe_rerank`` always returns a
+    # list of the same shape (with ``rerank_score`` populated or
+    # ``None``), even when the env-var is off or the model fails to
+    # load — the search response shape stays stable.
+    reranked = await _maybe_rerank(query, candidates)
+    final_records = reranked[:top_k]
+
+    results: list[dict[str, Any]] = []
+    for rec in final_records:
+        meta = rec["metadata"] or {}
+        results.append(
+            {
+                "content": rec["content"],
+                "source": meta.get("source", ""),
+                "page": meta.get("page"),
+                "vector_score": round(rec["vector_score"], 4),
+                "bm25_score": round(rec["bm25_score"], 4),
+                "rrf_score": round(rec["rrf_score"], 6),
+                "rerank_score": rec.get("rerank_score"),
+                "vector_rank": rec["vector_rank"],
+                "bm25_rank": rec["bm25_rank"],
+            }
+        )
+
+    # Quality classification stays on ``vector_score`` — those
+    # thresholds were calibrated against the bi-encoder's normalised
+    # cosine. The cross-encoder logits live on a different scale
+    # and would silently invalidate the high/medium/low bands.
+    scores = [r["vector_score"] for r in results]
+    top_score = max(scores) if scores else 0.0
+    mean_score = sum(scores) / len(scores) if scores else 0.0
+    unique_sources = len({r["source"] for r in results if r["source"]})
+    quality = _classify_quality(top_score, mean_score, unique_sources)
+
+    return {
+        "collection": collection,
+        "query": query,
+        "top_k_returned": len(results),
+        "quality": quality,
+        "top_score": round(top_score, 4),
+        "mean_score": round(mean_score, 4),
+        "unique_sources": unique_sources,
+        "results": results,
+    }
 
 
 # ---------------------------------------------------------------------

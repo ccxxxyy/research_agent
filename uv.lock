@@ -2730,6 +2730,23 @@ wheels = [
 ]
 
 [[package]]
+name = "modelscope"
+version = "1.36.3"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "filelock" },
+    { name = "packaging" },
+    { name = "requests" },
+    { name = "setuptools" },
+    { name = "tqdm" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/65/5a/1244466aec5502023e2e6e7ca0ccdd6efa4b24de39d428725caae01fb8b4/modelscope-1.36.3.tar.gz", hash = "sha256:a81b9d19ed615578b2370422403be861e79de195c26085310302f1b20e1ee1a1", size = 4589239, upload-time = "2026-04-28T18:00:54.039Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/2a/cd/07523b9008d5beccebf0fcbcb33b43924bd12dfbbe3b5e4520fdad52aaca/modelscope-1.36.3-py3-none-any.whl", hash = "sha256:65834a077347522d4473778692fded0b23b2a91cb3305811de0deabb83f20e98", size = 6085015, upload-time = "2026-04-28T18:00:50.056Z" },
+]
+
+[[package]]
 name = "more-itertools"
 version = "11.0.2"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -4656,6 +4673,7 @@ dependencies = [
     { name = "litellm" },
     { name = "loguru" },
     { name = "mcp" },
+    { name = "modelscope" },
     { name = "openai" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "psycopg-pool" },
@@ -4705,6 +4723,7 @@ requires-dist = [
     { name = "litellm" },
     { name = "loguru" },
     { name = "mcp" },
+    { name = "modelscope", specifier = ">=1.36.3" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "openai" },
     { name = "pre-commit", marker = "extra == 'dev'" },
