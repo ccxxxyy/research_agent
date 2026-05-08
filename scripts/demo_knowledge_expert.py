@@ -328,6 +328,53 @@ async def main() -> int:
     print(f"  transfer_to_knowledge_expert: "
           f"{sum(1 for n in calls if n == 'transfer_to_knowledge_expert')}")
 
+    # -----------------------------------------------------------------
+    # Reranker pipeline visualization
+    #
+    # Call knowledge_server.search() directly to surface the per-hit
+    # rerank_score in a tabular format. This is independent of what
+    # the LLM chose to cite — it shows the RAW retrieval pipeline
+    # output so we can visually confirm the cross-encoder is active
+    # and reordering candidates correctly.
+    # -----------------------------------------------------------------
+    print("\n=== Reranker pipeline (direct search call) ===")
+    try:
+        from research_agent.mcp_servers import knowledge_server as ks
+
+        search_result = await ks.search(
+            query="2030 carbon neutrality net-zero scope emissions",
+            collection=collection,
+            top_k=5,
+        )
+        if "error" in search_result:
+            print(f"  search error: {search_result['error']}")
+        else:
+            reranker_active = any(
+                r.get("rerank_score") is not None
+                for r in search_result.get("results", [])
+            )
+            print(f"  quality        : {search_result['quality']}")
+            print(f"  top_score (vec): {search_result['top_score']}")
+            print(f"  mean_score     : {search_result['mean_score']}")
+            print(f"  reranker active: {reranker_active}")
+            print(f"  hits returned  : {search_result['top_k_returned']}")
+            print()
+            print(f"  {'#':<3} {'rerank':>8} {'vector':>8} {'bm25':>8} "
+                  f"{'rrf':>10}  {'page':>4}  content (first 60 chars)")
+            print(f"  {'─'*3} {'─'*8} {'─'*8} {'─'*8} {'─'*10}  {'─'*4}  {'─'*40}")
+            for i, hit in enumerate(search_result.get("results", []), 1):
+                rs = hit.get("rerank_score")
+                rs_str = f"{rs:8.4f}" if rs is not None else "    n/a "
+                vs = f"{hit.get('vector_score', 0):8.4f}"
+                bs = f"{hit.get('bm25_score', 0):8.4f}"
+                rrf = f"{hit.get('rrf_score', 0):10.6f}"
+                page = f"{hit.get('page', '?'):>4}"
+                text = (hit.get("content", "") or "")[:60].replace("\n", " ")
+                print(f"  {i:<3} {rs_str} {vs} {bs} {rrf}  {page}  {text}")
+            print()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  (reranker visualization skipped: {exc})")
+
     print("\n=== Heuristic verification ===")
     ok_answer = bool(final.strip())
     ok_route = "knowledge_expert" in reached

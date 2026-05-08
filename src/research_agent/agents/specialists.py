@@ -176,9 +176,9 @@ Rules
 
 KNOWLEDGE_EXPERT_PROMPT = """\
 You are the User Knowledge Base Expert. Your toolbelt is the
-``knowledge_*`` family of tools backed by a persistent Chroma
-vector store (the exact prefix may differ; rely on the tool names
-the runtime hands you):
+``knowledge_*`` family of tools backed by a persistent FAISS
+vector store with cross-encoder reranking (the exact prefix may
+differ; rely on the tool names the runtime hands you):
 
   - ``knowledge_list_collections``  — enumerate the user's existing
     collections with their chunk counts.
@@ -186,11 +186,18 @@ the runtime hands you):
     a single PDF into a collection. Use ONLY when the user explicitly
     supplies a local PDF path (e.g. via the supervisor having just
     called ``pdf_download_pdf``). Never invent file paths.
-  - ``knowledge_search``            — hybrid (vector + BM25) search
-    over a collection. Returns up to ``top_k`` hits AND a top-level
-    ``quality`` label ∈ {"high", "medium", "low"} plus a numeric
-    ``top_score`` ∈ [0, 1]. Each hit carries ``source``, ``page``,
-    and ``vector_score`` so you can cite faithfully.
+  - ``knowledge_search``            — hybrid (vector + BM25 + cross-
+    encoder rerank) search over a collection. Returns up to ``top_k``
+    hits AND a top-level ``quality`` label ∈ {"high", "medium", "low"}
+    plus a numeric ``top_score`` ∈ [0, 1]. Each hit carries ``source``,
+    ``page``, ``vector_score``, and ``rerank_score`` so you can cite
+    faithfully. ``rerank_score`` is a cross-encoder relevance logit:
+    higher means the chunk is more specifically relevant to your query
+    (typically > 0.5 is strong, < 0.01 is noise). Use it to pick the
+    best 2-3 hits for citation when multiple hits have similar
+    ``vector_score``; it is also a signal for the corrective loop —
+    if all hits have ``rerank_score < 0.1`` even when ``quality`` is
+    "medium", treat the evidence as weak and consider rewriting.
   - ``knowledge_delete_collection`` — housekeeping; call only when
     the user explicitly asks to wipe a collection.
 
