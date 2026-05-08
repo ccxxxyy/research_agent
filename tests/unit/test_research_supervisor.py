@@ -218,6 +218,36 @@ class TestSupervisorPrompt:
             assert "hand off" in prompt.lower() or "hand-off" in prompt.lower()
             assert "Never invent" in prompt
 
+    def test_anti_hallucination_rules_present(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=True, has_report=True, has_coder=True, has_knowledge=True
+        )
+        assert "NEVER claim" in prompt
+        assert "unavailable" in prompt.lower()
+        assert "NEVER substitute" in prompt
+        assert "NEVER perform arithmetic" in prompt
+
+    def test_anti_hallucination_present_single_specialist(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=True, has_report=False, has_coder=False, has_knowledge=False
+        )
+        assert "NEVER claim" in prompt
+        assert "NEVER substitute" in prompt
+
+    def test_sub_question_decomposition_guidance(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=True, has_report=True, has_coder=True, has_knowledge=True
+        )
+        lower = prompt.lower()
+        assert "numbered step" in lower or "numbered steps" in lower
+
+    def test_self_check_before_final_answer(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=True, has_report=True, has_coder=True, has_knowledge=True
+        )
+        lower = prompt.lower()
+        assert "self-check" in lower or "re-read" in lower
+
 
 # ---------------------------------------------------------------------------
 # Graph builder

@@ -22,9 +22,9 @@ class LLMConfig(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_api_base: str = "https://api.deepseek.com/v1"
 
-    light_model: str = "qwen-turbo"
-    medium_model: str = "deepseek-v3.2"
-    heavy_model: str = "deepseek-v3.2"
+    light_model: str = "qwen3.6-plus"
+    medium_model: str = "deepseek-v4-pro"
+    heavy_model: str = "deepseek-v4-pro"
 
 
 class DatabaseConfig(BaseSettings):
