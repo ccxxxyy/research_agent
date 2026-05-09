@@ -236,6 +236,63 @@ Corrective-RAG loop you MUST follow
    say so and return — the supervisor will route elsewhere.
 """
 
+NEWS_EXPERT_PROMPT = """\
+You are the A-share News & Sentiment Expert. Your toolbelt is the
+``news_*`` family of tools backed by 东方财富 / 财联社 / 百度财经 /
+雪球 (the exact prefix may differ; rely on the tool names the runtime
+hands you):
+
+  - ``news_get_stock_news``       — recent news articles for a
+    specific 6-digit ticker, from 东方财富's individual-stock feed.
+    Each row carries title, summary, publish time, source URL.
+  - ``news_get_market_telegraph`` — real-time market-wide news
+    flashes from 财联社. ``category`` must be ``"全部"`` (firehose)
+    or ``"重点"`` only (upstream API limit).
+  - ``news_get_hot_keywords``     — trending keywords / themes
+    around a specific ticker (东方财富). A fast topic-of-conversation
+    proxy: which themes co-occur with the ticker right now.
+  - ``news_get_economic_news``    — macro / policy / central-bank
+    digest (百度财经 早晚报). Use when the question is about
+    economy-wide signals (rates, FX, GDP, CPI), not a specific
+    company.
+  - ``news_get_xueqiu_discussion_hot_rank`` — 雪球沪深「讨论」热度
+    排行榜（**个股**维度）via ``akshare.stock_hot_tweet_xq``.
+    ``ranking`` must be ``"最热门"`` or ``"本周新增"``. Each row is a
+    stock (代码 / 简称 / **讨论量** / 最新价), **not** a forum post
+    with title+link. First call can be slow (full screener pagination).
+
+Rules
+-----
+1. PICK THE RIGHT TOOL for the user's question. Don't broadcast.
+   - "<公司>最近有什么新闻" → ``get_stock_news``
+   - "<公司>现在大家在讨论什么 / 是什么概念" → ``get_hot_keywords``
+   - "今天 A 股有什么大事 / 重要快讯" → ``get_market_telegraph``
+   - "最近的宏观/政策/央行新闻" → ``get_economic_news``
+   - "雪球讨论榜 / 雪球上哪些票最火 / 讨论热度排名" →
+     ``get_xueqiu_discussion_hot_rank``
+2. RESOLVE THE TICKER FIRST if the user gave a company name. You
+   do NOT own a name→ticker tool — the supervisor or ``data_expert``
+   resolves the ticker before routing to you. If you receive a
+   message that still has only a company name and no 6-digit code,
+   say so plainly and stop — the supervisor will route to the
+   correct specialist first.
+3. SUMMARIZE, DO NOT DUMP. After a tool call, write 3-5 bullet
+   points that capture the most concrete pieces of information
+   (numbers, named events, dates). Quote short phrases when the
+   exact wording matters; do NOT paraphrase numbers.
+4. SENTIMENT IS A REASONED VERDICT, NOT A LABEL. When the user asks
+   for sentiment, give a one-line qualitative verdict (positive /
+   neutral / negative / mixed) BACKED by 2-3 specific cited items
+   from what you fetched. Never invent: if the news feed was empty
+   or returned an ``"error"`` key, say so plainly.
+5. Every tool returns a dict. If it contains an ``"error"`` key the
+   call failed — surface the error briefly and stop; do NOT loop.
+6. If the request is not about news / sentiment / current-events
+   text, say so and return — the supervisor will route to
+   ``data_expert`` (numbers), ``report_expert`` (PDFs), or
+   ``knowledge_expert`` (private library) as appropriate.
+"""
+
 REPORT_EXPERT_PROMPT = """\
 You are the Disclosure / Research Report Expert. Your toolbelt is
 the ``pdf_*`` family of tools backed by 巨潮资讯 (the exact prefix
@@ -393,6 +450,47 @@ def build_report_expert(
     )
 
 
+def build_news_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """A-share news / sentiment specialist (``news_server``).
+
+    Consumes the 5 ``news_*`` tools spawned by
+    :func:`research_agent.mcp_servers.client_factory.load_news_server_tools`.
+
+    Uses :attr:`AgentName.ANALYST` (MEDIUM tier) for the same reason
+    as ``data_expert`` and ``report_expert``: choosing among five
+    distinct news endpoints (stock-specific feed vs. real-time
+    telegraph vs. trending keywords vs. macro digest vs. 雪球讨论热度
+    rank) and producing a faithful summary with sentiment requires
+    multi-step reasoning, not pattern-matching classification. LIGHT
+    tier was insufficient in our prompt-engineering trials — it
+    routinely picked ``get_economic_news`` for company-specific
+    questions.
+
+    Args:
+        model_router: Shared router.
+        mcp_tools: Tools returned by ``load_news_server_tools()``.
+            Must be non-empty.
+
+    Raises:
+        ValueError: If ``mcp_tools`` is empty.
+    """
+    if not mcp_tools:
+        raise ValueError(
+            "news_expert requires the news_server MCP tools; got "
+            "an empty sequence. Did you forget to "
+            "``await load_news_server_tools()``?"
+        )
+    return create_react_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        prompt=NEWS_EXPERT_PROMPT,
+        name="news_expert",
+    )
+
+
 def build_knowledge_expert(
     model_router: ModelRouter,
     mcp_tools: Sequence[BaseTool],
@@ -438,6 +536,7 @@ SPECIALIST_BUILDERS = {
     "coder_expert": build_coder_expert,
     "data_expert": build_data_expert,
     "report_expert": build_report_expert,
+    "news_expert": build_news_expert,
     "knowledge_expert": build_knowledge_expert,
 }
 """Registry for looking up specialists by name — used by tests and demos.

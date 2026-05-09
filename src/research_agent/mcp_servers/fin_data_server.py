@@ -1,9 +1,9 @@
 """MCP Server — Chinese A-share financial data via ``akshare``.
 
 This server is the **data plane** of the financial research pipeline.
-It replaces the Phase-0 placeholder ``search_server`` with real, free,
-no-API-key finance endpoints backed by ``akshare``, which in turn
-aggregates data from 东方财富 / 新浪财经 / 巨潮资讯.
+It exposes real, free, no-API-key finance endpoints backed by
+``akshare``, which in turn aggregates data from 东方财富 / 新浪财经 /
+巨潮资讯.
 
 Tools exposed
 -------------

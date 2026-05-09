@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from research_agent.api.routes import chat, health, knowledge, research, supervisor
+from research_agent.api.routes import health, knowledge, supervisor
 from research_agent.config import get_settings
 from research_agent.observability.logging import setup_logging
 
@@ -35,12 +35,13 @@ async def _try_build_research_supervisor(model_router, checkpointer):
         load_code_server_tools,
         load_fin_data_server_tools,
         load_knowledge_tools_inproc,
+        load_news_server_tools,
         load_pdf_report_server_tools,
     )
 
     # NOTE: ``load_knowledge_tools_inproc`` is the in-process replacement
     # for the (deprecated) MCP-stdio ``load_knowledge_server_tools``.
-    # The other three loaders still spawn MCP subprocesses — those
+    # The other four loaders still spawn MCP subprocesses — those
     # servers' import chains are light enough that the stdio path is
     # stable. See ``knowledge_server.py`` for why knowledge is special.
     results = await asyncio.gather(
@@ -48,6 +49,7 @@ async def _try_build_research_supervisor(model_router, checkpointer):
         load_pdf_report_server_tools(),
         load_code_server_tools(),
         load_knowledge_tools_inproc(),
+        load_news_server_tools(),
         return_exceptions=True,
     )
     names = (
@@ -55,6 +57,7 @@ async def _try_build_research_supervisor(model_router, checkpointer):
         "pdf_report_server",
         "code_server",
         "knowledge_tools_inproc",
+        "news_server",
     )
     tools: dict[str, list] = {}
     for name, r in zip(names, results):
@@ -79,6 +82,7 @@ async def _try_build_research_supervisor(model_router, checkpointer):
             report_tools=tools["pdf_report_server"] or None,
             coder_tools=tools["code_server"] or None,
             knowledge_tools=tools["knowledge_tools_inproc"] or None,
+            news_tools=tools["news_server"] or None,
             checkpointer=checkpointer,
         )
     except Exception:  # noqa: BLE001
@@ -106,46 +110,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     model_router = ModelRouter(settings.llm)
 
-    # Phase-3 ``build_research_graph`` was backed by ``langchain_chroma``,
-    # which we removed during the FAISS migration (see
-    # ``mcp_servers/knowledge_server.py``). The Phase-3 RAG endpoint is
-    # therefore gracefully disabled here — Phase-4.5 / 4.6 superseded it
-    # with the in-process FAISS-backed ``knowledge_expert``. We keep the
-    # ``app.state.graph`` slot for backwards compatibility with the
-    # ``/research`` route (it 503s when this attribute is None).
-    graph = None
-    try:
-        from langchain_chroma import Chroma  # type: ignore[import-not-found]
-
-        from research_agent.graph.supervisor import build_research_graph
-        from research_agent.rag.embedder import create_embeddings
-        from research_agent.rag.retriever import HybridRetriever
-
-        embeddings = create_embeddings(settings.llm)
-        vectorstore = Chroma(
-            collection_name="research_agent",
-            embedding_function=embeddings,
-        )
-        hybrid_retriever = HybridRetriever(vectorstore=vectorstore)
-        graph = build_research_graph(
-            model_router=model_router,
-            hybrid_retriever=hybrid_retriever,
-            checkpointer=checkpointer,
-            memory_store=memory_store,
-        )
-        logger.info("Phase-3 research graph compiled (Chroma available).")
-    except ImportError:
-        logger.warning(
-            "langchain_chroma not installed; Phase-3 /research route "
-            "will return 503. Use the Phase-4 /supervisor or /knowledge "
-            "endpoints instead."
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception(
-            "Failed to compile the Phase-3 research graph; "
-            "/research route will return 503."
-        )
-
     supervisor_graph = build_minimal_supervisor(
         model_router=model_router,
         checkpointer=checkpointer,
@@ -155,7 +119,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         model_router=model_router, checkpointer=checkpointer
     )
 
-    app.state.graph = graph
     app.state.supervisor_graph = supervisor_graph
     app.state.research_supervisor_graph = research_supervisor_graph
     app.state.model_router = model_router
@@ -182,8 +145,6 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
-    app.include_router(research.router)
-    app.include_router(chat.router)
     app.include_router(knowledge.router)
     app.include_router(supervisor.router)
 

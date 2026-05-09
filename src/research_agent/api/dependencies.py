@@ -12,28 +12,6 @@ from research_agent.llm.provider import ModelRouter
 from research_agent.memory.manager import MemoryManager
 
 
-def get_graph(request: Request) -> CompiledStateGraph:
-    """Return the Phase-3 RAG-backed research graph.
-
-    The graph is optional — if ``langchain_chroma`` is not installed
-    (post FAISS migration) the lifespan leaves this attribute as
-    ``None`` and we surface a 503 here. Use the Phase-4 ``/supervisor``
-    or ``/knowledge`` routes instead, which are backed by FAISS.
-    """
-    graph = getattr(request.app.state, "graph", None)
-    if graph is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Phase-3 research graph is not available: its Chroma "
-                "vector store dependency was removed during the FAISS "
-                "migration. Use POST /supervisor or the /knowledge "
-                "endpoints (Phase-4.5 / 4.6) instead."
-            ),
-        )
-    return graph
-
-
 def get_supervisor_graph(request: Request) -> CompiledStateGraph:
     return request.app.state.supervisor_graph
 
@@ -77,7 +55,6 @@ def get_memory_manager(request: Request) -> MemoryManager:
     return MemoryManager(store)
 
 
-GraphDep = Annotated[CompiledStateGraph, Depends(get_graph)]
 SupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_supervisor_graph)]
 ResearchSupervisorGraphDep = Annotated[
     CompiledStateGraph, Depends(get_research_supervisor_graph)

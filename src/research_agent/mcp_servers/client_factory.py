@@ -53,6 +53,7 @@ ECHO_SERVER_MODULE = "research_agent.mcp_servers.echo_server"
 FIN_DATA_SERVER_MODULE = "research_agent.mcp_servers.fin_data_server"
 PDF_REPORT_SERVER_MODULE = "research_agent.mcp_servers.pdf_report_server"
 KNOWLEDGE_SERVER_MODULE = "research_agent.mcp_servers.knowledge_server"
+NEWS_SERVER_MODULE = "research_agent.mcp_servers.news_server"
 
 
 async def load_code_server_tools() -> list[BaseTool]:
@@ -100,6 +101,30 @@ async def load_fin_data_server_tools() -> list[BaseTool]:
     """
     client = MultiServerMCPClient(
         {"fin": _stdio_server_spec(FIN_DATA_SERVER_MODULE)},
+        tool_name_prefix=True,
+    )
+    return await client.get_tools()
+
+
+async def load_news_server_tools() -> list[BaseTool]:
+    """Spawn the ``news_server`` over stdio and return its tool list.
+
+    Exposes five A-share news tools, each prefixed with ``news_`` by
+    ``tool_name_prefix=True``:
+
+    - ``news_get_stock_news``        — 东方财富 individual-stock news.
+    - ``news_get_market_telegraph``  — 财联社 real-time flashes.
+    - ``news_get_hot_keywords``      — 东方财富 trending keywords.
+    - ``news_get_economic_news``     — 百度财经 早晚报 digest.
+    - ``news_get_xueqiu_discussion_hot_rank`` — 雪球讨论热度个股榜
+      (``akshare.stock_hot_tweet_xq``).
+
+    Like ``fin_data_server``, the subprocess imports ``akshare``
+    lazily on first tool call (~1 second) and reuses the warm
+    interpreter for subsequent calls.
+    """
+    client = MultiServerMCPClient(
+        {"news": _stdio_server_spec(NEWS_SERVER_MODULE)},
         tool_name_prefix=True,
     )
     return await client.get_tools()
@@ -214,6 +239,7 @@ __all__ = [
     "ECHO_SERVER_MODULE",
     "FIN_DATA_SERVER_MODULE",
     "KNOWLEDGE_SERVER_MODULE",
+    "NEWS_SERVER_MODULE",
     "PDF_REPORT_SERVER_MODULE",
     "extract_text_content",
     "load_code_server_tools",
@@ -221,5 +247,6 @@ __all__ = [
     "load_fin_data_server_tools",
     "load_knowledge_server_tools",
     "load_knowledge_tools_inproc",
+    "load_news_server_tools",
     "load_pdf_report_server_tools",
 ]
