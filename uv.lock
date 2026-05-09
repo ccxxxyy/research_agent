@@ -4673,7 +4673,6 @@ dependencies = [
     { name = "litellm" },
     { name = "loguru" },
     { name = "mcp" },
-    { name = "modelscope" },
     { name = "openai" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "psycopg-pool" },
@@ -4699,6 +4698,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+modelscope = [
+    { name = "modelscope" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -4723,7 +4725,7 @@ requires-dist = [
     { name = "litellm" },
     { name = "loguru" },
     { name = "mcp" },
-    { name = "modelscope", specifier = ">=1.36.3" },
+    { name = "modelscope", marker = "extra == 'modelscope'", specifier = ">=1.36.3" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "openai" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -4744,7 +4746,7 @@ requires-dist = [
     { name = "unstructured", extras = ["md", "pdf"] },
     { name = "uvicorn", extras = ["standard"] },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "modelscope"]
 
 [[package]]
 name = "rich"

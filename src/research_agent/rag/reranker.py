@@ -57,10 +57,11 @@ _MODELSCOPE_CACHE_PATH = os.path.expanduser(
 """Pre-computed path to the ModelScope cache directory.
 
 On Chinese networks HuggingFace Hub's Xet S3 backend is often
-unreachable. If the weights were pre-downloaded via
-``modelscope.snapshot_download('BAAI/bge-reranker-base')`` they
-land here. We prefer this path when it exists and contains the
-safetensors file, avoiding any network call at model-load time.
+unreachable. If the weights were pre-downloaded (e.g. via
+``modelscope.snapshot_download('BAAI/bge-reranker-base')`` after
+``uv sync --extra modelscope``) they land here. We prefer this path
+when it exists and contains the safetensors file, avoiding any
+network call at model-load time.
 """
 
 
@@ -87,8 +88,9 @@ Resolved at import time via :func:`_resolve_default_model`:
 
 * If ``KNOWLEDGE_RERANKER_MODEL`` is set, that wins.
 * Otherwise, if ``~/.cache/modelscope/hub/models/BAAI/
-  bge-reranker-base/model.safetensors`` exists (pre-downloaded via
-  ``modelscope``), we use the local path — zero network IO.
+  bge-reranker-base/model.safetensors`` exists (pre-downloaded with
+  the optional ``modelscope`` extra), we use the local path — zero
+  network IO.
 * Otherwise falls back to the HuggingFace model id
   ``BAAI/bge-reranker-base`` (needs HF Hub access or a warm
   ``~/.cache/huggingface`` cache).
