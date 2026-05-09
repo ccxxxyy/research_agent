@@ -33,8 +33,6 @@ class DatabaseConfig(BaseSettings):
     postgres_uri: str = "postgresql+asyncpg://research:research@localhost:5432/research_agent"
     postgres_sync_uri: str = "postgresql://research:research@localhost:5432/research_agent"
     redis_url: str = "redis://localhost:6379/0"
-    chroma_host: str = "localhost"
-    chroma_port: int = 8000
 
 
 class ObservabilityConfig(BaseSettings):
@@ -58,6 +56,7 @@ class Settings(BaseSettings):
     app_env: Environment = Environment.DEVELOPMENT
     app_host: str = "0.0.0.0"
     app_port: int = 8080
+    cors_origins: str = "*"
 
     llm: LLMConfig = LLMConfig()
     database: DatabaseConfig = DatabaseConfig()

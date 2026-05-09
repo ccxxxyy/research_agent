@@ -128,6 +128,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+def _parse_cors_origins(raw: str) -> list[str]:
+    """Parse comma-separated CORS origins or wildcard."""
+    if raw.strip() == "*":
+        return ["*"]
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Research Agent",
@@ -136,10 +143,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    settings = get_settings()
+    origins = _parse_cors_origins(settings.cors_origins)
+
     app.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=origins,
+        allow_credentials=origins != ["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
