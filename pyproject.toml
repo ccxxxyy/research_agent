@@ -52,7 +52,6 @@ dependencies = [
     "langchain-huggingface>=1.2.2",
     "langgraph-checkpoint-sqlite>=3.0.3",
     "akshare>=1.18.56",
-    "modelscope>=1.36.3",
 ]
 
 [project.optional-dependencies]
@@ -64,6 +63,13 @@ dev = [
     "mypy",
     "httpx",
     "pre-commit",
+]
+# Optional: only needed to run ``modelscope.snapshot_download(...)`` when
+# priming ``~/.cache/modelscope/...`` for the reranker on networks where
+# HuggingFace Hub is slow. Runtime reranking uses ``sentence-transformers``
+# only; it does not import the ``modelscope`` package.
+modelscope = [
+    "modelscope>=1.36.3",
 ]
 
 [project.scripts]
