@@ -11,13 +11,13 @@ This graph is the **real product**. It orchestrates three
 MCP-delivered specialists that share the same A-share / 巨潮资讯
 data surface the Agent will hit in production:
 
-              ┌──────────────────────────────────┐
-              │       research_supervisor        │  ← HEAVY tier LLM
-              └─┬────────┬───────────┬─────────┬─┘
-                │        │           │         │
-                ▼        ▼           ▼         ▼
-          data_expert report_expert coder_expert knowledge_expert
-          (fin_data)  (pdf_report)  (code_server) (knowledge_server)
+              ┌──────────────────────────────────────────┐
+              │           research_supervisor            │  ← HEAVY tier LLM
+              └─┬────────┬───────────┬─────────┬───────┬─┘
+                │        │           │         │       │
+                ▼        ▼           ▼         ▼       ▼
+          data_expert report_expert coder_expert news_expert knowledge_expert
+          (fin_data)  (pdf_report)  (code_server) (news_server) (knowledge_server)
 
 Typical flow for "分析 宁德时代 2023 年业绩 + ESG 披露中提到的碳中和承诺":
 
@@ -67,6 +67,7 @@ from research_agent.agents.specialists import (
     build_coder_expert,
     build_data_expert,
     build_knowledge_expert,
+    build_news_expert,
     build_report_expert,
 )
 from research_agent.llm.provider import ModelRouter
@@ -115,6 +116,31 @@ SUPERVISOR_PROMPT_CODER = """\
       Delegate when the user needs a derived metric (mean / std /
       growth rate), a sort / filter over returned rows, or any other
       computation that the other specialists did not pre-compute.
+"""
+
+SUPERVISOR_PROMPT_NEWS = """\
+  - news_expert   : A-share news & sentiment via 东方财富 / 财联社 /
+      百度财经 / 雪球. Toolbelt:
+        * news_get_stock_news        — recent news for a 6-digit
+                                       ticker (东方财富 individual feed)
+        * news_get_market_telegraph  — real-time market flashes from
+                                       财联社 (filter category: only
+                                       "全部" or "重点" are supported)
+        * news_get_hot_keywords      — trending themes / keywords
+                                       co-occurring with a ticker
+        * news_get_economic_news     — daily macro / policy digest
+                                       (百度财经 早晚报)
+        * news_get_xueqiu_discussion_hot_rank — 雪球讨论热度个股榜
+                                       (``ranking``: ``"最热门"`` or
+                                       ``"本周新增"``; wraps
+                                       ``stock_hot_tweet_xq`` — rows
+                                       are stocks, not post threads)
+      Delegate when the user asks: "<公司>最近的新闻 / 舆情 / 热度",
+      "今天 A 股有什么大事 / 重要快讯", "市场对 <公司> 的情绪如何",
+      "最近的宏观 / 政策 / 央行新闻", "雪球讨论榜 / 雪球最热标的".
+      Do NOT route here for raw numerical / fundamentals data, or
+      for official disclosures like 年报 / 公告 — those belong to
+      other specialists.
 """
 
 SUPERVISOR_PROMPT_KNOWLEDGE = """\
@@ -177,7 +203,7 @@ Your job
    with an ``"error"`` key, say so plainly and do NOT fabricate a
    substitute.
 6. Do NOT call specialist tools yourself. You have no direct access
-   to ``fin_*``, ``pdf_*``, ``code_*``, or ``knowledge_*`` —
+   to ``fin_*``, ``pdf_*``, ``code_*``, ``news_*``, or ``knowledge_*`` —
    only to the ``transfer_to_*`` hand-off tools.
 
 CRITICAL anti-hallucination rules
@@ -212,6 +238,7 @@ def _build_supervisor_prompt(
     has_report: bool,
     has_coder: bool,
     has_knowledge: bool,
+    has_news: bool,
 ) -> str:
     """Assemble the supervisor prompt to match the actual team roster.
 
@@ -227,6 +254,8 @@ def _build_supervisor_prompt(
         parts.append(SUPERVISOR_PROMPT_REPORT)
     if has_coder:
         parts.append(SUPERVISOR_PROMPT_CODER)
+    if has_news:
+        parts.append(SUPERVISOR_PROMPT_NEWS)
     if has_knowledge:
         parts.append(SUPERVISOR_PROMPT_KNOWLEDGE)
     parts.append("\n" + SUPERVISOR_PROMPT_RULES)
@@ -240,6 +269,7 @@ def build_research_supervisor(
     report_tools: Sequence[BaseTool] | None = None,
     coder_tools: Sequence[BaseTool] | None = None,
     knowledge_tools: Sequence[BaseTool] | None = None,
+    news_tools: Sequence[BaseTool] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     supervisor_tier: ModelTier = ModelTier.HEAVY,
 ) -> CompiledStateGraph:
@@ -248,8 +278,8 @@ def build_research_supervisor(
     The graph includes exactly the specialists whose tool lists were
     supplied (non-empty). A supervisor with zero specialists would be
     useless, so at least one of ``data_tools`` / ``report_tools`` /
-    ``coder_tools`` / ``knowledge_tools`` must be non-empty — we fail
-    loudly otherwise.
+    ``coder_tools`` / ``knowledge_tools`` / ``news_tools`` must be
+    non-empty — we fail loudly otherwise.
 
     Args:
         model_router: Shared router (supervisor uses
@@ -268,6 +298,9 @@ def build_research_supervisor(
         knowledge_tools: Output of
             :func:`research_agent.mcp_servers.client_factory.load_knowledge_server_tools`.
             When omitted or empty, ``knowledge_expert`` is not added.
+        news_tools: Output of
+            :func:`research_agent.mcp_servers.client_factory.load_news_server_tools`.
+            When omitted or empty, ``news_expert`` is not added.
         checkpointer: Optional LangGraph checkpointer for per-``thread_id``
             conversation persistence.
         supervisor_tier: Override supervisor model tier. Defaults to
@@ -284,12 +317,14 @@ def build_research_supervisor(
     has_report = bool(report_tools)
     has_coder = bool(coder_tools)
     has_knowledge = bool(knowledge_tools)
+    has_news = bool(news_tools)
 
-    if not (has_data or has_report or has_coder or has_knowledge):
+    if not (has_data or has_report or has_coder or has_knowledge or has_news):
         raise ValueError(
             "build_research_supervisor needs at least one specialist's "
             "tools. Supply data_tools and/or report_tools and/or "
-            "coder_tools and/or knowledge_tools — all four were empty."
+            "coder_tools and/or knowledge_tools and/or news_tools — "
+            "all five were empty."
         )
 
     agents: list = []
@@ -304,6 +339,9 @@ def build_research_supervisor(
     if has_coder:
         agents.append(build_coder_expert(model_router, coder_tools or []))
         roster.append("coder_expert")
+    if has_news:
+        agents.append(build_news_expert(model_router, news_tools or []))
+        roster.append("news_expert")
     if has_knowledge:
         agents.append(build_knowledge_expert(model_router, knowledge_tools or []))
         roster.append("knowledge_expert")
@@ -314,6 +352,7 @@ def build_research_supervisor(
         has_report=has_report,
         has_coder=has_coder,
         has_knowledge=has_knowledge,
+        has_news=has_news,
     )
 
     workflow = create_supervisor(
@@ -337,6 +376,7 @@ __all__ = [
     "SUPERVISOR_PROMPT_DATA",
     "SUPERVISOR_PROMPT_REPORT",
     "SUPERVISOR_PROMPT_CODER",
+    "SUPERVISOR_PROMPT_NEWS",
     "SUPERVISOR_PROMPT_KNOWLEDGE",
     "SUPERVISOR_PROMPT_RULES",
 ]

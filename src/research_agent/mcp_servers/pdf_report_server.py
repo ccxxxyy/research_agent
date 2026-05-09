@@ -1,8 +1,9 @@
 """MCP Server — A-share announcement / research-report PDFs (巨潮资讯).
 
-This is the **document plane** of the Phase-4 financial agent. It
-replaces the Phase-0 placeholder ``document_server`` and is the
-upstream data source for Phase-4.5's RAG ingestion pipeline.
+This is the **document plane** of the financial agent. It is the
+upstream data source for the ``knowledge_server`` ingestion pipeline
+(``knowledge_ingest_pdf`` is typically invoked on a path returned by
+``download_pdf`` here).
 
 Why 巨潮资讯
 ------------
