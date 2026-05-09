@@ -9,8 +9,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      chroma:
-        condition: service_started
     volumes:
       - ./data:/app/data
 
@@ -42,14 +40,6 @@ services:
       timeout: 5s
       retries: 5
 
-  chroma:
-    image: chromadb/chroma:latest
-    ports:
-      - "8000:8000"
-    volumes:
-      - chromadata:/chroma/chroma
-
 volumes:
   pgdata:
   redisdata:
-  chromadata:

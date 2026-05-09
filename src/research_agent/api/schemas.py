@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -123,24 +122,6 @@ class ResearchSupervisorSSEEvent(BaseModel):
     content: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-
-# ---------- Knowledge ----------
-
-class KnowledgeUploadRequest(BaseModel):
-    collection: str = "default"
-
-
-class KnowledgeDocument(BaseModel):
-    id: str
-    content_preview: str
-    metadata: dict[str, Any] = {}
-    created_at: datetime | None = None
-
-
-class KnowledgeListResponse(BaseModel):
-    collection: str
-    total: int
-    documents: list[KnowledgeDocument]
 
 
 # ---------- Health ----------
