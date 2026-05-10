@@ -50,6 +50,15 @@ class ResearchSupervisorRequest(BaseModel):
         max_length=4000,
         description="Natural-language research question.",
     )
+    user_id: str = Field(
+        default="anonymous",
+        min_length=1,
+        max_length=64,
+        description=(
+            "User identifier for long-term memory isolation. "
+            "Omit for anonymous (no cross-session persistence)."
+        ),
+    )
     thread_id: str | None = Field(
         None,
         description=(

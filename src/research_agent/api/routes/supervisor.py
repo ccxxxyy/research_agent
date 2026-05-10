@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from loguru import logger
 
 from research_agent.api.dependencies import (
+    MemoryDep,
     ResearchSupervisorGraphDep,
     SupervisorGraphDep,
 )
@@ -119,28 +120,76 @@ async def supervisor_chat(
 async def supervisor_research(
     request: ResearchSupervisorRequest,
     graph: ResearchSupervisorGraphDep,
+    memory: MemoryDep,
 ) -> ResearchSupervisorResponse:
     """Invoke the financial-research supervisor synchronously.
 
-    Blocks until the supervisor produces a final answer. For long-
-    running queries or UIs that want progressive feedback, use
-    ``POST /api/supervisor/research/stream`` instead.
+    Memory lifecycle:
+      1. Load user's long-term context (preferences + recent research
+         history) and inject as a system-message preamble.
+      2. Execute the research graph (short-term state managed by
+         the checkpointer via thread_id).
+      3. Save the completed research result to long-term memory
+         for cross-session retrieval.
     """
     thread_id = request.thread_id or str(uuid.uuid4())
+    user_id = request.user_id
     config: dict = {"configurable": {"thread_id": thread_id}}
     if request.recursion_limit is not None:
         config["recursion_limit"] = request.recursion_limit
 
-    logger.info("Research-supervisor invoke: thread={}", thread_id)
+    logger.info(
+        "Research-supervisor invoke: user={}, thread={}", user_id, thread_id
+    )
+
+    # --- Long-term memory: load user context ---
+    messages_input: list = []
+    if user_id != "anonymous":
+        user_ctx = await memory.get_user_context(user_id)
+        context_parts: list[str] = []
+        if user_ctx.get("preferences"):
+            prefs = "; ".join(
+                p.get("content", str(p)) for p in user_ctx["preferences"]
+            )
+            context_parts.append(f"User preferences: {prefs}")
+        if user_ctx.get("recent_research"):
+            history_lines = [
+                f"- {r.get('query', '?')}: {r.get('summary', '')[:100]}"
+                for r in user_ctx["recent_research"][:3]
+            ]
+            context_parts.append(
+                "Recent research history:\n" + "\n".join(history_lines)
+            )
+        if context_parts:
+            from langchain_core.messages import SystemMessage
+
+            messages_input.append(
+                SystemMessage(content="\n\n".join(context_parts))
+            )
+
+    messages_input.append(HumanMessage(content=request.query))
 
     result = await graph.ainvoke(
-        {"messages": [HumanMessage(content=request.query)]},
+        {"messages": messages_input},
         config=config,
     )
     messages = result.get("messages", [])
+    reply = _final_assistant_text(messages)
+
+    # --- Long-term memory: save research result ---
+    if user_id != "anonymous" and reply:
+        try:
+            await memory.save_research_result(
+                user_id=user_id,
+                query=request.query,
+                summary=reply,
+                thread_id=thread_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to save research memory: {}", exc)
 
     return ResearchSupervisorResponse(
-        reply=_final_assistant_text(messages),
+        reply=reply,
         thread_id=thread_id,
         specialists_reached=_specialists_reached(messages),
         message_count=len(messages),
@@ -306,6 +355,7 @@ async def _research_event_stream(
 async def supervisor_research_stream(
     request: ResearchSupervisorRequest,
     graph: ResearchSupervisorGraphDep,
+    memory: MemoryDep,
 ) -> StreamingResponse:
     """Stream the research-supervisor workflow via SSE.
 
@@ -315,14 +365,44 @@ async def supervisor_research_stream(
     the graph raised). The ``X-Thread-ID`` response header carries
     the resolved thread id so that clients can reuse it in a
     follow-up call without parsing the first event.
+
+    Long-term memory context is injected the same way as the sync
+    endpoint; result persistence happens client-side (stream callers
+    should POST to ``/api/memory/research`` after consuming the
+    final event if they want to persist the result).
     """
     thread_id = request.thread_id or str(uuid.uuid4())
-    logger.info("Research-supervisor stream: thread={}", thread_id)
+    user_id = request.user_id
+    logger.info(
+        "Research-supervisor stream: user={}, thread={}", user_id, thread_id
+    )
+
+    # Inject user context into the query preamble for streaming too
+    query_with_context = request.query
+    if user_id != "anonymous":
+        user_ctx = await memory.get_user_context(user_id)
+        context_parts: list[str] = []
+        if user_ctx.get("recent_research"):
+            history_lines = [
+                f"- {r.get('query', '?')}: {r.get('summary', '')[:80]}"
+                for r in user_ctx["recent_research"][:3]
+            ]
+            context_parts.append(
+                "[User history]\n" + "\n".join(history_lines)
+            )
+        if context_parts:
+            query_with_context = (
+                "\n\n".join(context_parts) + "\n\n[Current question]\n" + request.query
+            )
 
     return StreamingResponse(
         _research_event_stream(
-            graph, request.query, thread_id, request.recursion_limit
+            graph, query_with_context, thread_id, request.recursion_limit
         ),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Thread-ID": thread_id},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Thread-ID": thread_id,
+            "X-User-ID": user_id,
+        },
     )
