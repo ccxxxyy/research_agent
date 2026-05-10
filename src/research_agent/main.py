@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from research_agent.api.routes import health, knowledge, supervisor
+from research_agent.api.routes import health, knowledge, memory, supervisor
 from research_agent.config import get_settings
 from research_agent.observability.logging import setup_logging
 
@@ -189,6 +189,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(knowledge.router)
+    app.include_router(memory.router)
     app.include_router(supervisor.router)
 
     return app
