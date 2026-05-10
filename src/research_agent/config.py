@@ -21,10 +21,20 @@ class LLMConfig(BaseSettings):
     openai_api_base: str = "https://api.openai.com/v1"
     deepseek_api_key: str = ""
     deepseek_api_base: str = "https://api.deepseek.com/v1"
+    dashscope_api_key: str = ""
+    dashscope_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    light_model: str = "qwen3.6-plus"
-    medium_model: str = "deepseek-v4-pro"
+    light_model: str = "qwen3-max-2026-01-23"
+    light_api_key: str = ""
+    light_api_base: str = ""
+
+    medium_model: str = "qwen3.6-plus"
+    medium_api_key: str = ""
+    medium_api_base: str = ""
+
     heavy_model: str = "deepseek-v4-pro"
+    heavy_api_key: str = ""
+    heavy_api_base: str = ""
 
 
 class DatabaseConfig(BaseSettings):
@@ -57,6 +67,8 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8080
     cors_origins: str = "*"
+    api_secret_key: str = ""
+    rate_limit_rpm: int = 30
 
     llm: LLMConfig = LLMConfig()
     database: DatabaseConfig = DatabaseConfig()
