@@ -127,6 +127,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
+    # --- Graceful shutdown: release resources in reverse order ---
+    logger.info("Shutting down: releasing resources...")
+
+    # Close memory store connection pool
+    if hasattr(memory_store, "conn") and hasattr(memory_store.conn, "close"):
+        try:
+            memory_store.conn.close()
+            logger.info("Memory store connection pool closed.")
+        except Exception as e:
+            logger.warning("Error closing memory store pool: {}", e)
+
+    # Close checkpointer connection pool / sqlite connection
+    if hasattr(checkpointer, "conn"):
+        conn = checkpointer.conn
+        if hasattr(conn, "close"):
+            try:
+                if asyncio.iscoroutinefunction(getattr(conn, "close", None)):
+                    await conn.close()
+                else:
+                    conn.close()
+                logger.info("Checkpointer connection closed.")
+            except Exception as e:
+                logger.warning("Error closing checkpointer connection: {}", e)
+
+    logger.info("Shutdown complete.")
+
 
 def _parse_cors_origins(raw: str) -> list[str]:
     """Parse comma-separated CORS origins or wildcard."""
@@ -146,6 +172,8 @@ def create_app() -> FastAPI:
     settings = get_settings()
     origins = _parse_cors_origins(settings.cors_origins)
 
+    # Middleware stack (execution order is bottom-to-top: CORS first,
+    # then rate-limit, then auth, then route handler).
     app.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=origins,
@@ -153,6 +181,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    from research_agent.api.middleware import AuthMiddleware, RateLimitMiddleware
+
+    app.add_middleware(RateLimitMiddleware, max_rpm=settings.rate_limit_rpm)
+    app.add_middleware(AuthMiddleware, secret_key=settings.api_secret_key)
 
     app.include_router(health.router)
     app.include_router(knowledge.router)
