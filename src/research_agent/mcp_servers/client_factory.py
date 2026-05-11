@@ -54,6 +54,7 @@ FIN_DATA_SERVER_MODULE = "research_agent.mcp_servers.fin_data_server"
 PDF_REPORT_SERVER_MODULE = "research_agent.mcp_servers.pdf_report_server"
 KNOWLEDGE_SERVER_MODULE = "research_agent.mcp_servers.knowledge_server"
 NEWS_SERVER_MODULE = "research_agent.mcp_servers.news_server"
+NEWS_SENTIMENT_SERVER_MODULE = "research_agent.mcp_servers.news_sentiment_server"
 
 
 async def load_code_server_tools() -> list[BaseTool]:
@@ -125,6 +126,30 @@ async def load_news_server_tools() -> list[BaseTool]:
     """
     client = MultiServerMCPClient(
         {"news": _stdio_server_spec(NEWS_SERVER_MODULE)},
+        tool_name_prefix=True,
+    )
+    return await client.get_tools()
+
+
+async def load_news_sentiment_server_tools() -> list[BaseTool]:
+    """Spawn ``news_sentiment_server`` over stdio and return its tool list.
+
+    Exposes two sentiment-analysis tools, each prefixed with
+    ``sentiment_`` by ``tool_name_prefix=True``:
+
+    - ``sentiment_analyze_text_sentiment`` — pure text scoring: pass
+      in a list of strings, get back per-item sentiment scores +
+      aggregate statistics. No external data source dependency.
+    - ``sentiment_get_stock_sentiment_report`` — one-stop: fetch
+      Eastmoney news for a ticker → score each item → return a
+      structured report with per-item scores + aggregate + audit
+      metadata (model version, text fingerprint, timestamp).
+
+    The subprocess imports ``snownlp`` + ``akshare`` lazily on first
+    tool call; subsequent calls reuse the warm interpreter.
+    """
+    client = MultiServerMCPClient(
+        {"sentiment": _stdio_server_spec(NEWS_SENTIMENT_SERVER_MODULE)},
         tool_name_prefix=True,
     )
     return await client.get_tools()
@@ -239,6 +264,7 @@ __all__ = [
     "ECHO_SERVER_MODULE",
     "FIN_DATA_SERVER_MODULE",
     "KNOWLEDGE_SERVER_MODULE",
+    "NEWS_SENTIMENT_SERVER_MODULE",
     "NEWS_SERVER_MODULE",
     "PDF_REPORT_SERVER_MODULE",
     "extract_text_content",
@@ -247,6 +273,7 @@ __all__ = [
     "load_fin_data_server_tools",
     "load_knowledge_server_tools",
     "load_knowledge_tools_inproc",
+    "load_news_sentiment_server_tools",
     "load_news_server_tools",
     "load_pdf_report_server_tools",
 ]

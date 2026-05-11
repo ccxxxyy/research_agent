@@ -52,6 +52,7 @@ dependencies = [
     "langchain-huggingface>=1.2.2",
     "langgraph-checkpoint-sqlite>=3.0.3",
     "akshare>=1.18.56",
+    "snownlp",
 ]
 
 [project.optional-dependencies]

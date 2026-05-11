@@ -11,13 +11,14 @@ This graph is the **real product**. It orchestrates three
 MCP-delivered specialists that share the same A-share / 巨潮资讯
 data surface the Agent will hit in production:
 
-              ┌──────────────────────────────────────────┐
-              │           research_supervisor            │  ← HEAVY tier LLM
-              └─┬────────┬───────────┬─────────┬───────┬─┘
-                │        │           │         │       │
-                ▼        ▼           ▼         ▼       ▼
-          data_expert report_expert coder_expert news_expert knowledge_expert
-          (fin_data)  (pdf_report)  (code_server) (news_server) (knowledge_server)
+              ┌───────────────────────────────────────────────────┐
+              │              research_supervisor                     │ ← HEAVY tier LLM
+              └─┬────────┬───────────┬─────────┬───────┬──────────┬─┘
+                │        │           │         │       │          │
+                ▼        ▼           ▼         ▼       ▼          ▼
+          data_expert report_expert coder  news_expert knowledge sentiment
+          (fin_data)  (pdf_report)  _expert (news_srv) _expert   _expert
+                                   (code)              (knowledge)(sentiment)
 
 Typical flow for "分析 宁德时代 2023 年业绩 + ESG 披露中提到的碳中和承诺":
 
@@ -69,6 +70,7 @@ from research_agent.agents.specialists import (
     build_knowledge_expert,
     build_news_expert,
     build_report_expert,
+    build_sentiment_expert,
 )
 from research_agent.llm.provider import ModelRouter
 from research_agent.llm.tier import ModelTier
@@ -164,6 +166,24 @@ SUPERVISOR_PROMPT_KNOWLEDGE = """\
       this expert only sees what the user has personally uploaded.
 """
 
+SUPERVISOR_PROMPT_SENTIMENT = """\
+  - sentiment_expert : 结构化新闻情感量化分析（SnowNLP + 金融关键词
+      词典，确定性模型，不走大模型打分）。Toolbelt:
+        * sentiment_get_stock_sentiment_report — 一站式个股舆情报告：
+            拉东财新闻 → 逐条打分 → 聚合。返回每条新闻的
+            ``sentiment_score ∈ [-1, 1]``、标签（正面/中性/负面）、
+            命中关键词、文本指纹 + 聚合统计（正/负/中性比例、均分、
+            样本量）+ 审计元数据（模型版本 + 时间戳）。
+        * sentiment_analyze_text_sentiment — 纯文本批量打分。传入
+            任意中文文本列表，返回逐条分数 + 聚合。可用于对其他
+            专家返回的文本做二次情感标注。
+      Delegate when the user asks for: 个股舆情量化（"宁德时代最近
+      舆情如何 / 市场情绪"）、新闻情感打分（"帮我分析这几条新闻的
+      情绪"）、批量文本情感标注。与 news_expert 的区别：news_expert
+      获取原始新闻文本，sentiment_expert 对文本做可复现的量化评分。
+      二者配合使用效果最佳。
+"""
+
 # NOTE: These rules are *invariant* across team compositions. They
 # must NEVER mention a specific specialist by name, because the team
 # is assembled at runtime and absent specialists would otherwise leak
@@ -203,8 +223,8 @@ Your job
    with an ``"error"`` key, say so plainly and do NOT fabricate a
    substitute.
 6. Do NOT call specialist tools yourself. You have no direct access
-   to ``fin_*``, ``pdf_*``, ``code_*``, ``news_*``, or ``knowledge_*`` —
-   only to the ``transfer_to_*`` hand-off tools.
+   to ``fin_*``, ``pdf_*``, ``code_*``, ``news_*``, ``knowledge_*``,
+   or ``sentiment_*`` — only to the ``transfer_to_*`` hand-off tools.
 
 CRITICAL anti-hallucination rules
 ---------------------------------
@@ -239,6 +259,7 @@ def _build_supervisor_prompt(
     has_coder: bool,
     has_knowledge: bool,
     has_news: bool,
+    has_sentiment: bool,
 ) -> str:
     """Assemble the supervisor prompt to match the actual team roster.
 
@@ -258,6 +279,8 @@ def _build_supervisor_prompt(
         parts.append(SUPERVISOR_PROMPT_NEWS)
     if has_knowledge:
         parts.append(SUPERVISOR_PROMPT_KNOWLEDGE)
+    if has_sentiment:
+        parts.append(SUPERVISOR_PROMPT_SENTIMENT)
     parts.append("\n" + SUPERVISOR_PROMPT_RULES)
     return "".join(parts)
 
@@ -270,45 +293,33 @@ def build_research_supervisor(
     coder_tools: Sequence[BaseTool] | None = None,
     knowledge_tools: Sequence[BaseTool] | None = None,
     news_tools: Sequence[BaseTool] | None = None,
+    sentiment_tools: Sequence[BaseTool] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     supervisor_tier: ModelTier = ModelTier.HEAVY,
 ) -> CompiledStateGraph:
-    """Compile the Phase-4.4 / 4.6 financial-research supervisor graph.
+    """Compile the Phase-4.7 financial-research supervisor graph.
 
     The graph includes exactly the specialists whose tool lists were
     supplied (non-empty). A supervisor with zero specialists would be
-    useless, so at least one of ``data_tools`` / ``report_tools`` /
-    ``coder_tools`` / ``knowledge_tools`` / ``news_tools`` must be
-    non-empty — we fail loudly otherwise.
+    useless, so at least one tool list must be non-empty — we fail
+    loudly otherwise.
 
     Args:
         model_router: Shared router (supervisor uses
             ``supervisor_tier``; specialists use MEDIUM via the
             ``ANALYST`` / ``RETRIEVER`` agent-name mapping inside
             their builders).
-        data_tools: Output of
-            :func:`research_agent.mcp_servers.client_factory.load_fin_data_server_tools`.
-            When omitted or empty, ``data_expert`` is not added.
-        report_tools: Output of
-            :func:`research_agent.mcp_servers.client_factory.load_pdf_report_server_tools`.
-            When omitted or empty, ``report_expert`` is not added.
-        coder_tools: Output of
-            :func:`research_agent.mcp_servers.client_factory.load_code_server_tools`.
-            When omitted or empty, ``coder_expert`` is not added.
-        knowledge_tools: Output of
-            :func:`research_agent.mcp_servers.client_factory.load_knowledge_server_tools`.
-            When omitted or empty, ``knowledge_expert`` is not added.
-        news_tools: Output of
-            :func:`research_agent.mcp_servers.client_factory.load_news_server_tools`.
-            When omitted or empty, ``news_expert`` is not added.
-        checkpointer: Optional LangGraph checkpointer for per-``thread_id``
-            conversation persistence.
-        supervisor_tier: Override supervisor model tier. Defaults to
-            HEAVY; LIGHT is insufficient for the planning prompt.
+        data_tools: ``fin_*`` tools. Omit/empty → no ``data_expert``.
+        report_tools: ``pdf_*`` tools. Omit/empty → no ``report_expert``.
+        coder_tools: ``code_*`` tools. Omit/empty → no ``coder_expert``.
+        knowledge_tools: ``knowledge_*`` tools. Omit/empty → no ``knowledge_expert``.
+        news_tools: ``news_*`` tools. Omit/empty → no ``news_expert``.
+        sentiment_tools: ``sentiment_*`` tools. Omit/empty → no ``sentiment_expert``.
+        checkpointer: Optional LangGraph checkpointer.
+        supervisor_tier: Defaults to HEAVY.
 
     Returns:
-        A compiled LangGraph app. Invoke with
-        ``await app.ainvoke({"messages": [HumanMessage(...)]})``.
+        A compiled LangGraph app.
 
     Raises:
         ValueError: If every tool list was empty.
@@ -318,13 +329,12 @@ def build_research_supervisor(
     has_coder = bool(coder_tools)
     has_knowledge = bool(knowledge_tools)
     has_news = bool(news_tools)
+    has_sentiment = bool(sentiment_tools)
 
-    if not (has_data or has_report or has_coder or has_knowledge or has_news):
+    if not (has_data or has_report or has_coder or has_knowledge or has_news or has_sentiment):
         raise ValueError(
             "build_research_supervisor needs at least one specialist's "
-            "tools. Supply data_tools and/or report_tools and/or "
-            "coder_tools and/or knowledge_tools and/or news_tools — "
-            "all five were empty."
+            "tools. All six were empty."
         )
 
     agents: list = []
@@ -345,6 +355,9 @@ def build_research_supervisor(
     if has_knowledge:
         agents.append(build_knowledge_expert(model_router, knowledge_tools or []))
         roster.append("knowledge_expert")
+    if has_sentiment:
+        agents.append(build_sentiment_expert(model_router, sentiment_tools or []))
+        roster.append("sentiment_expert")
 
     supervisor_model = model_router.get_model(supervisor_tier)
     prompt = _build_supervisor_prompt(
@@ -353,6 +366,7 @@ def build_research_supervisor(
         has_coder=has_coder,
         has_knowledge=has_knowledge,
         has_news=has_news,
+        has_sentiment=has_sentiment,
     )
 
     workflow = create_supervisor(
@@ -378,5 +392,6 @@ __all__ = [
     "SUPERVISOR_PROMPT_CODER",
     "SUPERVISOR_PROMPT_NEWS",
     "SUPERVISOR_PROMPT_KNOWLEDGE",
+    "SUPERVISOR_PROMPT_SENTIMENT",
     "SUPERVISOR_PROMPT_RULES",
 ]

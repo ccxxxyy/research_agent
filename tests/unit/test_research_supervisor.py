@@ -194,12 +194,14 @@ class TestSupervisorPrompt:
             has_coder=True,
             has_knowledge=True,
             has_news=True,
+            has_sentiment=True,
         )
         assert "data_expert" in prompt
         assert "report_expert" in prompt
         assert "coder_expert" in prompt
         assert "knowledge_expert" in prompt
         assert "news_expert" in prompt
+        assert "sentiment_expert" in prompt
         # Section texts actually appended.
         assert SUPERVISOR_PROMPT_DATA in prompt
         assert SUPERVISOR_PROMPT_REPORT in prompt
@@ -217,12 +219,14 @@ class TestSupervisorPrompt:
             has_coder=False,
             has_knowledge=False,
             has_news=False,
+            has_sentiment=False,
         )
         assert "data_expert" in prompt
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
         assert "knowledge_expert" not in prompt
         assert "news_expert" not in prompt
+        assert "sentiment_expert" not in prompt
 
     def test_knowledge_only_prompt_omits_other_experts(self) -> None:
         """Symmetric guard for the knowledge_expert-only team."""
@@ -232,6 +236,7 @@ class TestSupervisorPrompt:
             has_coder=False,
             has_knowledge=True,
             has_news=False,
+            has_sentiment=False,
         )
         assert "knowledge_expert" in prompt
         assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
@@ -239,6 +244,7 @@ class TestSupervisorPrompt:
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
         assert "news_expert" not in prompt
+        assert "sentiment_expert" not in prompt
 
     def test_news_only_prompt_omits_other_experts(self) -> None:
         """Symmetric guard for the news_expert-only team."""
@@ -248,6 +254,7 @@ class TestSupervisorPrompt:
             has_coder=False,
             has_knowledge=False,
             has_news=True,
+            has_sentiment=False,
         )
         assert "news_expert" in prompt
         assert SUPERVISOR_PROMPT_NEWS in prompt
@@ -255,18 +262,23 @@ class TestSupervisorPrompt:
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
         assert "knowledge_expert" not in prompt
+        assert "sentiment_expert" not in prompt
 
     def test_rules_always_included(self) -> None:
         """The routing rules ("hand off one subtask at a time", "never
         invent numbers", etc.) are non-negotiable — they must appear
         regardless of team composition."""
+        # Each tuple is one (has_data, has_report, has_coder,
+        # has_knowledge, has_news, has_sentiment) combination — six
+        # single-specialist setups plus one full-team setup.
         for flags in [
-            (True, False, False, False, False),
-            (False, True, False, False, False),
-            (False, False, True, False, False),
-            (False, False, False, True, False),
-            (False, False, False, False, True),
-            (True, True, True, True, True),
+            (True, False, False, False, False, False),
+            (False, True, False, False, False, False),
+            (False, False, True, False, False, False),
+            (False, False, False, True, False, False),
+            (False, False, False, False, True, False),
+            (False, False, False, False, False, True),
+            (True, True, True, True, True, True),
         ]:
             prompt = _build_supervisor_prompt(
                 has_data=flags[0],
@@ -274,6 +286,7 @@ class TestSupervisorPrompt:
                 has_coder=flags[2],
                 has_knowledge=flags[3],
                 has_news=flags[4],
+                has_sentiment=flags[5],
             )
             assert "hand off" in prompt.lower() or "hand-off" in prompt.lower()
             assert "Never invent" in prompt
@@ -285,6 +298,7 @@ class TestSupervisorPrompt:
             has_coder=True,
             has_knowledge=True,
             has_news=True,
+            has_sentiment=True,
         )
         assert "NEVER claim" in prompt
         assert "unavailable" in prompt.lower()
@@ -298,6 +312,7 @@ class TestSupervisorPrompt:
             has_coder=False,
             has_knowledge=False,
             has_news=False,
+            has_sentiment=False,
         )
         assert "NEVER claim" in prompt
         assert "NEVER substitute" in prompt
@@ -309,6 +324,7 @@ class TestSupervisorPrompt:
             has_coder=True,
             has_knowledge=True,
             has_news=True,
+            has_sentiment=True,
         )
         lower = prompt.lower()
         assert "numbered step" in lower or "numbered steps" in lower
@@ -320,6 +336,7 @@ class TestSupervisorPrompt:
             has_coder=True,
             has_knowledge=True,
             has_news=True,
+            has_sentiment=True,
         )
         lower = prompt.lower()
         assert "self-check" in lower or "re-read" in lower

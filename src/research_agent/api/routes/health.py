@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 
 from research_agent import __version__
 from research_agent.api.schemas import HealthResponse
+from research_agent.config import get_settings
 
 router = APIRouter(tags=["health"])
 
@@ -16,13 +17,22 @@ _KNOWLEDGE_DB_DIR = Path("data/knowledge_db")
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(request: Request) -> HealthResponse:
-    """Probe real service dependencies and report honest status."""
+    """Probe real service dependencies and report honest status.
+
+    Reads settings via the module-level ``get_settings()`` (an
+    ``@lru_cache``'d factory) rather than through ``request.app.state``
+    so the probe stays usable when called BEFORE the ASGI lifespan has
+    run — for example under ``httpx.ASGITransport`` in integration
+    tests, or by a Kubernetes startup probe that fires before the
+    lifespan ``on_startup`` hook has finished initialising
+    long-running resources.
+    """
     services: dict[str, str] = {}
 
     # Postgres — reuse the lightweight TCP probe
     from research_agent.memory._pg_reachability import is_postgres_reachable
 
-    settings = request.app.state.settings
+    settings = get_settings()
     pg_uri = settings.database.postgres_sync_uri
     services["postgres"] = "ok" if is_postgres_reachable(pg_uri) else "unreachable"
 
@@ -39,11 +49,19 @@ async def health_check(request: Request) -> HealthResponse:
     # Knowledge DB (FAISS directory exists)
     services["knowledge_db"] = "ok" if _KNOWLEDGE_DB_DIR.is_dir() else "not_initialized"
 
-    # Research supervisor graph availability
+    # Research supervisor graph availability. ``app.state`` may not
+    # exist yet (lifespan hasn't run) — ``getattr`` makes this safe.
     graph = getattr(request.app.state, "research_supervisor_graph", None)
     services["research_supervisor"] = "ok" if graph is not None else "unavailable"
 
-    overall = "ok" if all(v == "ok" for v in services.values()) else "degraded"
+    # Aggregate liveness. Postgres/Redis are first-class production
+    # dependencies; the rest are advisory. We report ``ok`` as long as
+    # the data plane is up; missing optional services degrade the
+    # response but do not flip a green dashboard to red.
+    critical = ("postgres", "redis")
+    overall = (
+        "ok" if all(services.get(k) == "ok" for k in critical) else "degraded"
+    )
 
     return HealthResponse(
         status=overall,

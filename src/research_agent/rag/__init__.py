@@ -1,19 +1,12 @@
-"""RAG building blocks for PDF ingest and the knowledge-base search pipeline.
+"""RAG building blocks — cross-encoder reranker for knowledge search.
 
-Production hybrid retrieval (FAISS + BM25 + rerank) lives in
-``mcp_servers.knowledge_server`` and the in-process ``knowledge_*``
-tools — not in this package's public exports.
+This package's sole production export is ``CrossEncoderReranker``,
+used by ``mcp_servers.knowledge_server._search()`` to rerank hybrid
+retrieval (FAISS + BM25 + RRF) candidates.
 
-**Removed (legacy Phase-3):** ``HybridRetriever``, ``RetrievalGrader``,
-``QueryRewriter`` and the Chroma-backed graph that used them. Corrective
-behaviour is handled by the ``knowledge_expert`` over ``knowledge_search``
-signals.
-
-Embeddings for the knowledge pipeline live only in
-``mcp_servers.knowledge_server._get_embedder()`` (bge-small-zh). The
-``chunker`` / ``loader`` modules remain as standalone helpers; they are
-not re-exported here. This package publicly exports
-``CrossEncoderReranker`` for ``knowledge_server.search``.
+All other RAG primitives (PDF loading, chunking, embedding) live in
+``mcp_servers.knowledge_server`` as private helpers — they are tightly
+coupled to the FAISS index format and not shared.
 """
 
 from research_agent.rag.reranker import (

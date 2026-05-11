@@ -529,6 +529,70 @@ def build_knowledge_expert(
     )
 
 
+SENTIMENT_EXPERT_PROMPT = """\
+你是舆情量化分析专家（Sentiment Analyst）。你的工具集是 ``sentiment_*``
+系列，由独立的情感分析引擎驱动（SnowNLP + 金融关键词词典），不依赖
+大模型打分，结果可复现、可审计。
+
+工具
+----
+  - ``sentiment_get_stock_sentiment_report`` — 一站式个股舆情报告。
+    传入 6 位代码 + 条数上限，自动拉取东财新闻 → 逐条打分 → 聚合。
+    返回 JSON 包含：
+      * ``items``: 每条新闻的标题、摘要、发布时间、情感分数
+        (``sentiment_score ∈ [-1, 1]``)、标签（正面/中性/负面）、
+        命中的金融关键词、文本指纹（可对账）。
+      * ``aggregate``: 正面/中性/负面占比、均分、样本量、总体标签。
+      * ``model_version`` + ``timestamp``：审计元数据。
+  - ``sentiment_analyze_text_sentiment`` — 纯文本打分。传入任意
+    中文文本列表，返回逐条分数 + 聚合。可用于对其他专家返回的
+    文本段落做二次情感标注。
+
+使用规则
+--------
+1. 如果用户问的是某只股票的舆情/情绪/市场看法，直接调用
+   ``sentiment_get_stock_sentiment_report``。
+2. 如果用户给了一段文本要你判断情感，调用
+   ``sentiment_analyze_text_sentiment``。
+3. 拿到结果后，汇报要点：
+   a) 总体结论一句话（"偏正面/中性/偏负面"+ 均分 + 样本量）。
+   b) 列举 2-3 条最具代表性的新闻（引用标题 + 分数 + 命中关键词），
+      正面和负面各取极值。
+   c) 如果正负面条数差距小于 20%，主动提示"信号混合，建议结合
+      基本面数据综合判断"。
+4. 不要编造分数 — 工具没返回的数字不能自己补。
+5. 如果工具返回 ``error``，直接告知用户，不要猜测。
+6. 如果用户的问题不属于情感分析范畴，说明并退回给 supervisor。
+"""
+
+
+def build_sentiment_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """量化舆情分析专家（``news_sentiment_server``）。
+
+    消费 ``sentiment_*`` 工具，由
+    :func:`~research_agent.mcp_servers.client_factory.load_news_sentiment_server_tools`
+    产生。
+
+    使用 ANALYST tier（MEDIUM），因为需要在结构化 JSON 中挑选代表性
+    条目并做定性总结 — 这是推理，不是分类。
+    """
+    if not mcp_tools:
+        raise ValueError(
+            "sentiment_expert requires the news_sentiment_server MCP "
+            "tools; got an empty sequence. Did you forget to "
+            "``await load_news_sentiment_server_tools()``?"
+        )
+    return create_react_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        prompt=SENTIMENT_EXPERT_PROMPT,
+        name="sentiment_expert",
+    )
+
+
 SPECIALIST_BUILDERS = {
     "math_expert": build_math_expert,
     "time_expert": build_time_expert,
@@ -538,11 +602,13 @@ SPECIALIST_BUILDERS = {
     "report_expert": build_report_expert,
     "news_expert": build_news_expert,
     "knowledge_expert": build_knowledge_expert,
+    "sentiment_expert": build_sentiment_expert,
 }
 """Registry for looking up specialists by name — used by tests and demos.
 
-The three MCP-backed specialists (``coder_expert``, ``data_expert``,
-``report_expert``) take an extra ``mcp_tools`` argument and therefore
-have a different signature from the three toy specialists. Callers
-that iterate this registry generically should branch on the key.
+The MCP-backed specialists (``coder_expert``, ``data_expert``,
+``report_expert``, ``sentiment_expert``, etc.) take an extra
+``mcp_tools`` argument and therefore have a different signature from
+the three toy specialists. Callers that iterate this registry
+generically should branch on the key.
 """

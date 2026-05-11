@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from research_agent.api.routes import health, knowledge, memory, supervisor
+from research_agent.api.routes import health, knowledge, memory, sentiment, supervisor
 from research_agent.config import get_settings
 from research_agent.observability.logging import setup_logging
 
@@ -35,6 +35,7 @@ async def _try_build_research_supervisor(model_router, checkpointer):
         load_code_server_tools,
         load_fin_data_server_tools,
         load_knowledge_tools_inproc,
+        load_news_sentiment_server_tools,
         load_news_server_tools,
         load_pdf_report_server_tools,
     )
@@ -50,6 +51,7 @@ async def _try_build_research_supervisor(model_router, checkpointer):
         load_code_server_tools(),
         load_knowledge_tools_inproc(),
         load_news_server_tools(),
+        load_news_sentiment_server_tools(),
         return_exceptions=True,
     )
     names = (
@@ -58,6 +60,7 @@ async def _try_build_research_supervisor(model_router, checkpointer):
         "code_server",
         "knowledge_tools_inproc",
         "news_server",
+        "news_sentiment_server",
     )
     tools: dict[str, list] = {}
     for name, r in zip(names, results):
@@ -83,6 +86,7 @@ async def _try_build_research_supervisor(model_router, checkpointer):
             coder_tools=tools["code_server"] or None,
             knowledge_tools=tools["knowledge_tools_inproc"] or None,
             news_tools=tools["news_server"] or None,
+            sentiment_tools=tools["news_sentiment_server"] or None,
             checkpointer=checkpointer,
         )
     except Exception:  # noqa: BLE001
@@ -190,6 +194,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(knowledge.router)
     app.include_router(memory.router)
+    app.include_router(sentiment.router)
     app.include_router(supervisor.router)
 
     return app
