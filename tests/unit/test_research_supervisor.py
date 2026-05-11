@@ -449,3 +449,43 @@ class TestBuildResearchSupervisor:
                 knowledge_tools=[],
                 news_tools=[],
             )
+
+    def test_enable_reflection_wraps_graph(
+        self, router: ModelRouter, fake_data_tools: list[BaseTool]
+    ) -> None:
+        """``enable_reflection=True`` replaces the supervisor with a
+        parent graph that exposes ``supervisor`` and ``reflection``
+        as top-level nodes. This is the structural contract: callers
+        keep the same ``ainvoke`` API but the DAG now reflects the
+        two-stage pipeline."""
+        graph = build_research_supervisor(
+            model_router=router,
+            data_tools=fake_data_tools,
+            enable_reflection=True,
+        )
+        node_names = set(graph.get_graph().nodes.keys())
+        assert "supervisor" in node_names
+        assert "reflection" in node_names
+        # When reflection is on, the inner supervisor is encapsulated;
+        # specialist nodes should NOT leak into the parent topology
+        # (they live one level deeper, inside the supervisor node).
+        assert "data_expert" not in node_names
+
+    def test_reflection_off_keeps_legacy_topology(
+        self, router: ModelRouter, fake_data_tools: list[BaseTool]
+    ) -> None:
+        """The default (``enable_reflection=False``) must NOT introduce
+        the reflection wrapper. The legacy supervisor already names
+        its router node ``supervisor`` (that's a ``langgraph_supervisor``
+        contract), so the marker that distinguishes "wrapped" from
+        "not wrapped" is the presence of the ``reflection`` node, plus
+        the specialists being top-level (not encapsulated)."""
+        graph = build_research_supervisor(
+            model_router=router, data_tools=fake_data_tools
+        )
+        node_names = set(graph.get_graph().nodes.keys())
+        # Specialists are at the top level in the unwrapped graph.
+        assert "data_expert" in node_names
+        # The reflection node is what the wrapper adds — absence
+        # confirms we're on the legacy topology.
+        assert "reflection" not in node_names

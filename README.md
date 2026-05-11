@@ -5,7 +5,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-167%20passing-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-190%20passing-brightgreen.svg)](#测试)
 
 ---
 
@@ -96,7 +96,7 @@
 | Web | `fastapi` + `uvicorn` + `sse-starlette`，Pydantic v2 严格校验 |
 | 数据源 | `akshare`（A 股行情/基本面/公告/新闻）+ `httpx` + `pypdf`（cninfo PDF 解析）+ `snownlp`（中文情感） |
 | 可观测 | `loguru` 结构化日志 + `langsmith` tracing |
-| 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（167 tests） |
+| 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（190 tests） |
 
 ---
 
@@ -121,7 +121,7 @@ cp .env.example .env
 
 ```bash
 .venv/Scripts/python.exe -m pytest -m "not network and not slow" -q
-# 期望：167 passed
+# 期望：190 passed
 ```
 
 `network` 标记下的测试会真打 akshare/cninfo 等外网，`slow` 标记下的测试会下载 bge embedder 权重（~100MB）。这两组在 CI 里默认跳过。
@@ -203,14 +203,32 @@ docker compose logs -f app
    - 用 `stream_mode='updates'` 把每个节点的状态变更映射成 5 类事件。
    - 故事：「不用 `astream_events` 是因为 supervisor 拓扑下事件太碎，UI 端会被淹没；**节点级 delta 视图刚好对齐"哪个 specialist 在说话"的直觉**。」
 
+7. **Reflection 反思循环**（`graph/reflection.py`，可选启用，见 [ADR-0003](docs/adr/0003-reflection-loop.md)）
+   - critic-first 子图：先用 LIGHT 模型给 supervisor 的最终答案打分（faithfulness / citation / completeness / structure / clarity 五维），不达标才用 HEAVY 模型重写，最多 2 轮。
+   - 包成父 StateGraph 节点（`supervisor → reflection → END`），checkpointer 挂在父图上 —— **崩在 reflection 中途从 critic 节点恢复，不会从头跑一遍 6 个 specialist**。
+   - `finalize` 节点返回**历史最高分草稿**而不是最新草稿，防止"过度修正"造成的回归。
+   - 故事：「supervisor 的合成 prompt 已经写得很长了，再塞自检规则会稀释；**质量校验是分类任务，不该和创作任务挤在一个 LLM 调用里** —— 这就是为什么要单独切一个不同 tier 的 critic 出来。」
+
+---
+
+## 六点五、架构决策记录（ADR）
+
+载入项目的非显然决策都写成了 ADR，存放于 [`docs/adr/`](docs/adr/)。
+
+| # | 决定 | 何时该读 |
+|---|---|---|
+| [0001](docs/adr/0001-faiss-over-chroma.md) | 向量库从 ChromaDB 迁到 FAISS | 想问"为什么不用 Chroma"时 |
+| [0002](docs/adr/0002-knowledge-server-inprocess.md) | knowledge_expert 走 in-process 不走 MCP-stdio | 想问"为什么 6 个 server 里偏偏这一个不走子进程"时 |
+| [0003](docs/adr/0003-reflection-loop.md) | Reflection 作为子图挂 supervisor 后面 | 想问"为什么不把反思放 supervisor prompt 里"时 |
+
 ---
 
 ## 七、已知限制 / 不完整的地方（坦诚版）
 
 | 项 | 现状 | 计划 |
 |---|---|---|
-| **Reflection 反思循环**（Writer → Reasoner critic → 迭代） | `agents/{writer,reasoner}.py` 文件占位但子图未接入主流程 | 在 supervisor 完成 final synthesis 后挂一个 reflection 子图，最多 2 轮自评/重写 |
-| **knowledge_server 不走 MCP-stdio** | Windows asyncio + 重 ML 库 import 死锁，已切到 in-process 同源代码 | 后续可以尝试 fastmcp 的 SSE/HTTP transport，绕开 stdio JSON-RPC 帧 |
+| **Reflection 反思循环**（Writer / Reasoner 自评-重写） | ✅ 已落地为 `graph/reflection.py` 子图，通过 `REFLECTION_ENABLED=true` 开启；默认 OFF 以省 LLM 配额，详见 [ADR-0003](docs/adr/0003-reflection-loop.md) | 加 LangSmith 评估集量化 ON / OFF 的答案质量 delta |
+| **knowledge_server 不走 MCP-stdio** | Windows asyncio + 重 ML 库 import 死锁，已切到 in-process 同源代码，详见 [ADR-0002](docs/adr/0002-knowledge-server-inprocess.md) | 后续可以尝试 fastmcp 的 SSE/HTTP transport，绕开 stdio JSON-RPC 帧 |
 | **Redis 引入但未消费** | docker-compose 起了 Redis，但 `RateLimitMiddleware` 仍是进程内 dict | 接 Redis 做分布式限流 + LLM response 缓存 |
 | **SSE 无 keep-alive 心跳** | 长任务可能被反向代理（30s/60s）切断 | 每 15s 发一个 `phase=heartbeat` 帧 |
 | **没有 LangSmith 自动化评估集** | tracing 已接，但没建 dataset/experiment | 用 LangSmith Evaluation 做 supervisor 路由准确率 + RAG 召回率回归测试 |
@@ -230,7 +248,8 @@ src/research_agent/
 │   └── schemas.py       # Pydantic 请求/响应（含 SSE event 模型）
 ├── graph/
 │   ├── minimal_supervisor.py    # Phase-3 教学版（math/time/text 三 toy 工具）
-│   └── research_supervisor.py   # Phase-4 产品版（六 specialist + HEAVY supervisor）
+│   ├── research_supervisor.py   # Phase-4 产品版（六 specialist + HEAVY supervisor，可选包 reflection 子图）
+│   └── reflection.py            # Phase-5 critic-first 反思子图（Writer / Reasoner 自评-重写）
 ├── llm/
 │   ├── provider.py      # ModelRouter（基于 LiteLLM，含 fallback chain）
 │   ├── tier.py          # ModelTier + AgentName + AGENT_TIER_MAP
@@ -270,10 +289,9 @@ tests/                    # 167 unit + 1 integration test
 ## 九、贡献 / 反馈
 
 这是一个面向**面试演示和学习**的工程，欢迎围绕以下方向 PR：
-- 补全 Reflection 子图
 - 把 Redis 接进限流 + LLM cache
 - 增加更多业务 specialist（如 macro_expert / fund_flow_expert）
-- LangSmith 自动化评估集
+- LangSmith 自动化评估集（量化 reflection ON / OFF 的答案质量 delta）
 
 ---
 

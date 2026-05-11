@@ -57,9 +57,13 @@ Design choices that matter for interview-grade storytelling
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Annotated, TypedDict
 
+from langchain_core.messages import BaseMessage
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph_supervisor import create_supervisor
 from loguru import logger
@@ -72,6 +76,7 @@ from research_agent.agents.specialists import (
     build_report_expert,
     build_sentiment_expert,
 )
+from research_agent.graph.reflection import build_reflection_subgraph
 from research_agent.llm.provider import ModelRouter
 from research_agent.llm.tier import ModelTier
 
@@ -285,6 +290,84 @@ def _build_supervisor_prompt(
     return "".join(parts)
 
 
+class _ResearchState(TypedDict, total=False):
+    """Parent-graph state for the supervisor + reflection wrapper.
+
+    Single field that matters: the message stream. The ``add_messages``
+    reducer dedupes by message id, so when the inner supervisor
+    returns its full transcript (input + new messages), only the
+    newly produced messages actually get appended to parent state —
+    which is the behaviour we want for clean SSE streaming.
+    """
+
+    messages: Annotated[list[BaseMessage], add_messages]
+
+
+def _wrap_with_reflection(
+    supervisor: CompiledStateGraph,
+    *,
+    model_router: ModelRouter,
+    pass_threshold: float,
+    max_iterations: int,
+    checkpointer: BaseCheckpointSaver | None,
+) -> CompiledStateGraph:
+    """Wrap a compiled supervisor in a parent graph that runs reflection.
+
+    Why a parent graph instead of inline post-processing?
+    -----------------------------------------------------
+    We could simply call ``supervisor.ainvoke`` and then run
+    ``reflection.ainvoke`` on its output in pure Python. We don't,
+    because:
+
+      1. LangGraph's tracing / LangSmith integration loses the
+         per-node visualisation if part of the pipeline runs
+         outside the graph. Keeping reflection as a graph node
+         keeps the full DAG visible in studio.
+      2. The checkpointer is attached to the OUTER graph, so the
+         supervisor + reflection are atomic with respect to
+         resume-after-crash: a thread that crashed mid-reflection
+         picks up at the critic node, not by re-running the whole
+         specialist team.
+      3. Adding more post-supervisor stages later (e.g. fact-
+         checking against a citation index) is a 1-node graph edit
+         rather than a Python orchestration rewrite.
+    """
+    reflection = build_reflection_subgraph(
+        model_router=model_router,
+        pass_threshold=pass_threshold,
+        max_iterations=max_iterations,
+    )
+
+    async def supervisor_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
+        """Run the inner supervisor graph and pipe its output upward."""
+        result = await supervisor.ainvoke(
+            {"messages": state.get("messages", [])},
+        )
+        return {"messages": result.get("messages", [])}
+
+    async def reflection_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
+        """Run the reflection subgraph over the supervisor's output."""
+        result = await reflection.ainvoke(
+            {"messages": state.get("messages", [])},
+        )
+        return {"messages": result.get("messages", [])}
+
+    parent: StateGraph = StateGraph(_ResearchState)
+    parent.add_node("supervisor", supervisor_node)
+    parent.add_node("reflection", reflection_node)
+    parent.add_edge(START, "supervisor")
+    parent.add_edge("supervisor", "reflection")
+    parent.add_edge("reflection", END)
+    compiled = parent.compile(checkpointer=checkpointer)
+    logger.info(
+        "Research supervisor wrapped with reflection: "
+        "pass_threshold={:.2f} max_iterations={}",
+        pass_threshold,
+        max_iterations,
+    )
+    return compiled
+
+
 def build_research_supervisor(
     *,
     model_router: ModelRouter,
@@ -296,6 +379,9 @@ def build_research_supervisor(
     sentiment_tools: Sequence[BaseTool] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     supervisor_tier: ModelTier = ModelTier.HEAVY,
+    enable_reflection: bool = False,
+    reflection_pass_threshold: float = 0.85,
+    reflection_max_iterations: int = 2,
 ) -> CompiledStateGraph:
     """Compile the Phase-4.7 financial-research supervisor graph.
 
@@ -317,6 +403,19 @@ def build_research_supervisor(
         sentiment_tools: ``sentiment_*`` tools. Omit/empty → no ``sentiment_expert``.
         checkpointer: Optional LangGraph checkpointer.
         supervisor_tier: Defaults to HEAVY.
+        enable_reflection: When True, wraps the supervisor in a parent
+            graph that runs a critic+writer reflection loop over the
+            supervisor's final synthesis. The loop terminates as soon
+            as the critic scores the draft at or above
+            ``reflection_pass_threshold`` OR after
+            ``reflection_max_iterations`` rewrites — whichever comes
+            first. The wrapper preserves the supervisor's
+            ``ainvoke`` / ``astream`` contract; the only difference
+            visible to callers is one extra ``AIMessage`` at the end
+            of the transcript whose ``additional_kwargs['reflection']``
+            carries the audit trail.
+        reflection_pass_threshold: Passed to ``build_reflection_subgraph``.
+        reflection_max_iterations: Passed to ``build_reflection_subgraph``.
 
     Returns:
         A compiled LangGraph app.
@@ -375,11 +474,29 @@ def build_research_supervisor(
         prompt=prompt,
         output_mode="last_message",
     )
-    compiled = workflow.compile(checkpointer=checkpointer)
+
+    # When reflection is enabled, the parent (wrapper) graph holds the
+    # checkpointer — the inner supervisor compiles statelessly so we
+    # don't get two layers fighting over the same thread_id. When
+    # reflection is OFF, the supervisor itself holds the checkpointer
+    # exactly as before (zero behavioural change).
+    if enable_reflection:
+        inner = workflow.compile()
+        compiled = _wrap_with_reflection(
+            inner,
+            model_router=model_router,
+            pass_threshold=reflection_pass_threshold,
+            max_iterations=reflection_max_iterations,
+            checkpointer=checkpointer,
+        )
+    else:
+        compiled = workflow.compile(checkpointer=checkpointer)
+
     logger.info(
-        "Research supervisor compiled: tier={} specialists={}",
+        "Research supervisor compiled: tier={} specialists={} reflection={}",
         supervisor_tier.value,
         roster,
+        enable_reflection,
     )
     return compiled
 
