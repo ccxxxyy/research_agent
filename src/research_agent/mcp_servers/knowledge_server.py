@@ -282,16 +282,17 @@ def _validate_collection_name(name: str) -> None:
 def _get_embedder() -> Any:
     """Return the singleton embedder, building it on first call.
 
-    Imports are deferred so the MCP subprocess starts fast even if
+    Imports are deferred so module load is fast even if
     sentence-transformers needs to download model weights — the
     ~3 s cost is paid on the first ``knowledge_ingest_pdf`` /
-    ``knowledge_search``, not on subprocess launch.
+    ``knowledge_search``, not on import.
 
-    Stdout safety is provided by the module-level firewall (see
-    ``_stdio_firewall``), so we do not need an inline
-    ``redirect_stdout`` wrapper here even though ``transformers``
-    historically prints a "BertModel LOAD REPORT" banner during
-    weight loading.
+    Stdout safety: chatty ML libraries (``transformers``, ``tqdm``,
+    ``huggingface_hub``) are quieted via env vars set at module
+    import time (see the env-var block at the top of this file), so
+    we do not need an inline ``redirect_stdout`` wrapper even
+    though ``transformers`` historically prints a "BertModel LOAD
+    REPORT" banner during weight loading.
     """
     global _EMBEDDER
     if _EMBEDDER is None:
