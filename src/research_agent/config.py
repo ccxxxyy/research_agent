@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -85,6 +86,18 @@ class Settings(BaseSettings):
     """Hard cap on writer rewrites. Worst-case LLM budget per request
     is ``max_iterations + 1`` critic calls plus ``max_iterations``
     writer calls."""
+
+    sse_research_heartbeat_seconds: float = Field(
+        default=15.0,
+        ge=0,
+        le=86400,
+        description=(
+            "Interval between SSE comment-free keep-alive DATA frames "
+            "on ``/api/supervisor/research/stream`` while the graph "
+            "is idle — keeps reverse proxies / CDNs from closing long "
+            "requests. Zero disables heartbeat."
+        ),
+    )
 
     llm: LLMConfig = LLMConfig()
     database: DatabaseConfig = DatabaseConfig()

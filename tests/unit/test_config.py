@@ -56,3 +56,7 @@ class TestSettingsRoot:
     def test_default_env_is_development(self) -> None:
         s = Settings(_env_file=None)  # type: ignore[arg-type]
         assert s.is_dev
+
+    def test_sse_research_heartbeat_seconds_default(self) -> None:
+        s = Settings(_env_file=None)  # type: ignore[arg-type]
+        assert s.sse_research_heartbeat_seconds == 15.0

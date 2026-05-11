@@ -11,14 +11,16 @@ What we lock down
     resolves ``thread_id`` when omitted, and reports the distinct
     specialists it saw the supervisor route to.
   * ``POST /api/supervisor/research/stream`` emits SSE frames in the
-    expected order (``handoff`` → ``final`` → ``done``) and carries
-    the ``X-Thread-ID`` header.
+    expected order (``handoff`` → ``final`` → ``done``), optional idle
+    ``heartbeat`` pings (see ``SSE_RESEARCH_HEARTBEAT_SECONDS``), and
+    carries the ``X-Thread-ID`` header.
   * The 503 fallback path fires when the lifespan failed to build
     the graph (``app.state.research_supervisor_graph is None``).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -28,6 +30,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage, HumanMessage
 
+import research_agent.api.routes.supervisor as supervisor_route
 from research_agent.api.dependencies import (
     get_research_supervisor_graph,
     get_supervisor_graph,
@@ -65,6 +68,21 @@ class _FakeGraph:
         # The endpoint consumes ``{node_name: {"messages": [...]}}``
         # so we wrap accordingly.
         for msg in self._scripted:
+            node = getattr(msg, "name", None) or "supervisor"
+            yield {node: {"messages": [msg]}}
+
+
+class _SlowFakeGraph(_FakeGraph):
+    """Adds a fixed delay before each scripted update to simulate LLM idle."""
+
+    async def astream(
+        self,
+        inputs: dict,
+        config: dict | None = None,
+        stream_mode: str = "updates",
+    ) -> AsyncIterator[dict]:
+        for msg in self._scripted:
+            await asyncio.sleep(0.12)
             node = getattr(msg, "name", None) or "supervisor"
             yield {node: {"messages": [msg]}}
 
@@ -310,6 +328,74 @@ class TestResearchSSE:
             )
 
         assert r.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_heartbeat_when_graph_idles(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Short heartbeat interval + slow graph ⇒ at least one ``heartbeat``."""
+
+        monkeypatch.setattr(
+            supervisor_route,
+            "_sse_heartbeat_interval_seconds",
+            lambda: 0.05,
+        )
+        scripted = [
+            _handoff("data_expert"),
+            _specialist_reply("data_expert", "slow chunk"),
+            _supervisor_final("final synthesis body"),
+        ]
+        graph = _SlowFakeGraph(scripted)
+        app = _build_test_app(graph)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(
+                "/api/supervisor/research/stream",
+                json={"query": "go"},
+            )
+
+        assert r.status_code == 200
+        events = _parse_sse(r.content)
+        phases = [e["phase"] for e in events]
+        assert "heartbeat" in phases
+        assert phases[-1] == "done"
+
+        pings = [e for e in events if e["phase"] == "heartbeat"]
+        assert pings
+        tid = pings[0]["metadata"].get("thread_id")
+        assert tid
+        assert all(p["metadata"].get("thread_id") == tid for p in pings)
+
+    @pytest.mark.asyncio
+    async def test_stream_zero_heartbeat_interval_skips_ping(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            supervisor_route,
+            "_sse_heartbeat_interval_seconds",
+            lambda: 0.0,
+        )
+        scripted = [
+            _handoff("data_expert"),
+            _specialist_reply("data_expert", "slow chunk"),
+            _supervisor_final("final synthesis body"),
+        ]
+        graph = _SlowFakeGraph(scripted)
+        app = _build_test_app(graph)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(
+                "/api/supervisor/research/stream",
+                json={"query": "go"},
+            )
+
+        assert r.status_code == 200
+        events = _parse_sse(r.content)
+        assert not any(e["phase"] == "heartbeat" for e in events)
 
 
 # ---------------------------------------------------------------------------
