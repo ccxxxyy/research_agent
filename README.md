@@ -230,7 +230,7 @@ docker compose logs -f app
 | **Reflection 反思循环**（Writer / Reasoner 自评-重写） | ✅ 已落地为 `graph/reflection.py` 子图，通过 `REFLECTION_ENABLED=true` 开启；默认 OFF 以省 LLM 配额，详见 [ADR-0003](docs/adr/0003-reflection-loop.md) | 加 LangSmith 评估集量化 ON / OFF 的答案质量 delta |
 | **knowledge_server 不走 MCP-stdio** | Windows asyncio + 重 ML 库 import 死锁，已切到 in-process 同源代码，详见 [ADR-0002](docs/adr/0002-knowledge-server-inprocess.md) | 后续可以尝试 fastmcp 的 SSE/HTTP transport，绕开 stdio JSON-RPC 帧 |
 | **Redis 引入但未消费** | docker-compose 起了 Redis，但 `RateLimitMiddleware` 仍是进程内 dict | 接 Redis 做分布式限流 + LLM response 缓存 |
-| **SSE 无 keep-alive 心跳** | 长任务可能被反向代理（30s/60s）切断 | 每 15s 发一个 `phase=heartbeat` 帧 |
+| **SSE keep-alive（研究流）** | ✅ `/research/stream` 在图空闲时按 `SSE_RESEARCH_HEARTBEAT_SECONDS`（默认 15s）发 `phase=heartbeat`，`0` 关闭 | 前端可忽略 heartbeat，仅依赖 `phase=done` |
 | **没有 LangSmith 自动化评估集** | tracing 已接，但没建 dataset/experiment | 用 LangSmith Evaluation 做 supervisor 路由准确率 + RAG 召回率回归测试 |
 | **`pgvector/pgvector:pg16` 引擎未消费** | docker-compose 装了，但 RAG 走 FAISS，pgvector 是预留 | 把长期记忆从 InMemoryStore 升级成 pgvector embeddings + ANN 召回 |
 
@@ -281,7 +281,7 @@ src/research_agent/
 └── main.py              # FastAPI app factory + lifespan + CLI 入口
 
 scripts/                  # 10 demos + 6 smoke tests
-tests/                    # 167 unit + 1 integration test
+tests/                    # unit + integration（参见 pytest 徽章）
 ```
 
 ---

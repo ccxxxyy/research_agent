@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import uuid
 from typing import AsyncIterator
 
@@ -23,6 +25,7 @@ from research_agent.api.schemas import (
     SupervisorChatRequest,
     SupervisorChatResponse,
 )
+from research_agent.config import get_settings
 
 router = APIRouter(prefix="/api/supervisor", tags=["supervisor"])
 
@@ -196,6 +199,16 @@ async def supervisor_research(
     )
 
 
+def _sse_heartbeat_interval_seconds() -> float:
+    """SSE idle interval before emitting a heartbeat (0 disables).
+
+    Separated from :func:`~research_agent.config.get_settings` reads
+    so unit tests can ``monkeypatch`` this helper without flushing the
+    global settings LRU cache.
+    """
+    return float(get_settings().sse_research_heartbeat_seconds)
+
+
 def _format_sse(event: ResearchSupervisorSSEEvent) -> str:
     """Render one SSE event in the canonical ``data: ...\n\n`` shape."""
     return f"data: {event.model_dump_json()}\n\n"
@@ -241,114 +254,169 @@ async def _research_event_stream(
     """Async generator producing SSE frames for one research invocation.
 
     Phases emitted (in rough order):
-      * ``handoff``  — one per ``transfer_to_<specialist>`` tool call.
-      * ``update``   — one per non-empty assistant message update.
-      * ``final``    — emitted when ``stream_mode='updates'`` yields
-                       an update whose last message is a plain
-                       supervisor AIMessage with no tool-calls.
-      * ``error``    — if the graph raises. Content is the exception
-                       message, truncated.
-      * ``done``     — always last (or last-before-error), so clients
-                       can detect stream termination without relying
-                       on connection close.
+      * ``handoff``   — one per ``transfer_to_<specialist>`` tool call.
+      * ``update``    — one per non-empty assistant message update,
+                        plus one synthetic opening frame ``stream opened``.
+      * ``final``     — the first plain supervisor AIMessage whose last
+                       message carries no outbound tool-call.
+      * ``error``     — if the graph raises.
+      * ``heartbeat`` — idle keep-alive when graph output pauses; spacing
+                        comes from ``sse_research_heartbeat_seconds`` (env
+                        ``SSE_RESEARCH_HEARTBEAT_SECONDS``, default ``15``;
+                        ``0`` disables).
+      * ``done``      — always last.
 
-    Design note: we use ``stream_mode='updates'`` (state delta per
-    node) rather than ``astream_events``, because the supervisor
-    topology has many low-level events that would swamp a UI. The
-    delta view matches the intuitive "a specialist just spoke"
-    mental model.
+    Design notes
+    ------------
+    Heartbeats multiplex with graph events via ``asyncio.wait_for`` +
+    queue: we only ``sleep`` when there is genuinely no graph delta,
+    preserving low latency during bursty supervisor traffic.
+
+    We use ``stream_mode='updates'`` rather than ``astream_events``,
+    because the supervisor topology emits many noisy low-level events
+    whereas node-level deltas map cleanly to UX.
     """
-    config: dict = {"configurable": {"thread_id": thread_id}}
+    heartbeat_interval = _sse_heartbeat_interval_seconds()
+
+    cfg: dict = {"configurable": {"thread_id": thread_id}}
     if recursion_limit is not None:
-        config["recursion_limit"] = recursion_limit
+        cfg["recursion_limit"] = recursion_limit
 
-    # Opening event immediately so clients know the stream is live
-    # before any LLM round-trip has completed.
-    yield _format_sse(
-        ResearchSupervisorSSEEvent(
-            phase=ResearchSupervisorSSEPhase.UPDATE,
-            node="supervisor",
-            content="stream opened",
-            metadata={"thread_id": thread_id},
-        )
-    )
+    frames: asyncio.Queue[str | None] = asyncio.Queue()
 
-    final_emitted = False
-    try:
-        async for chunk in graph.astream(
-            {"messages": [HumanMessage(content=query)]},
-            config=config,
-            stream_mode="updates",
-        ):
-            if not isinstance(chunk, dict):
-                continue
-            for node_name, node_update in chunk.items():
-                if not isinstance(node_update, dict):
-                    continue
-                tool_call_name, snippet = _extract_update_snippet(node_update)
-
-                if tool_call_name.startswith("transfer_to_") and tool_call_name != (
-                    "transfer_to_supervisor"
-                ):
-                    specialist = tool_call_name[len("transfer_to_") :]
-                    yield _format_sse(
-                        ResearchSupervisorSSEEvent(
-                            phase=ResearchSupervisorSSEPhase.HANDOFF,
-                            node=str(node_name),
-                            content=f"→ {specialist}",
-                            metadata={"specialist": specialist},
-                        )
-                    )
-                    continue
-
-                if not snippet:
-                    continue
-
-                # Plain assistant message from the supervisor with
-                # no outgoing transfer → this is (one of) the final
-                # synthesis chunks. We emit at most one ``final``
-                # per stream; additional plain supervisor messages
-                # (if any) fall through as ``update``.
-                is_supervisor_final = (
-                    node_name == "supervisor" and not tool_call_name
-                )
-                if is_supervisor_final and not final_emitted:
-                    final_emitted = True
-                    yield _format_sse(
-                        ResearchSupervisorSSEEvent(
-                            phase=ResearchSupervisorSSEPhase.FINAL,
-                            node=str(node_name),
-                            content=snippet,
-                        )
-                    )
-                    continue
-
-                yield _format_sse(
+    async def pump() -> None:
+        try:
+            await frames.put(
+                _format_sse(
                     ResearchSupervisorSSEEvent(
                         phase=ResearchSupervisorSSEPhase.UPDATE,
-                        node=str(node_name),
-                        # Long specialist replies can exceed typical
-                        # SSE chunking comfort zones; cap at 4 KiB.
-                        # Clients that need the full text can follow
-                        # up with the non-streaming endpoint.
-                        content=snippet[:4096],
+                        node="supervisor",
+                        content="stream opened",
+                        metadata={"thread_id": thread_id},
                     )
                 )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Research-supervisor streaming crashed: {}", exc)
-        yield _format_sse(
-            ResearchSupervisorSSEEvent(
-                phase=ResearchSupervisorSSEPhase.ERROR,
-                node="supervisor",
-                content=str(exc)[:1024],
             )
-        )
 
-    yield _format_sse(
-        ResearchSupervisorSSEEvent(
-            phase=ResearchSupervisorSSEPhase.DONE, node="supervisor"
-        )
-    )
+            final_emitted_local = False
+            try:
+                async for chunk in graph.astream(
+                    {"messages": [HumanMessage(content=query)]},
+                    config=cfg,
+                    stream_mode="updates",
+                ):
+                    if not isinstance(chunk, dict):
+                        continue
+                    for node_name, node_update in chunk.items():
+                        if not isinstance(node_update, dict):
+                            continue
+                        tool_call_name, snippet = _extract_update_snippet(
+                            node_update
+                        )
+
+                        if tool_call_name.startswith("transfer_to_") and (
+                            tool_call_name != "transfer_to_supervisor"
+                        ):
+                            specialist = tool_call_name[len("transfer_to_") :]
+                            await frames.put(
+                                _format_sse(
+                                    ResearchSupervisorSSEEvent(
+                                        phase=(
+                                            ResearchSupervisorSSEPhase.HANDOFF
+                                        ),
+                                        node=str(node_name),
+                                        content=f"→ {specialist}",
+                                        metadata={"specialist": specialist},
+                                    )
+                                )
+                            )
+                            continue
+
+                        if not snippet:
+                            continue
+
+                        is_supervisor_final = (
+                            node_name == "supervisor"
+                            and not tool_call_name
+                        )
+                        if is_supervisor_final and not final_emitted_local:
+                            final_emitted_local = True
+                            await frames.put(
+                                _format_sse(
+                                    ResearchSupervisorSSEEvent(
+                                        phase=(
+                                            ResearchSupervisorSSEPhase.FINAL
+                                        ),
+                                        node=str(node_name),
+                                        content=snippet,
+                                    )
+                                )
+                            )
+                            continue
+
+                        await frames.put(
+                            _format_sse(
+                                ResearchSupervisorSSEEvent(
+                                    phase=ResearchSupervisorSSEPhase.UPDATE,
+                                    node=str(node_name),
+                                    content=snippet[:4096],
+                                )
+                            )
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "Research-supervisor streaming crashed: {}", exc
+                )
+                await frames.put(
+                    _format_sse(
+                        ResearchSupervisorSSEEvent(
+                            phase=ResearchSupervisorSSEPhase.ERROR,
+                            node="supervisor",
+                            content=str(exc)[:1024],
+                        )
+                    )
+                )
+
+            await frames.put(
+                _format_sse(
+                    ResearchSupervisorSSEEvent(
+                        phase=ResearchSupervisorSSEPhase.DONE,
+                        node="supervisor",
+                    )
+                )
+            )
+        finally:
+            await frames.put(None)
+
+    runner = asyncio.create_task(pump())
+    try:
+        while True:
+            if heartbeat_interval > 0:
+                try:
+                    item = await asyncio.wait_for(
+                        frames.get(), timeout=heartbeat_interval
+                    )
+                except asyncio.TimeoutError:
+                    yield _format_sse(
+                        ResearchSupervisorSSEEvent(
+                            phase=(
+                                ResearchSupervisorSSEPhase.HEARTBEAT
+                            ),
+                            node="sse",
+                            content="ping",
+                            metadata={"thread_id": thread_id},
+                        )
+                    )
+                    continue
+            else:
+                item = await frames.get()
+
+            if item is None:
+                break
+            yield item
+    finally:
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
 
 
 @router.post("/research/stream")
@@ -362,9 +430,12 @@ async def supervisor_research_stream(
     Response is ``text/event-stream``; each frame carries a
     :class:`ResearchSupervisorSSEEvent`. The stream terminates with
     a single ``phase=done`` frame (preceded by ``phase=error`` if
-    the graph raised). The ``X-Thread-ID`` response header carries
-    the resolved thread id so that clients can reuse it in a
-    follow-up call without parsing the first event.
+    the graph raised). While the LangGraph backend is idle (no deltas
+    for ``sse_research_heartbeat_seconds``, default **15**, set to
+    ``0`` to disable), the server emits ``phase=heartbeat`` frames so
+    reverse proxies retain the SSE connection. The ``X-Thread-ID``
+    response header carries the resolved thread id so that clients can
+    reuse it in a follow-up call without parsing the first event.
 
     Long-term memory context is injected the same way as the sync
     endpoint; result persistence happens client-side (stream callers

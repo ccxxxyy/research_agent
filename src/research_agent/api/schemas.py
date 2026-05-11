@@ -110,6 +110,9 @@ class ResearchSupervisorSSEPhase(str, Enum):
                      answer. Full content included.
     * ``error``    — graph invocation raised. Content is the short
                      error message; the client should stop consuming.
+    * ``heartbeat`` — synthetic keep-alive emitted when no graph news
+                       has arrived within the configured idle window
+                       so reverse proxies retain the SSE connection.
     * ``done``     — stream terminator. Always emitted last.
     """
 
@@ -117,6 +120,7 @@ class ResearchSupervisorSSEPhase(str, Enum):
     UPDATE = "update"
     FINAL = "final"
     ERROR = "error"
+    HEARTBEAT = "heartbeat"
     DONE = "done"
 
 
