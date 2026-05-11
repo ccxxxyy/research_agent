@@ -16,7 +16,7 @@ from research_agent.config import get_settings
 from research_agent.observability.logging import setup_logging
 
 
-async def _try_build_research_supervisor(model_router, checkpointer):
+async def _try_build_research_supervisor(model_router, checkpointer, settings=None):
     """Best-effort compile of the Phase-4.5 / 4.6 research supervisor.
 
     Tool discovery runs four loaders in parallel: three MCP-stdio
@@ -78,6 +78,12 @@ async def _try_build_research_supervisor(model_router, checkpointer):
         )
         return None
 
+    # ``settings`` is optional so this helper stays unit-testable in
+    # isolation. In the production lifespan we always pass it.
+    reflect = bool(getattr(settings, "reflection_enabled", False))
+    pass_threshold = float(getattr(settings, "reflection_pass_threshold", 0.85))
+    max_iter = int(getattr(settings, "reflection_max_iterations", 2))
+
     try:
         return build_research_supervisor(
             model_router=model_router,
@@ -88,6 +94,9 @@ async def _try_build_research_supervisor(model_router, checkpointer):
             news_tools=tools["news_server"] or None,
             sentiment_tools=tools["news_sentiment_server"] or None,
             checkpointer=checkpointer,
+            enable_reflection=reflect,
+            reflection_pass_threshold=pass_threshold,
+            reflection_max_iterations=max_iter,
         )
     except Exception:  # noqa: BLE001
         # A crash here (e.g. misconfigured model router) should not
@@ -120,7 +129,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     research_supervisor_graph = await _try_build_research_supervisor(
-        model_router=model_router, checkpointer=checkpointer
+        model_router=model_router,
+        checkpointer=checkpointer,
+        settings=settings,
     )
 
     app.state.supervisor_graph = supervisor_graph
