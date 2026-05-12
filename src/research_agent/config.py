@@ -99,6 +99,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    checkpoint_sqlite_path: str = Field(
+        default="data/langgraph_checkpoint.db",
+        description=(
+            "When Postgres is unreachable at startup, LangGraph writes "
+            "checkpoints to this SQLite file (parent dirs are created). "
+            "Set to empty string to skip SQLite and fall back to "
+            "in-memory checkpoints only."
+        ),
+    )
+
     llm: LLMConfig = LLMConfig()
     database: DatabaseConfig = DatabaseConfig()
     observability: ObservabilityConfig = ObservabilityConfig()

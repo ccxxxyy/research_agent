@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
 from research_agent.api.dependencies import (
@@ -26,6 +26,7 @@ from research_agent.api.schemas import (
     SupervisorChatResponse,
 )
 from research_agent.config import get_settings
+from research_agent.memory.manager import MemoryManager
 
 router = APIRouter(prefix="/api/supervisor", tags=["supervisor"])
 
@@ -74,6 +75,43 @@ def _specialists_reached(messages: list) -> list[str]:
                 if specialist and specialist not in seen:
                     seen.append(specialist)
     return seen
+
+
+async def _build_user_context_messages(
+    memory: MemoryManager,
+    user_id: str,
+    query: str,
+) -> list[BaseMessage]:
+    """Build the graph input message list with optional long-term context.
+
+    Shared by both the synchronous and SSE research routes so the LLM
+    sees exactly the same preamble regardless of transport.
+
+    Returns ``[SystemMessage, HumanMessage]`` when context exists,
+    or ``[HumanMessage]`` for anonymous / empty-context users.
+    """
+    messages: list[BaseMessage] = []
+    if user_id != "anonymous":
+        user_ctx = await memory.get_user_context(user_id)
+        context_parts: list[str] = []
+        if user_ctx.get("preferences"):
+            prefs = "; ".join(
+                p.get("content", str(p)) for p in user_ctx["preferences"]
+            )
+            context_parts.append(f"User preferences: {prefs}")
+        if user_ctx.get("recent_research"):
+            history_lines = [
+                f"- {r.get('query', '?')}: {r.get('summary', '')[:100]}"
+                for r in user_ctx["recent_research"][:3]
+            ]
+            context_parts.append(
+                "Recent research history:\n" + "\n".join(history_lines)
+            )
+        if context_parts:
+            messages.append(SystemMessage(content="\n\n".join(context_parts)))
+
+    messages.append(HumanMessage(content=query))
+    return messages
 
 
 # ---------------------------------------------------------------------------
@@ -146,31 +184,9 @@ async def supervisor_research(
     )
 
     # --- Long-term memory: load user context ---
-    messages_input: list = []
-    if user_id != "anonymous":
-        user_ctx = await memory.get_user_context(user_id)
-        context_parts: list[str] = []
-        if user_ctx.get("preferences"):
-            prefs = "; ".join(
-                p.get("content", str(p)) for p in user_ctx["preferences"]
-            )
-            context_parts.append(f"User preferences: {prefs}")
-        if user_ctx.get("recent_research"):
-            history_lines = [
-                f"- {r.get('query', '?')}: {r.get('summary', '')[:100]}"
-                for r in user_ctx["recent_research"][:3]
-            ]
-            context_parts.append(
-                "Recent research history:\n" + "\n".join(history_lines)
-            )
-        if context_parts:
-            from langchain_core.messages import SystemMessage
-
-            messages_input.append(
-                SystemMessage(content="\n\n".join(context_parts))
-            )
-
-    messages_input.append(HumanMessage(content=request.query))
+    messages_input = await _build_user_context_messages(
+        memory, user_id, request.query,
+    )
 
     result = await graph.ainvoke(
         {"messages": messages_input},
@@ -248,10 +264,70 @@ def _extract_update_snippet(node_update: dict) -> tuple[str, str]:
     return ("", str(getattr(last, "content", "") or ""))
 
 
+_SYNTH_NODES_FOR_HISTORY = frozenset({"supervisor", "reflection"})
+
+
+async def _persist_stream_research_to_memory(
+    *,
+    outcome: dict[str, Any],
+    memory: MemoryManager | None,
+    persist_user_id: str | None,
+    persist_original_query: str | None,
+    graph_input_query: str,
+    thread_id: str,
+) -> None:
+    """Persist like ``POST …/research`` when the streamed graph exits cleanly.
+
+    Only saves when LangGraph finishes ``astream`` without raising --- same
+    success notion as treating the synchronous route as committed. Keeps the
+    last plain synthesis from supervisor or reflection as the summary.
+    """
+    if memory is None or not persist_user_id or persist_user_id == "anonymous":
+        return
+    if not outcome.get("graph_astream_ok"):
+        return
+
+    reply = outcome.get("last_plain_synthesis")
+    if not reply or not str(reply).strip():
+        return
+
+    canonical_query = persist_original_query or graph_input_query
+    try:
+        await memory.save_research_result(
+            user_id=persist_user_id,
+            query=canonical_query,
+            summary=str(reply),
+            thread_id=thread_id,
+        )
+        logger.info(
+            "Research stream saved to long-term memory: user={}, thread={}",
+            persist_user_id,
+            thread_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to persist research stream to long-term memory: {}", exc
+        )
+
+
 async def _research_event_stream(
-    graph, query: str, thread_id: str, recursion_limit: int | None
+    graph,
+    messages: list[BaseMessage],
+    thread_id: str,
+    recursion_limit: int | None,
+    *,
+    memory: MemoryManager | None = None,
+    persist_user_id: str | None = None,
+    persist_original_query: str | None = None,
 ) -> AsyncIterator[str]:
     """Async generator producing SSE frames for one research invocation.
+
+    Parameters
+    ----------
+    messages:
+        Pre-built input list from :func:`_build_user_context_messages`
+        (``[SystemMessage?, HumanMessage]``). Using the same builder as
+        the synchronous route guarantees identical LLM preamble.
 
     Phases emitted (in rough order):
       * ``handoff``   — one per ``transfer_to_<specialist>`` tool call.
@@ -266,18 +342,17 @@ async def _research_event_stream(
                         ``0`` disables).
       * ``done``      — always last.
 
-    Design notes
-    ------------
-    Heartbeats multiplex with graph events via ``asyncio.wait_for`` +
-    queue: we only ``sleep`` when there is genuinely no graph delta,
-    preserving low latency during bursty supervisor traffic.
-
-    We use ``stream_mode='updates'`` rather than ``astream_events``,
-    because the supervisor topology emits many noisy low-level events
-    whereas node-level deltas map cleanly to UX.
+    Long-term memory: mirrors ``supervisor_research``. When ``astream``
+    completes without exceptions, the last supervisor / reflection plain
+    reply is written via :meth:`MemoryManager.save_research_result` using
+    ``persist_original_query`` (never the preamble-inflated text).
     """
     heartbeat_interval = _sse_heartbeat_interval_seconds()
 
+    outcome: dict[str, Any] = {
+        "graph_astream_ok": False,
+        "last_plain_synthesis": None,
+    }
     cfg: dict = {"configurable": {"thread_id": thread_id}}
     if recursion_limit is not None:
         cfg["recursion_limit"] = recursion_limit
@@ -300,7 +375,7 @@ async def _research_event_stream(
             final_emitted_local = False
             try:
                 async for chunk in graph.astream(
-                    {"messages": [HumanMessage(content=query)]},
+                    {"messages": messages},
                     config=cfg,
                     stream_mode="updates",
                 ):
@@ -334,6 +409,12 @@ async def _research_event_stream(
                         if not snippet:
                             continue
 
+                        if (
+                            not tool_call_name
+                            and str(node_name) in _SYNTH_NODES_FOR_HISTORY
+                        ):
+                            outcome["last_plain_synthesis"] = snippet
+
                         is_supervisor_final = (
                             node_name == "supervisor"
                             and not tool_call_name
@@ -362,6 +443,7 @@ async def _research_event_stream(
                                 )
                             )
                         )
+                outcome["graph_astream_ok"] = True
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "Research-supervisor streaming crashed: {}", exc
@@ -414,6 +496,18 @@ async def _research_event_stream(
                 break
             yield item
     finally:
+        _fallback_query = next(
+            (str(m.content) for m in messages if isinstance(m, HumanMessage)),
+            "",
+        )
+        await _persist_stream_research_to_memory(
+            outcome=outcome,
+            memory=memory,
+            persist_user_id=persist_user_id,
+            persist_original_query=persist_original_query,
+            graph_input_query=_fallback_query,
+            thread_id=thread_id,
+        )
         runner.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await runner
@@ -437,10 +531,11 @@ async def supervisor_research_stream(
     response header carries the resolved thread id so that clients can
     reuse it in a follow-up call without parsing the first event.
 
-    Long-term memory context is injected the same way as the sync
-    endpoint; result persistence happens client-side (stream callers
-    should POST to ``/api/memory/research`` after consuming the
-    final event if they want to persist the result).
+    Long-term memory: user context preamble is built by
+    :func:`_build_user_context_messages` — identical to the synchronous
+    route. Completed streams also call ``MemoryManager.save_research_result``
+    automatically (unless ``user_id`` is ``anonymous``), using the user's
+    original ``query`` and the last supervisor / reflection plain reply.
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
@@ -448,27 +543,19 @@ async def supervisor_research_stream(
         "Research-supervisor stream: user={}, thread={}", user_id, thread_id
     )
 
-    # Inject user context into the query preamble for streaming too
-    query_with_context = request.query
-    if user_id != "anonymous":
-        user_ctx = await memory.get_user_context(user_id)
-        context_parts: list[str] = []
-        if user_ctx.get("recent_research"):
-            history_lines = [
-                f"- {r.get('query', '?')}: {r.get('summary', '')[:80]}"
-                for r in user_ctx["recent_research"][:3]
-            ]
-            context_parts.append(
-                "[User history]\n" + "\n".join(history_lines)
-            )
-        if context_parts:
-            query_with_context = (
-                "\n\n".join(context_parts) + "\n\n[Current question]\n" + request.query
-            )
+    messages_input = await _build_user_context_messages(
+        memory, user_id, request.query,
+    )
 
     return StreamingResponse(
         _research_event_stream(
-            graph, query_with_context, thread_id, request.recursion_limit
+            graph,
+            messages_input,
+            thread_id,
+            request.recursion_limit,
+            memory=memory,
+            persist_user_id=user_id,
+            persist_original_query=request.query,
         ),
         media_type="text/event-stream",
         headers={

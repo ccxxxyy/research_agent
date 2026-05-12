@@ -60,3 +60,7 @@ class TestSettingsRoot:
     def test_sse_research_heartbeat_seconds_default(self) -> None:
         s = Settings(_env_file=None)  # type: ignore[arg-type]
         assert s.sse_research_heartbeat_seconds == 15.0
+
+    def test_checkpoint_sqlite_path_default(self) -> None:
+        s = Settings(_env_file=None)  # type: ignore[arg-type]
+        assert s.checkpoint_sqlite_path == "data/langgraph_checkpoint.db"

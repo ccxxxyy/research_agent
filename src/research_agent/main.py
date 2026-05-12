@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 import uvicorn
@@ -115,7 +116,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from research_agent.memory.checkpointer import init_checkpointer
     from research_agent.memory.store import init_memory_store
 
-    checkpointer = await init_checkpointer(settings.database.postgres_sync_uri)
+    sqlite_fallback = settings.checkpoint_sqlite_path.strip()
+    sqlite_path_arg: Path | str | None = (
+        sqlite_fallback if sqlite_fallback else None
+    )
+
+    checkpointer = await init_checkpointer(
+        settings.database.postgres_sync_uri,
+        sqlite_path=sqlite_path_arg,
+    )
     memory_store = await init_memory_store(settings.database.postgres_sync_uri)
 
     from research_agent.graph.minimal_supervisor import build_minimal_supervisor

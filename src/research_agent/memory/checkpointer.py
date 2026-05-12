@@ -9,7 +9,7 @@ Three backends are supported, chosen in this priority order:
 
 1. **PostgresSaver** (production)  — when ``postgres_uri`` is supplied.
    Durable, concurrent, survives process/host restart.
-2. **SqliteSaver**  (dev / demos)  — when ``sqlite_path`` is supplied.
+2. **AsyncSqliteSaver**  (dev / demos)  — when ``sqlite_path`` is supplied.
    File-based, no server needed, survives process restart. Ideal for
    reproducing "resume after crash" stories without docker.
 3. **MemorySaver**  (tests / smoke) — fallback when neither is supplied.
@@ -37,9 +37,10 @@ async def init_checkpointer(
         postgres_uri: PostgreSQL connection string. If given and reachable,
             wins. Used in production / docker-compose setups.
         sqlite_path: Path to a SQLite database file. If given and Postgres
-            is not, a :class:`SqliteSaver` is created at that path, with
-            parent directories auto-created. Used in dev / demos for
-            cross-process persistence without a DB server.
+            is not used, an :class:`~langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver`
+            is created at that path, with parent directories auto-created.
+            Typical on Windows / laptop dev when docker Postgres is down
+            (see ``CHECKPOINT_SQLITE_PATH`` in settings).
 
     Returns:
         An instance of :class:`BaseCheckpointSaver` appropriate for the

@@ -31,10 +31,14 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage, HumanMessage
 
 import research_agent.api.routes.supervisor as supervisor_route
+from langgraph.store.memory import InMemoryStore
+
 from research_agent.api.dependencies import (
+    get_memory_manager,
     get_research_supervisor_graph,
     get_supervisor_graph,
 )
+from research_agent.memory.manager import MemoryManager
 from research_agent.api.routes.supervisor import router as supervisor_router
 
 
@@ -104,12 +108,55 @@ def _supervisor_final(text: str) -> AIMessage:
     return AIMessage(content=text, name="supervisor")
 
 
+def _reflection_plain(text: str) -> AIMessage:
+    return AIMessage(content=text, name="reflection")
+
+
+class _SpyMemory(MemoryManager):
+    """Records ``save_research_result`` calls; optional fake history preamble."""
+
+    def __init__(
+        self, *, fake_recent_research: list[dict[str, str]] | None = None
+    ) -> None:
+        super().__init__(InMemoryStore())
+        self._fake_recent_research = fake_recent_research
+        self.save_calls: list[dict[str, Any]] = []
+
+    async def get_user_context(self, user_id: str) -> dict[str, Any]:  # type: ignore[override]
+        if self._fake_recent_research is not None:
+            return {
+                "preferences": [],
+                "recent_research": self._fake_recent_research,
+            }
+        return await super().get_user_context(user_id)
+
+    async def save_research_result(  # type: ignore[override]
+        self,
+        user_id: str,
+        query: str,
+        summary: str,
+        thread_id: str,
+    ) -> None:
+        self.save_calls.append(
+            {
+                "user_id": user_id,
+                "query": query,
+                "summary": summary,
+                "thread_id": thread_id,
+            }
+        )
+
+
 # ---------------------------------------------------------------------------
 # App fixture with overridable research-supervisor dep
 # ---------------------------------------------------------------------------
 
 
-def _build_test_app(graph: _FakeGraph | None) -> FastAPI:
+def _build_test_app(
+    graph: _FakeGraph | None,
+    *,
+    memory: MemoryManager | None = None,
+) -> FastAPI:
     """Construct a trimmed FastAPI app with only the supervisor router.
 
     We do NOT boot the production lifespan (which would hit Chroma,
@@ -126,6 +173,9 @@ def _build_test_app(graph: _FakeGraph | None) -> FastAPI:
         pass
     else:
         app.dependency_overrides[get_research_supervisor_graph] = lambda: graph
+
+    if memory is not None:
+        app.dependency_overrides[get_memory_manager] = lambda: memory
 
     # The minimal-supervisor dep isn't exercised here, but leaving
     # it unset would make a typo in the test URL surface as a
@@ -396,6 +446,112 @@ class TestResearchSSE:
         assert r.status_code == 200
         events = _parse_sse(r.content)
         assert not any(e["phase"] == "heartbeat" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_stream_persists_memory_when_user_not_anonymous(self) -> None:
+        spy = _SpyMemory()
+        graph = _FakeGraph([_supervisor_final("persisted synthesis")])
+        app = _build_test_app(graph, memory=spy)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.post(
+                "/api/supervisor/research/stream",
+                json={
+                    "query": "user original query",
+                    "user_id": "alice",
+                    "thread_id": "tid-stream-1",
+                },
+            )
+
+        assert len(spy.save_calls) == 1
+        call = spy.save_calls[0]
+        assert call["user_id"] == "alice"
+        assert call["query"] == "user original query"
+        assert call["summary"] == "persisted synthesis"
+        assert call["thread_id"] == "tid-stream-1"
+
+    @pytest.mark.asyncio
+    async def test_stream_skips_memory_for_anonymous(self) -> None:
+        spy = _SpyMemory()
+        graph = _FakeGraph([_supervisor_final("x")])
+        app = _build_test_app(graph, memory=spy)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.post(
+                "/api/supervisor/research/stream",
+                json={"query": "q"},  # default user_id anonymous
+            )
+
+        assert spy.save_calls == []
+
+    @pytest.mark.asyncio
+    async def test_stream_skips_memory_on_graph_error(self) -> None:
+        spy = _SpyMemory()
+
+        class _BoomGraph(_FakeGraph):
+            async def astream(self, *a: Any, **kw: Any) -> AsyncIterator[dict]:
+                if False:
+                    yield {}
+                raise RuntimeError("boom")
+
+        app = _build_test_app(_BoomGraph([]), memory=spy)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.post(
+                "/api/supervisor/research/stream",
+                json={"query": "go", "user_id": "bob"},
+            )
+
+        assert spy.save_calls == []
+
+    @pytest.mark.asyncio
+    async def test_stream_save_query_is_original_not_preamble_injected(self) -> None:
+        spy = _SpyMemory(
+            fake_recent_research=[{"query": "past", "summary": "past sum"}],
+        )
+        graph = _FakeGraph([_supervisor_final("answer")])
+        app = _build_test_app(graph, memory=spy)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.post(
+                "/api/supervisor/research/stream",
+                json={"query": "CURRENT_QUESTION_ONLY", "user_id": "u3"},
+            )
+
+        assert len(spy.save_calls) == 1
+        assert spy.save_calls[0]["query"] == "CURRENT_QUESTION_ONLY"
+
+    @pytest.mark.asyncio
+    async def test_stream_memory_summary_prefers_last_reflection_plain(
+        self,
+    ) -> None:
+        spy = _SpyMemory()
+        graph = _FakeGraph(
+            [
+                _supervisor_final("supervisor wording"),
+                _reflection_plain("reflection wording"),
+            ]
+        )
+        app = _build_test_app(graph, memory=spy)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.post(
+                "/api/supervisor/research/stream",
+                json={"query": "q", "user_id": "u4"},
+            )
+
+        assert len(spy.save_calls) == 1
+        assert spy.save_calls[0]["summary"] == "reflection wording"
 
 
 # ---------------------------------------------------------------------------
