@@ -106,10 +106,11 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "evals"]
 asyncio_mode = "auto"
 markers = [
     "network: tests that hit live third-party HTTP endpoints (akshare, xueqiu, sina). Skip in offline CI with ``pytest -m 'not network'``.",
     "slow: tests that load heavy ML model weights (e.g. HuggingFace embedders) or run multi-second pipelines end-to-end. Opt-in via ``pytest -m slow``; skipped by default with ``pytest -m 'not slow'``.",
     "integration: end-to-end / cross-component tests that bring up FastAPI, MCP subprocesses, or a full graph. Run with ``pytest -m integration``; routinely skipped in unit-only flows.",
+    "eval: LangSmith evaluation suite — requires live LLM + LANGSMITH_API_KEY. Run with ``python -m evals.eval_supervisor`` or ``pytest -m eval``.",
 ]

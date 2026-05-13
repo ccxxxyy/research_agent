@@ -1,0 +1,212 @@
+[
+  {
+    "query": "查询宁德时代的最新股价和市值",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert"],
+    "expected_reply_keywords": ["股价", "宁德时代"],
+    "category": "single_route"
+  },
+  {
+    "query": "比亚迪 2023 年全年营收和净利润是多少",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert"],
+    "expected_reply_keywords": ["营收", "利润"],
+    "category": "single_route"
+  },
+  {
+    "query": "帮我查一下贵州茅台的 ROE 和毛利率",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["data_expert"],
+    "expected_reply_keywords": ["ROE", "毛利率"],
+    "category": "single_route"
+  },
+  {
+    "query": "下载招商银行 2023 年年度报告，提取经营情况讨论与分析",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["report_expert"],
+    "expected_reply_keywords": ["年报", "经营"],
+    "category": "single_route"
+  },
+  {
+    "query": "查找中国平安最近的业绩预告公告",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["report_expert"],
+    "expected_reply_keywords": ["业绩", "公告"],
+    "category": "single_route"
+  },
+  {
+    "query": "用 Python 计算 [120, 135, 128, 142, 150] 这组数据的均值和标准差",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["coder_expert"],
+    "expected_reply_keywords": ["均值", "标准差"],
+    "category": "single_route"
+  },
+  {
+    "query": "帮我写一段代码计算年化收益率，假设初始投入 10 万，3 年后变成 15 万",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["coder_expert"],
+    "expected_reply_keywords": ["年化", "收益率"],
+    "category": "single_route"
+  },
+  {
+    "query": "宁德时代最近有什么新闻",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["news_expert"],
+    "expected_reply_keywords": ["新闻", "宁德时代"],
+    "category": "single_route"
+  },
+  {
+    "query": "今天 A 股市场有什么重要快讯",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["news_expert"],
+    "expected_reply_keywords": ["快讯"],
+    "category": "single_route"
+  },
+  {
+    "query": "我之前上传的 ESG 报告里关于碳中和目标怎么写的",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["knowledge_expert"],
+    "expected_reply_keywords": ["碳中和"],
+    "category": "single_route"
+  },
+  {
+    "query": "从我的知识库里检索关于新能源补贴政策的内容",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["knowledge_expert"],
+    "expected_reply_keywords": ["新能源", "补贴"],
+    "category": "single_route"
+  },
+  {
+    "query": "分析一下隆基绿能最近的舆情，给出情感打分",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["sentiment_expert"],
+    "expected_reply_keywords": ["情感", "舆情"],
+    "category": "single_route"
+  },
+  {
+    "query": "分析宁德时代 2023 年业绩：(1) 查营收和利润 (2) 找年报里的经营分析段落",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "report_expert"],
+    "expected_reply_keywords": ["营收", "利润", "年报"],
+    "category": "multi_route"
+  },
+  {
+    "query": "比亚迪最近的新闻和市场情绪如何，给出量化分析",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["news_expert", "sentiment_expert"],
+    "expected_reply_keywords": ["新闻", "情感"],
+    "category": "multi_route"
+  },
+  {
+    "query": "查贵州茅台最近 3 年的营收数据，然后用代码算出年复合增长率",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "coder_expert"],
+    "expected_reply_keywords": ["营收", "增长率"],
+    "category": "multi_route"
+  },
+  {
+    "query": "帮我查宁德时代的最新财务数据，再结合我之前上传的行业分析报告做对比",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "knowledge_expert"],
+    "expected_reply_keywords": ["财务", "知识库"],
+    "category": "multi_route"
+  },
+  {
+    "query": "找到中国平安 2023 年报里的风险因素段落，然后帮我做情感分析",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["report_expert", "sentiment_expert"],
+    "expected_reply_keywords": ["风险", "情感"],
+    "category": "multi_route"
+  },
+  {
+    "query": "查隆基绿能的股价历史和最新新闻，分析当前投资价值",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "news_expert"],
+    "expected_reply_keywords": ["股价", "新闻"],
+    "category": "multi_route"
+  },
+  {
+    "query": "综合分析宁德时代：(1) 最新财务指标 (2) 年报经营分析 (3) 最近新闻和舆情打分",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "report_expert", "news_expert", "sentiment_expert"],
+    "expected_reply_keywords": ["财务", "年报", "新闻", "情感"],
+    "category": "multi_route"
+  },
+  {
+    "query": "分析招商银行：查 ROE 等财务指标，找最近的业绩公告，并对公告内容做情感分析",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["data_expert", "report_expert", "sentiment_expert"],
+    "expected_reply_keywords": ["ROE", "公告", "情感"],
+    "category": "multi_route"
+  },
+  {
+    "query": "查比亚迪营收，算出同比增长率，再查最近新闻",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "coder_expert", "news_expert"],
+    "expected_reply_keywords": ["营收", "增长", "新闻"],
+    "category": "multi_route"
+  },
+  {
+    "query": "查贵州茅台的最新财务数据，结合我知识库里的白酒行业研报，用代码画出对比图",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "knowledge_expert", "coder_expert"],
+    "expected_reply_keywords": ["财务", "知识库"],
+    "category": "multi_route"
+  },
+  {
+    "query": "雪球上讨论最热的个股是哪些",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["news_expert"],
+    "expected_reply_keywords": ["雪球", "热度"],
+    "category": "multi_route"
+  },
+  {
+    "query": "最近有什么宏观经济新闻，央行有什么新政策",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["news_expert"],
+    "expected_reply_keywords": ["宏观", "政策"],
+    "category": "multi_route"
+  },
+  {
+    "query": "你好",
+    "user_id": "eval_user_01",
+    "expected_specialists": [],
+    "expected_reply_keywords": [],
+    "category": "edge_case"
+  },
+  {
+    "query": "What is the latest stock price of Kweichow Moutai?",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert"],
+    "expected_reply_keywords": ["price", "Moutai"],
+    "category": "edge_case"
+  },
+  {
+    "query": "请匿名查询宁德时代的股价",
+    "user_id": "anonymous",
+    "expected_specialists": ["data_expert"],
+    "expected_reply_keywords": ["股价"],
+    "category": "edge_case"
+  },
+  {
+    "query": "帮我分析一下这家公司",
+    "user_id": "eval_user_02",
+    "expected_specialists": [],
+    "expected_reply_keywords": [],
+    "category": "edge_case"
+  },
+  {
+    "query": "宁德时代和比亚迪谁的毛利率更高，帮我查数据然后算一下",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "coder_expert"],
+    "expected_reply_keywords": ["毛利率", "对比"],
+    "category": "edge_case"
+  },
+  {
+    "query": "Analyze BYD: get financial data, find the latest annual report, and check recent news sentiment",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["data_expert", "report_expert", "news_expert", "sentiment_expert"],
+    "expected_reply_keywords": ["financial", "report", "news", "sentiment"],
+    "category": "edge_case"
+  }
+]
