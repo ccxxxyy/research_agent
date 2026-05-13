@@ -513,14 +513,21 @@ async def _research_event_stream(
             (str(m.content) for m in messages if isinstance(m, HumanMessage)),
             "",
         )
-        await _persist_stream_research_to_memory(
-            outcome=outcome,
-            memory=memory,
-            persist_user_id=persist_user_id,
-            persist_original_query=persist_original_query,
-            graph_input_query=_fallback_query,
-            thread_id=thread_id,
-        )
+        # Shield the memory write from cancellation: if the client
+        # disconnects mid-stream, Uvicorn cancels the handler task.
+        # Without shield() the awaited coroutine would be cancelled
+        # and the research result would be silently lost.
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.shield(
+                _persist_stream_research_to_memory(
+                    outcome=outcome,
+                    memory=memory,
+                    persist_user_id=persist_user_id,
+                    persist_original_query=persist_original_query,
+                    graph_input_query=_fallback_query,
+                    thread_id=thread_id,
+                )
+            )
         runner.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await runner

@@ -125,6 +125,27 @@ class Settings(BaseSettings):
         ),
     )
 
+    mcp_tool_discovery_timeout: float = Field(
+        default=30.0,
+        ge=5,
+        le=300,
+        description=(
+            "Timeout in seconds for each MCP tool-discovery call at "
+            "startup. If a subprocess takes longer than this to "
+            "enumerate its tools, that specialist is skipped."
+        ),
+    )
+
+    memory_store_sqlite_path: str = Field(
+        default="data/langgraph_memory_store.db",
+        description=(
+            "When Postgres is unreachable at startup, long-term memory "
+            "(user preferences, research history) is persisted to this "
+            "SQLite file via AsyncSqliteStore. Set to empty string to "
+            "skip SQLite and fall back to InMemoryStore (non-persistent)."
+        ),
+    )
+
     llm: LLMConfig = LLMConfig()
     database: DatabaseConfig = DatabaseConfig()
     observability: ObservabilityConfig = ObservabilityConfig()

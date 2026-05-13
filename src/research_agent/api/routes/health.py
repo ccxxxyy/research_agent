@@ -54,6 +54,23 @@ async def health_check(request: Request) -> HealthResponse:
     graph = getattr(request.app.state, "research_supervisor_graph", None)
     services["research_supervisor"] = "ok" if graph is not None else "unavailable"
 
+    # Checkpointer backend — report which tier is active so operators
+    # know when short-term memory has silently degraded to in-memory.
+    checkpointer = getattr(request.app.state, "checkpointer", None)
+    if checkpointer is not None:
+        backend = type(checkpointer).__name__
+        services["checkpointer"] = f"ok ({backend})"
+    else:
+        services["checkpointer"] = "unavailable"
+
+    # Memory store backend — same rationale as checkpointer.
+    memory_store = getattr(request.app.state, "memory_store", None)
+    if memory_store is not None:
+        backend = type(memory_store).__name__
+        services["memory_store"] = f"ok ({backend})"
+    else:
+        services["memory_store"] = "unavailable"
+
     # Aggregate liveness. Postgres/Redis are first-class production
     # dependencies; the rest are advisory. We report ``ok`` as long as
     # the data plane is up; missing optional services degrade the
