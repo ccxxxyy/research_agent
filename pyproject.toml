@@ -64,6 +64,7 @@ dev = [
     "mypy",
     "httpx",
     "pre-commit",
+    "fakeredis",
 ]
 # Optional: only needed to run ``modelscope.snapshot_download(...)`` when
 # priming ``~/.cache/modelscope/...`` for the reranker on networks where

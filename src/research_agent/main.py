@@ -208,7 +208,11 @@ def create_app() -> FastAPI:
 
     from research_agent.api.middleware import AuthMiddleware, RateLimitMiddleware
 
-    app.add_middleware(RateLimitMiddleware, max_rpm=settings.rate_limit_rpm)
+    app.add_middleware(
+        RateLimitMiddleware,
+        max_rpm=settings.rate_limit_rpm,
+        redis_url=settings.database.redis_url or None,
+    )
     app.add_middleware(AuthMiddleware, secret_key=settings.api_secret_key)
 
     app.include_router(health.router)
