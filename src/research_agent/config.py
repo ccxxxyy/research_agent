@@ -87,6 +87,22 @@ class Settings(BaseSettings):
     is ``max_iterations + 1`` critic calls plus ``max_iterations``
     writer calls."""
 
+    default_recursion_limit: int = Field(
+        default=50,
+        ge=10,
+        le=150,
+        description=(
+            "Default LangGraph recursion limit applied when the client "
+            "does not specify one. The 6-specialist research supervisor "
+            "needs ~4 graph steps per specialist hand-off (transfer + "
+            "tool-call + tool-result + transfer-back), plus supervisor "
+            "planning and optional reflection (up to 5 extra steps). "
+            "25 (LangGraph's built-in default) is too low for complex "
+            "multi-specialist queries; 50 covers 6 specialists + "
+            "reflection with headroom."
+        ),
+    )
+
     sse_research_heartbeat_seconds: float = Field(
         default=15.0,
         ge=0,
