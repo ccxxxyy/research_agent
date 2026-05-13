@@ -51,7 +51,14 @@ def get_memory_manager(request: Request) -> MemoryManager:
     store = getattr(request.app.state, "memory_store", None)
     if store is None:
         from langgraph.store.memory import InMemoryStore
+        from loguru import logger
+
         store = InMemoryStore()
+        request.app.state.memory_store = store
+        logger.warning(
+            "memory_store was not initialised by lifespan; "
+            "created a shared InMemoryStore fallback (non-persistent)."
+        )
     return MemoryManager(store)
 
 

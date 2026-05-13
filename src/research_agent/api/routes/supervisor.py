@@ -28,6 +28,25 @@ from research_agent.api.schemas import (
 from research_agent.config import get_settings
 from research_agent.memory.manager import MemoryManager
 
+
+def _graph_config(
+    thread_id: str,
+    recursion_limit: int | None,
+) -> dict:
+    """Build a LangGraph config dict with a safe recursion limit.
+
+    When the caller does not specify a limit, falls back to
+    ``Settings.default_recursion_limit`` (default 50) instead of
+    LangGraph's built-in 25, which is too low for the 6-specialist
+    research supervisor + optional reflection loop.
+    """
+    cfg: dict = {"configurable": {"thread_id": thread_id}}
+    if recursion_limit is not None:
+        cfg["recursion_limit"] = recursion_limit
+    else:
+        cfg["recursion_limit"] = get_settings().default_recursion_limit
+    return cfg
+
 router = APIRouter(prefix="/api/supervisor", tags=["supervisor"])
 
 
@@ -132,9 +151,7 @@ async def supervisor_chat(
     final user-visible answer.
     """
     thread_id = request.thread_id or str(uuid.uuid4())
-    config: dict = {"configurable": {"thread_id": thread_id}}
-    if request.recursion_limit is not None:
-        config["recursion_limit"] = request.recursion_limit
+    config = _graph_config(thread_id, request.recursion_limit)
 
     logger.info("Supervisor chat: thread={}", thread_id)
 
@@ -175,9 +192,7 @@ async def supervisor_research(
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
-    config: dict = {"configurable": {"thread_id": thread_id}}
-    if request.recursion_limit is not None:
-        config["recursion_limit"] = request.recursion_limit
+    config = _graph_config(thread_id, request.recursion_limit)
 
     logger.info(
         "Research-supervisor invoke: user={}, thread={}", user_id, thread_id
@@ -353,9 +368,7 @@ async def _research_event_stream(
         "graph_astream_ok": False,
         "last_plain_synthesis": None,
     }
-    cfg: dict = {"configurable": {"thread_id": thread_id}}
-    if recursion_limit is not None:
-        cfg["recursion_limit"] = recursion_limit
+    cfg = _graph_config(thread_id, recursion_limit)
 
     frames: asyncio.Queue[str | None] = asyncio.Queue()
 

@@ -13,7 +13,7 @@ from research_agent.llm.tier import (
     AgentName,
     ModelTier,
 )
-from research_agent.llm.usage_tracker import UsageTracker
+from research_agent.llm.usage_tracker import UsageCallbackHandler, UsageTracker
 
 
 class ModelRouter:
@@ -67,12 +67,14 @@ class ModelRouter:
         for tier in ModelTier:
             model_name = getattr(self._config, f"{tier.value}_model")
             api_key, base_url = self._resolve_credentials(tier)
+            handler = UsageCallbackHandler(self._usage, tier_label=tier.value)
             registry[tier] = ChatOpenAI(
                 model=model_name,
                 api_key=SecretStr(api_key),
                 base_url=base_url,
                 temperature=tier_temps[tier],
                 max_retries=2,
+                callbacks=[handler],
             )
 
         return registry
