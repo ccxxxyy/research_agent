@@ -46,13 +46,14 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
     # The other four loaders still spawn MCP subprocesses — those
     # servers' import chains are light enough that the stdio path is
     # stable. See ``knowledge_server.py`` for why knowledge is special.
+    timeout = float(getattr(settings, "mcp_tool_discovery_timeout", 30.0))
     results = await asyncio.gather(
-        load_fin_data_server_tools(),
-        load_pdf_report_server_tools(),
-        load_code_server_tools(),
-        load_knowledge_tools_inproc(),
-        load_news_server_tools(),
-        load_news_sentiment_server_tools(),
+        asyncio.wait_for(load_fin_data_server_tools(), timeout=timeout),
+        asyncio.wait_for(load_pdf_report_server_tools(), timeout=timeout),
+        asyncio.wait_for(load_code_server_tools(), timeout=timeout),
+        asyncio.wait_for(load_knowledge_tools_inproc(), timeout=timeout),
+        asyncio.wait_for(load_news_server_tools(), timeout=timeout),
+        asyncio.wait_for(load_news_sentiment_server_tools(), timeout=timeout),
         return_exceptions=True,
     )
     names = (
@@ -116,16 +117,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from research_agent.memory.checkpointer import init_checkpointer
     from research_agent.memory.store import init_memory_store
 
-    sqlite_fallback = settings.checkpoint_sqlite_path.strip()
-    sqlite_path_arg: Path | str | None = (
-        sqlite_fallback if sqlite_fallback else None
+    checkpoint_sqlite = settings.checkpoint_sqlite_path.strip()
+    checkpoint_sqlite_arg: Path | str | None = (
+        checkpoint_sqlite if checkpoint_sqlite else None
+    )
+    store_sqlite = settings.memory_store_sqlite_path.strip()
+    store_sqlite_arg: Path | str | None = (
+        store_sqlite if store_sqlite else None
     )
 
     checkpointer = await init_checkpointer(
         settings.database.postgres_sync_uri,
-        sqlite_path=sqlite_path_arg,
+        sqlite_path=checkpoint_sqlite_arg,
     )
-    memory_store = await init_memory_store(settings.database.postgres_sync_uri)
+    memory_store = await init_memory_store(
+        settings.database.postgres_sync_uri,
+        sqlite_path=store_sqlite_arg,
+    )
 
     from research_agent.graph.minimal_supervisor import build_minimal_supervisor
     from research_agent.llm.provider import ModelRouter
@@ -147,6 +155,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.research_supervisor_graph = research_supervisor_graph
     app.state.model_router = model_router
     app.state.memory_store = memory_store
+    app.state.checkpointer = checkpointer
     app.state.settings = settings
 
     yield
