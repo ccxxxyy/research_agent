@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from research_agent.api.routes import health, knowledge, memory, sentiment, supervisor
+from research_agent.api.routes import health, knowledge, memory, sentiment, supervisor, usage
 from research_agent.config import get_settings
 from research_agent.observability.logging import setup_logging
 
@@ -28,8 +28,10 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
     surfaces a 503 only when **every** specialist's tool discovery
     failed. Startup never dies because of an unavailable backend.
 
-    Returns the compiled graph, or ``None`` if no specialist could
-    be loaded.
+    Returns ``(compiled_graph, specialist_roster)`` — the roster is
+    a list of specialist names that were successfully wired in (e.g.
+    ``["data_expert", "news_expert"]``). Returns ``(None, [])`` if
+    no specialist could be loaded.
     """
     from research_agent.graph.research_supervisor import build_research_supervisor
     from research_agent.mcp_servers.client_factory import (
@@ -78,7 +80,21 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
             "All tool sources failed to provide tools; "
             "research supervisor will be unavailable."
         )
-        return None
+        return None, []
+
+    _TOOL_SOURCE_TO_SPECIALIST = {
+        "fin_data_server": "data_expert",
+        "pdf_report_server": "report_expert",
+        "code_server": "coder_expert",
+        "knowledge_tools_inproc": "knowledge_expert",
+        "news_server": "news_expert",
+        "news_sentiment_server": "sentiment_expert",
+    }
+    roster = [
+        spec
+        for src, spec in _TOOL_SOURCE_TO_SPECIALIST.items()
+        if tools.get(src)
+    ]
 
     # ``settings`` is optional so this helper stays unit-testable in
     # isolation. In the production lifespan we always pass it.
@@ -87,7 +103,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
     max_iter = int(getattr(settings, "reflection_max_iterations", 2))
 
     try:
-        return build_research_supervisor(
+        graph = build_research_supervisor(
             model_router=model_router,
             data_tools=tools["fin_data_server"] or None,
             report_tools=tools["pdf_report_server"] or None,
@@ -100,12 +116,13 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
             reflection_pass_threshold=pass_threshold,
             reflection_max_iterations=max_iter,
         )
+        return graph, roster
     except Exception:  # noqa: BLE001
         # A crash here (e.g. misconfigured model router) should not
         # take down the entire API — the minimal supervisor and RAG
         # pipeline may still be usable.
         logger.exception("Failed to compile research_supervisor; route will 503.")
-        return None
+        return None, []
 
 
 @asynccontextmanager
@@ -148,14 +165,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         checkpointer=checkpointer,
     )
 
-    research_supervisor_graph = await _try_build_research_supervisor(
+    research_supervisor_graph, specialist_roster = await _try_build_research_supervisor(
         model_router=model_router,
         checkpointer=checkpointer,
         settings=settings,
     )
 
+    from research_agent.observability.metrics import METRICS
+    METRICS.set_specialists(specialist_roster)
+
     app.state.supervisor_graph = supervisor_graph
     app.state.research_supervisor_graph = research_supervisor_graph
+    app.state.available_specialists = specialist_roster
     app.state.model_router = model_router
     app.state.memory_store = memory_store
     app.state.checkpointer = checkpointer
@@ -209,8 +230,8 @@ def create_app() -> FastAPI:
     origins = _parse_cors_origins(settings.cors_origins)
 
     # Middleware stack (execution order is bottom-to-top). Outermost
-    # middleware runs first: RequestTimeout → Auth → RateLimit → CORS
-    # → route handler.
+    # middleware runs first: RequestId → Metrics → RequestTimeout →
+    # Auth → RateLimit → CORS → route handler.
     app.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=origins,
@@ -222,8 +243,10 @@ def create_app() -> FastAPI:
     from research_agent.api.middleware import (
         AuthMiddleware,
         RateLimitMiddleware,
+        RequestIdMiddleware,
         RequestTimeoutMiddleware,
     )
+    from research_agent.observability.metrics import MetricsMiddleware
 
     app.add_middleware(
         RequestTimeoutMiddleware,
@@ -235,8 +258,14 @@ def create_app() -> FastAPI:
         redis_url=settings.database.redis_url or None,
     )
     app.add_middleware(AuthMiddleware, secret_key=settings.api_secret_key)
+    app.add_middleware(MetricsMiddleware)
+    app.add_middleware(RequestIdMiddleware)
+
+    from research_agent.api.routes.usage import metrics_router
 
     app.include_router(health.router)
+    app.include_router(metrics_router)
+    app.include_router(usage.router)
     app.include_router(knowledge.router)
     app.include_router(memory.router)
     app.include_router(sentiment.router)

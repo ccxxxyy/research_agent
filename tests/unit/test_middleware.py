@@ -19,7 +19,11 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from research_agent.api.middleware import RateLimitMiddleware, RequestTimeoutMiddleware
+from research_agent.api.middleware import (
+    RateLimitMiddleware,
+    RequestIdMiddleware,
+    RequestTimeoutMiddleware,
+)
 
 
 def _build_app(*, max_rpm: int = 3, redis_url: str | None = None) -> FastAPI:
@@ -118,6 +122,45 @@ class TestInMemoryRateLimit:
 # ---------------------------------------------------------------------------
 # Request timeout middleware
 # ---------------------------------------------------------------------------
+
+
+class TestRequestIdMiddleware:
+    @staticmethod
+    def _app() -> FastAPI:
+        app = FastAPI()
+        app.add_middleware(RequestIdMiddleware)
+
+        @app.get("/echo")
+        async def echo():
+            return {"ok": True}
+
+        return app
+
+    @pytest.mark.asyncio
+    async def test_generates_x_request_id(self) -> None:
+        app = self._app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            r = await client.get("/echo")
+        assert r.status_code == 200
+        rid = r.headers.get("X-Request-ID")
+        assert rid is not None and len(rid) >= 8
+
+    @pytest.mark.asyncio
+    async def test_propagates_incoming_x_request_id(self) -> None:
+        app = self._app()
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            r = await client.get(
+                "/echo",
+                headers={"X-Request-ID": "client-trace-99"},
+            )
+        assert r.status_code == 200
+        assert r.headers.get("X-Request-ID") == "client-trace-99"
 
 
 class TestRequestTimeoutMiddleware:

@@ -33,6 +33,13 @@ The window is 60 seconds; the cap is ``RATE_LIMIT_RPM`` (default 30
 requests/minute). Exceeding the limit returns 429 with a
 ``Retry-After`` header.
 
+Request-ID tracing
+-------------------
+``RequestIdMiddleware`` generates (or propagates) a unique trace ID
+for every request. The ID is injected into the loguru context so
+that log lines emitted during the request are correlated, and is
+echoed back in the ``X-Request-ID`` response header.
+
 HTTP request timeout (optional)
 --------------------------------
 When configured with ``http_request_timeout_seconds > 0``,
@@ -45,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections.abc import Callable
 
 from loguru import logger
@@ -56,6 +64,7 @@ from starlette.types import ASGIApp
 
 _AUTH_EXEMPT_PATHS = frozenset({
     "/health",
+    "/metrics",
     "/docs",
     "/redoc",
     "/openapi.json",
@@ -91,6 +100,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
             status_code=401,
             content={"detail": "Invalid or missing API key. Provide 'Authorization: Bearer <key>'."},
         )
+
+
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Generate or propagate a unique request trace ID.
+
+    If the incoming request carries ``X-Request-ID`` (set by a reverse
+    proxy or the client), that value is reused.  Otherwise a UUID-4 is
+    minted.  The resolved ID is:
+
+    * stored on ``request.state.request_id`` for downstream handlers,
+    * bound into the loguru context (``extra["request_id"]``) so every
+      log line emitted during the request carries the trace ID, and
+    * echoed back as the ``X-Request-ID`` response header.
+    """
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        request.state.request_id = request_id
+        with logger.contextualize(request_id=request_id):
+            response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
 
 
 class RequestTimeoutMiddleware(BaseHTTPMiddleware):
