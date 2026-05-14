@@ -10,6 +10,7 @@ These tests verify:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 from unittest.mock import AsyncMock
@@ -18,7 +19,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from research_agent.api.middleware import RateLimitMiddleware
+from research_agent.api.middleware import RateLimitMiddleware, RequestTimeoutMiddleware
 
 
 def _build_app(*, max_rpm: int = 3, redis_url: str | None = None) -> FastAPI:
@@ -111,6 +112,72 @@ class TestInMemoryRateLimit:
             monkeypatch.setattr(time, "time", lambda: fake_time)
 
             r = await client.get("/api/test")
+            assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Request timeout middleware
+# ---------------------------------------------------------------------------
+
+
+class TestRequestTimeoutMiddleware:
+    @staticmethod
+    def _build_slow_app(timeout: float, sleep_s: float) -> FastAPI:
+        app = FastAPI()
+        app.add_middleware(RequestTimeoutMiddleware, timeout_seconds=timeout)
+
+        @app.get("/slow")
+        async def slow() -> dict:
+            await asyncio.sleep(sleep_s)
+            return {"ok": True}
+
+        @app.get("/quick")
+        async def quick() -> dict:
+            return {"ok": True}
+
+        # Mirror production SSE exemption path suffix
+        @app.get("/api/supervisor/research/stream")
+        async def sse() -> dict:
+            await asyncio.sleep(sleep_s)
+            return {"ok": True}
+
+        return app
+
+    @pytest.mark.asyncio
+    async def test_zero_timeout_disabled(self) -> None:
+        app = self._build_slow_app(0.0, sleep_s=0.05)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.get("/slow")
+            assert r.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_504(self) -> None:
+        app = self._build_slow_app(timeout=0.1, sleep_s=0.25)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            r = await client.get("/slow")
+            assert r.status_code == 504
+            assert "timeout" in r.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_quick_request_not_affected(self) -> None:
+        app = self._build_slow_app(timeout=0.1, sleep_s=0.0)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            r = await client.get("/quick")
+            assert r.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_sse_stream_path_exempt(self) -> None:
+        app = self._build_slow_app(timeout=0.1, sleep_s=0.25)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            r = await client.get("/api/supervisor/research/stream")
             assert r.status_code == 200
 
 

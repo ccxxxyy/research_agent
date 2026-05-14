@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from loguru import logger
 
 
-def setup_logging(level: str = "INFO") -> None:
-    """Configure loguru with structured formatting for production.
+def setup_logging(level: str = "INFO", *, log_file_path: str | None = None) -> None:
+    """Configure loguru with structured formatting.
 
-    Log format includes timestamp, level, module, and message.
-    In production, logs are JSON-formatted for ELK/Loki ingestion.
+    Logs always go to stderr. When ``log_file_path`` is a non-empty
+    string the same messages are mirrored to that path (dirs created
+    on demand).
     """
     logger.remove()
 
@@ -29,13 +31,17 @@ def setup_logging(level: str = "INFO") -> None:
         colorize=True,
     )
 
-    logger.add(
-        "logs/research_agent.log",
-        format=log_format,
-        level=level.upper(),
-        rotation="50 MB",
-        retention="7 days",
-        compression="gz",
-    )
+    path_raw = log_file_path or ""
+    if path_raw.strip():
+        fp = Path(path_raw)
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        logger.add(
+            str(fp),
+            format=log_format,
+            level=level.upper(),
+            rotation="50 MB",
+            retention="7 days",
+            compression="gz",
+        )
 
     logger.info("Logging initialized at {} level", level)

@@ -112,7 +112,10 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize and tear down application resources."""
     settings = get_settings()
-    setup_logging(settings.observability.log_level)
+    setup_logging(
+        settings.observability.log_level,
+        log_file_path=settings.observability.log_file_path,
+    )
 
     from research_agent.memory.checkpointer import init_checkpointer
     from research_agent.memory.store import init_memory_store
@@ -205,8 +208,9 @@ def create_app() -> FastAPI:
     settings = get_settings()
     origins = _parse_cors_origins(settings.cors_origins)
 
-    # Middleware stack (execution order is bottom-to-top: CORS first,
-    # then rate-limit, then auth, then route handler).
+    # Middleware stack (execution order is bottom-to-top). Outermost
+    # middleware runs first: RequestTimeout → Auth → RateLimit → CORS
+    # → route handler.
     app.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=origins,
@@ -215,8 +219,16 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from research_agent.api.middleware import AuthMiddleware, RateLimitMiddleware
+    from research_agent.api.middleware import (
+        AuthMiddleware,
+        RateLimitMiddleware,
+        RequestTimeoutMiddleware,
+    )
 
+    app.add_middleware(
+        RequestTimeoutMiddleware,
+        timeout_seconds=float(settings.http_request_timeout_seconds),
+    )
     app.add_middleware(
         RateLimitMiddleware,
         max_rpm=settings.rate_limit_rpm,

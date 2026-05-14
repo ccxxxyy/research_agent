@@ -68,14 +68,18 @@ class ModelRouter:
             model_name = getattr(self._config, f"{tier.value}_model")
             api_key, base_url = self._resolve_credentials(tier)
             handler = UsageCallbackHandler(self._usage, tier_label=tier.value)
-            registry[tier] = ChatOpenAI(
-                model=model_name,
-                api_key=SecretStr(api_key),
-                base_url=base_url,
-                temperature=tier_temps[tier],
-                max_retries=2,
-                callbacks=[handler],
-            )
+            rt = getattr(self._config, "request_timeout_seconds", None)
+            chat_kw: dict = {
+                "model": model_name,
+                "api_key": SecretStr(api_key),
+                "base_url": base_url,
+                "temperature": tier_temps[tier],
+                "max_retries": 2,
+                "callbacks": [handler],
+            }
+            if rt is not None and float(rt) > 0:
+                chat_kw["request_timeout"] = float(rt)
+            registry[tier] = ChatOpenAI(**chat_kw)
 
         return registry
 

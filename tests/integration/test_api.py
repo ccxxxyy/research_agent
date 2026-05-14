@@ -33,5 +33,13 @@ class TestHealthAPI:
             assert "services" in data
             # Every probed dependency must surface a status string,
             # so callers can spot which one is down at a glance.
-            for name in ("postgres", "redis", "knowledge_db", "research_supervisor"):
+            expected = (
+                "postgres",
+                "redis",
+                "knowledge_db",
+                "research_supervisor",
+                "checkpointer",
+                "memory_store",
+            )
+            for name in expected:
                 assert name in data["services"]

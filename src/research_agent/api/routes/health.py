@@ -36,12 +36,17 @@ async def health_check(request: Request) -> HealthResponse:
     pg_uri = settings.database.postgres_sync_uri
     services["postgres"] = "ok" if is_postgres_reachable(pg_uri) else "unreachable"
 
-    # Redis
+    # Redis — async ping (non-blocking for the asyncio event loop).
     try:
-        import redis as redis_lib
+        from redis.asyncio import Redis
 
-        r = redis_lib.from_url(settings.database.redis_url, socket_connect_timeout=2)
-        r.ping()
+        async with Redis.from_url(
+            settings.database.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        ) as client:
+            await client.ping()
         services["redis"] = "ok"
     except Exception:
         services["redis"] = "unreachable"
