@@ -338,6 +338,29 @@ class TestResearchSSE:
         assert phases[-1] == "done"
 
     @pytest.mark.asyncio
+    async def test_stream_opening_event_includes_available_specialists(self) -> None:
+        """First SSE frame echoes available_specialists so clients detect degradation."""
+        graph = _FakeGraph([_supervisor_final("ok")])
+        app = _build_test_app(graph)
+        app.state.available_specialists = ["data_expert", "news_expert"]
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(
+                "/api/supervisor/research/stream",
+                json={"query": "go"},
+            )
+
+        events = _parse_sse(r.content)
+        opening = events[0]
+        assert opening["phase"] == "update"
+        assert opening["metadata"]["available_specialists"] == [
+            "data_expert",
+            "news_expert",
+        ]
+
+    @pytest.mark.asyncio
     async def test_stream_error_emits_error_phase(self) -> None:
         class _BoomGraph(_FakeGraph):
             async def astream(self, *a: Any, **kw: Any) -> AsyncIterator[dict]:

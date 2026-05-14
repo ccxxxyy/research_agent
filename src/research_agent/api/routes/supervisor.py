@@ -7,7 +7,7 @@ import contextlib
 import uuid
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request as FastAPIRequest
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
@@ -334,6 +334,7 @@ async def _research_event_stream(
     memory: MemoryManager | None = None,
     persist_user_id: str | None = None,
     persist_original_query: str | None = None,
+    available_specialists: list[str] | None = None,
 ) -> AsyncIterator[str]:
     """Async generator producing SSE frames for one research invocation.
 
@@ -347,7 +348,10 @@ async def _research_event_stream(
     Phases emitted (in rough order):
       * ``handoff``   — one per ``transfer_to_<specialist>`` tool call.
       * ``update``    — one per non-empty assistant message update,
-                        plus one synthetic opening frame ``stream opened``.
+                        plus one synthetic opening frame ``stream opened``
+                        whose ``metadata`` includes ``thread_id`` and
+                        ``available_specialists`` (names compiled at
+                        startup; empty if none).
       * ``final``     — the first plain supervisor AIMessage whose last
                        message carries no outbound tool-call.
       * ``error``     — if the graph raises.
@@ -374,13 +378,16 @@ async def _research_event_stream(
 
     async def pump() -> None:
         try:
+            opening_meta: dict[str, Any] = {"thread_id": thread_id}
+            if available_specialists is not None:
+                opening_meta["available_specialists"] = available_specialists
             await frames.put(
                 _format_sse(
                     ResearchSupervisorSSEEvent(
                         phase=ResearchSupervisorSSEPhase.UPDATE,
                         node="supervisor",
                         content="stream opened",
-                        metadata={"thread_id": thread_id},
+                        metadata=opening_meta,
                     )
                 )
             )
@@ -536,6 +543,7 @@ async def _research_event_stream(
 @router.post("/research/stream")
 async def supervisor_research_stream(
     request: ResearchSupervisorRequest,
+    raw_request: FastAPIRequest,
     graph: ResearchSupervisorGraphDep,
     memory: MemoryDep,
 ) -> StreamingResponse:
@@ -550,6 +558,8 @@ async def supervisor_research_stream(
     reverse proxies retain the SSE connection. The ``X-Thread-ID``
     response header carries the resolved thread id so that clients can
     reuse it in a follow-up call without parsing the first event.
+    The first SSE frame lists ``available_specialists`` when MCP
+    tooling degraded at startup so UIs can show reduced capability.
 
     Long-term memory: user context preamble is built by
     :func:`_build_user_context_messages` — identical to the synchronous
@@ -567,6 +577,10 @@ async def supervisor_research_stream(
         memory, user_id, request.query,
     )
 
+    specialists: list[str] = getattr(
+        raw_request.app.state, "available_specialists", None
+    ) or []
+
     return StreamingResponse(
         _research_event_stream(
             graph,
@@ -576,6 +590,7 @@ async def supervisor_research_stream(
             memory=memory,
             persist_user_id=user_id,
             persist_original_query=request.query,
+            available_specialists=specialists,
         ),
         media_type="text/event-stream",
         headers={

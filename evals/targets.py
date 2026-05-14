@@ -46,7 +46,7 @@ async def build_eval_environment() -> None:
     checkpointer = await init_checkpointer(settings.database.postgres_sync_uri)
     store = InMemoryStore()
 
-    _GRAPH = await _try_build_research_supervisor(
+    _GRAPH, _ = await _try_build_research_supervisor(
         model_router=model_router,
         checkpointer=checkpointer,
         settings=settings,
