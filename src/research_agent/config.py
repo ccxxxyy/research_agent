@@ -18,6 +18,18 @@ class Environment(str, Enum):
 class LLMConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 
+    request_timeout_seconds: float = Field(
+        default=180.0,
+        ge=10,
+        le=3600,
+        description=(
+            "Per-invocation HTTP timeout (seconds) for OpenAI-compatible "
+            "chat-completion calls. Passed to LangChain ``ChatOpenAI`` as "
+            "``request_timeout`` so stalled provider connections do not "
+            "tie up workers indefinitely."
+        ),
+    )
+
     openai_api_key: str = ""
     openai_api_base: str = "https://api.openai.com/v1"
     deepseek_api_key: str = ""
@@ -53,6 +65,13 @@ class ObservabilityConfig(BaseSettings):
     langsmith_project: str = "research-agent"
     langchain_tracing_v2: bool = False
     log_level: str = "INFO"
+    log_file_path: str = Field(
+        default="logs/research_agent.log",
+        description=(
+            "Path to the rotating application log file. Set to empty string "
+            "to emit logs to stderr only (no file sink)."
+        ),
+    )
 
 
 class Settings(BaseSettings):
@@ -70,6 +89,18 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     api_secret_key: str = ""
     rate_limit_rpm: int = 30
+
+    http_request_timeout_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=7200.0,
+        description=(
+            "Optional ASGI-layer wall-clock timeout per request (seconds). "
+            "Zero disables. Exempt paths: ``/health``, docs/OpenAPI, and "
+            "``/api/supervisor/research/stream`` (SSE can legitimately exceed "
+            "any short cap)."
+        ),
+    )
 
     reflection_enabled: bool = False
     """When True, the research supervisor wraps its final synthesis in a

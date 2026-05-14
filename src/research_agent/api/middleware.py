@@ -1,4 +1,4 @@
-"""API authentication and rate-limiting middleware.
+"""API authentication, timeouts, and rate-limiting middleware.
 
 Authentication
 --------------
@@ -20,9 +20,10 @@ Sliding-window counter keyed by client IP. Two backends:
    server is reachable. Uses a sorted-set + Lua script for atomic
    per-key counting. Works across multiple app instances behind a
    load balancer.
-2. **In-memory** (fallback) — ``collections.defaultdict`` local to
-   the process. Used when Redis is not configured or temporarily
-   unreachable. Sufficient for single-instance dev/demo.
+2. **In-memory** (fallback) — a ``dict`` keyed by client IP. Holds at
+   most a few dozen floats per key. A periodic sweep drops keys whose
+   timestamps have fully aged out of the window to cap memory under
+   churning client-IP scans.
 
 Backend selection happens once at startup; if Redis becomes
 unreachable *after* startup, each failing request transparently
@@ -31,12 +32,19 @@ falls back to in-memory counting and logs a warning (no 500).
 The window is 60 seconds; the cap is ``RATE_LIMIT_RPM`` (default 30
 requests/minute). Exceeding the limit returns 429 with a
 ``Retry-After`` header.
+
+HTTP request timeout (optional)
+--------------------------------
+When configured with ``http_request_timeout_seconds > 0``,
+``RequestTimeoutMiddleware`` wraps downstream handlers with
+``asyncio.wait_for``. Long SSE streams exclude
+``/api/supervisor/research/stream``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
-from collections import defaultdict
 from collections.abc import Callable
 
 from loguru import logger
@@ -51,6 +59,10 @@ _AUTH_EXEMPT_PATHS = frozenset({
     "/docs",
     "/redoc",
     "/openapi.json",
+})
+
+_REQUEST_TIMEOUT_EXEMPT_PATHS = _AUTH_EXEMPT_PATHS | frozenset({
+    "/api/supervisor/research/stream",
 })
 
 
@@ -79,6 +91,39 @@ class AuthMiddleware(BaseHTTPMiddleware):
             status_code=401,
             content={"detail": "Invalid or missing API key. Provide 'Authorization: Bearer <key>'."},
         )
+
+
+class RequestTimeoutMiddleware(BaseHTTPMiddleware):
+    """Optional ceiling on ASGI handler wall-clock time."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        timeout_seconds: float = 0.0,
+    ) -> None:
+        super().__init__(app)
+        self._timeout = float(timeout_seconds)
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        if self._timeout <= 0:
+            return await call_next(request)
+        path = request.url.path
+        if path in _REQUEST_TIMEOUT_EXEMPT_PATHS:
+            return await call_next(request)
+        try:
+            return await asyncio.wait_for(call_next(request), timeout=self._timeout)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Request timed out after {:.1f}s: {} {}",
+                self._timeout,
+                request.method,
+                path,
+            )
+            return JSONResponse(
+                status_code=504,
+                content={"detail": "Gateway timeout — handler exceeded configured limit."},
+            )
 
 
 _SLIDING_WINDOW_LUA = """\
@@ -121,7 +166,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._key_prefix = "rl:rpm:"
 
         # In-memory fallback (always available)
-        self._requests: dict[str, list[float]] = defaultdict(list)
+        self._requests: dict[str, list[float]] = {}
+        self._memory_tick: int = 0
 
         # Redis backend (best-effort)
         self._redis = None
@@ -175,18 +221,42 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     # -- In-memory backend -------------------------------------------------
 
+    def _reap_stale_memory_keys(self, now: float) -> None:
+        """Remove IPs whose timestamps are entirely outside the window."""
+        cutoff = now - self._window
+        for ip_key in list(self._requests.keys()):
+            ts = self._requests[ip_key]
+            while ts and ts[0] < cutoff:
+                ts.pop(0)
+            if not ts:
+                self._requests.pop(ip_key, None)
+
+    def _tick_memory_maintenance(self, now: float) -> None:
+        """Bounded-cost sweep keyed off a modest request counter."""
+        self._memory_tick += 1
+        if self._memory_tick >= 4096:
+            self._memory_tick = 0
+            self._reap_stale_memory_keys(now)
+
     def _check_memory(self, ip: str, now: float) -> tuple[bool, int]:
         """Return ``(allowed, retry_after_seconds)``."""
-        timestamps = self._requests[ip]
+        self._tick_memory_maintenance(now)
+
+        timestamps = self._requests.get(ip)
+        if timestamps is None:
+            timestamps = []
+
         cutoff = now - self._window
         while timestamps and timestamps[0] < cutoff:
             timestamps.pop(0)
 
         if len(timestamps) >= self._max_rpm:
             retry_after = int(self._window - (now - timestamps[0])) + 1
+            self._requests[ip] = timestamps
             return False, retry_after
 
         timestamps.append(now)
+        self._requests[ip] = timestamps
         return True, 0
 
     # -- Redis backend -----------------------------------------------------
