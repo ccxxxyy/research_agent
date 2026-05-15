@@ -108,6 +108,16 @@ class Settings(BaseSettings):
     1–3 extra LLM calls per request and most demo flows don't need it;
     flip to True in production for higher answer quality."""
 
+    hitl_enabled: bool = False
+    """When True, the research supervisor pauses after producing its
+    draft synthesis and waits for human approval before continuing to
+    reflection (if enabled) or finalizing. The frontend receives a
+    ``review_requested`` SSE event containing the draft; the reviewer
+    calls ``POST /api/supervisor/research/{thread_id}/approve`` or
+    ``/resume`` to continue.  Requires a persistent checkpointer
+    (SQLite or Postgres) — in-memory checkpoints lose state across
+    requests."""
+
     reflection_pass_threshold: float = 0.85
     """Critic score at or above which the reflection loop terminates
     early. 0.85 maps to the critic prompt's "ship after a light
