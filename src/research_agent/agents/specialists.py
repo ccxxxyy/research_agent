@@ -495,10 +495,11 @@ def build_knowledge_expert(
     model_router: ModelRouter,
     mcp_tools: Sequence[BaseTool],
 ):
-    """User-knowledge-base specialist (``knowledge_server``).
+    """User-knowledge-base specialist (``knowledge_server`` contract).
 
-    Consumes the 4 ``knowledge_*`` tools spawned by
-    :func:`research_agent.mcp_servers.client_factory.load_knowledge_server_tools`.
+    Consumes the four ``knowledge_*`` tools — production loads them via
+    :func:`research_agent.mcp_servers.client_factory.load_knowledge_tools_inproc`
+    (same shapes as the MCP-defined tools in ``knowledge_server``).
 
     Uses :attr:`AgentName.ANALYST` (MEDIUM tier) for the same reason
     as ``data_expert`` and ``report_expert``: the corrective-RAG loop
@@ -509,7 +510,7 @@ def build_knowledge_expert(
 
     Args:
         model_router: Shared router.
-        mcp_tools: Tools returned by ``load_knowledge_server_tools()``.
+        mcp_tools: Tools returned by ``load_knowledge_tools_inproc()``.
             Must be non-empty.
 
     Raises:
@@ -517,9 +518,9 @@ def build_knowledge_expert(
     """
     if not mcp_tools:
         raise ValueError(
-            "knowledge_expert requires the knowledge_server MCP tools; "
+            "knowledge_expert requires the knowledge_* tools; "
             "got an empty sequence. Did you forget to "
-            "``await load_knowledge_server_tools()``?"
+            "``await load_knowledge_tools_inproc()``?"
         )
     return create_react_agent(
         model=model_router.for_agent(AgentName.ANALYST),
@@ -608,7 +609,8 @@ SPECIALIST_BUILDERS = {
 
 The MCP-backed specialists (``coder_expert``, ``data_expert``,
 ``report_expert``, ``sentiment_expert``, etc.) take an extra
-``mcp_tools`` argument and therefore have a different signature from
+``mcp_tools`` argument (``knowledge_expert`` uses the same parameter for
+the in-process ``knowledge_*`` tools) and therefore have a different signature from
 the three toy specialists. Callers that iterate this registry
 generically should branch on the key.
 """

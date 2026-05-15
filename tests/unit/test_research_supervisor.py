@@ -143,7 +143,7 @@ class TestSpecialistBuilders:
             build_report_expert(router, [])
 
     def test_knowledge_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
-        with pytest.raises(ValueError, match="knowledge_server"):
+        with pytest.raises(ValueError, match="load_knowledge_tools_inproc"):
             build_knowledge_expert(router, [])
 
     def test_news_expert_rejects_empty_tools(self, router: ModelRouter) -> None:

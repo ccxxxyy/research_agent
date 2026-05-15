@@ -21,7 +21,7 @@ dependencies = [
     # NOTE: We deliberately use FAISS (faiss-cpu) instead of Chroma. On
     # Windows, importing chromadb inside an MCP-stdio subprocess corrupts
     # the JSON-RPC channel between the parent client and the FastMCP
-    # server (see _stdio_firewall.py for the full forensic trail).
+    # server (see docs/adr/0001-faiss-over-chroma.md).
     # FAISS has no telemetry, no background threads, and a much simpler
     # persistence model (single .faiss file + sidecar pickle), which is
     # both more reliable and a better fit for the 10s-1000s-of-chunks
