@@ -101,6 +101,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
     reflect = bool(getattr(settings, "reflection_enabled", False))
     pass_threshold = float(getattr(settings, "reflection_pass_threshold", 0.85))
     max_iter = int(getattr(settings, "reflection_max_iterations", 2))
+    hitl = bool(getattr(settings, "hitl_enabled", False))
 
     try:
         graph = build_research_supervisor(
@@ -115,6 +116,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
             enable_reflection=reflect,
             reflection_pass_threshold=pass_threshold,
             reflection_max_iterations=max_iter,
+            enable_hitl=hitl,
         )
         return graph, roster
     except Exception:  # noqa: BLE001
@@ -270,6 +272,20 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(sentiment.router)
     app.include_router(supervisor.router)
+
+    # --- Static frontend ---
+    from pathlib import Path as _Path
+
+    from fastapi.responses import FileResponse
+    from starlette.staticfiles import StaticFiles
+
+    _static_dir = _Path(__file__).parent / "static"
+    if _static_dir.is_dir():
+        @app.get("/", include_in_schema=False)
+        async def _root():
+            return FileResponse(_static_dir / "index.html")
+
+        app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
     return app
 

@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Research Agent</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0f1117;--surface:#1a1b26;--surface2:#24253a;--border:#2e2f45;
+  --text:#e1e2e8;--text2:#8b8fa3;--accent:#6c63ff;--accent2:#8b85ff;
+  --green:#4ade80;--yellow:#facc15;--red:#f87171;--blue:#60a5fa;
+  --radius:12px;
+}
+html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+
+/* Layout */
+.app{display:flex;height:100vh;overflow:hidden}
+
+/* Sidebar */
+.sidebar{width:260px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar-header{padding:20px;border-bottom:1px solid var(--border)}
+.sidebar-header h1{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
+.sidebar-header h1 span{font-size:22px}
+.sidebar-header p{font-size:12px;color:var(--text2);margin-top:4px}
+
+.section-title{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);padding:16px 20px 8px;font-weight:600}
+
+.specialist-list{padding:0 12px;flex:1;overflow-y:auto}
+.specialist{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:2px;transition:background .15s}
+.specialist:hover{background:var(--surface2)}
+.specialist .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--border);transition:background .3s,box-shadow .3s}
+.specialist .dot.available{background:var(--green)}
+.specialist .dot.active{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.specialist .dot.unavailable{background:var(--red)}
+.specialist .name{flex:1;color:var(--text2);transition:color .2s}
+.specialist .name.lit{color:var(--text);font-weight:500}
+.specialist .badge{font-size:10px;color:var(--accent);opacity:0;transition:opacity .2s}
+.specialist .badge.show{opacity:1}
+
+/* Stats */
+.stats{padding:16px 20px;border-top:1px solid var(--border);font-size:12px;color:var(--text2)}
+.stats .row{display:flex;justify-content:space-between;padding:3px 0}
+.stats .val{color:var(--text);font-variant-numeric:tabular-nums}
+
+/* Main */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* Top bar */
+.topbar{height:52px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;gap:12px;background:var(--surface);flex-shrink:0}
+.topbar .status-dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+.topbar .status-dot.degraded{background:var(--yellow)}
+.topbar .status-dot.offline{background:var(--red)}
+.topbar .status-label{font-size:12px;color:var(--text2)}
+.topbar .thread-id{margin-left:auto;font-size:11px;color:var(--text2);font-family:monospace;background:var(--surface2);padding:4px 10px;border-radius:6px}
+.topbar .req-id{font-size:11px;color:var(--text2);font-family:monospace}
+
+/* Messages area */
+.messages{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:16px}
+.messages::-webkit-scrollbar{width:6px}
+.messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+.msg{max-width:85%;line-height:1.6;animation:fadeIn .25s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+.msg.user{align-self:flex-end;background:var(--accent);color:#fff;padding:12px 18px;border-radius:var(--radius) var(--radius) 4px var(--radius);font-size:14px}
+.msg.assistant{align-self:flex-start;background:var(--surface);border:1px solid var(--border);padding:16px 20px;border-radius:4px var(--radius) var(--radius) var(--radius);font-size:14px;width:85%}
+.msg.assistant .content{white-space:pre-wrap;word-break:break-word}
+.msg.assistant .content h3,.msg.assistant .content h4{margin:12px 0 6px;color:var(--accent2)}
+.msg.assistant .content ul,.msg.assistant .content ol{padding-left:20px;margin:6px 0}
+
+.msg .handoff-tag{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--accent2);margin:4px 4px 4px 0}
+.msg .handoff-tag::before{content:"→";color:var(--accent)}
+
+.msg .phase-tag{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text2);margin-bottom:6px}
+
+.typing{display:inline-flex;gap:4px;padding:4px 0}
+.typing span{width:6px;height:6px;border-radius:50%;background:var(--text2);animation:bounce .6s infinite alternate}
+.typing span:nth-child(2){animation-delay:.15s}
+.typing span:nth-child(3){animation-delay:.3s}
+@keyframes bounce{to{opacity:.3;transform:translateY(-4px)}}
+
+/* Welcome */
+.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text2);gap:12px;padding:40px}
+.welcome .icon{font-size:48px}
+.welcome h2{color:var(--text);font-size:22px;font-weight:600}
+.welcome p{max-width:420px;text-align:center;line-height:1.6;font-size:14px}
+.welcome .examples{display:flex;flex-direction:column;gap:8px;margin-top:12px;width:100%;max-width:480px}
+.welcome .example{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;font-size:13px;color:var(--text);cursor:pointer;transition:border-color .15s,background .15s;text-align:left}
+.welcome .example:hover{border-color:var(--accent);background:var(--surface2)}
+
+/* Input */
+.input-area{padding:16px 24px 20px;border-top:1px solid var(--border);background:var(--surface);flex-shrink:0}
+.input-row{display:flex;gap:10px;align-items:flex-end}
+.input-row textarea{flex:1;resize:none;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;color:var(--text);font-size:14px;font-family:inherit;line-height:1.5;max-height:120px;outline:none;transition:border-color .15s}
+.input-row textarea:focus{border-color:var(--accent)}
+.input-row textarea::placeholder{color:var(--text2)}
+.input-row button{width:44px;height:44px;border-radius:var(--radius);background:var(--accent);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;flex-shrink:0}
+.input-row button:hover{background:var(--accent2)}
+.input-row button:disabled{background:var(--border);cursor:not-allowed}
+.input-row button svg{width:20px;height:20px}
+.input-meta{display:flex;gap:16px;margin-top:8px;font-size:11px;color:var(--text2)}
+.input-meta label{display:flex;align-items:center;gap:4px}
+.input-meta input{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text);font-size:11px;width:100px;outline:none;font-family:monospace}
+
+/* HITL review panel */
+.review-panel{background:var(--surface2);border:1px solid var(--accent);border-radius:var(--radius);padding:16px 20px;margin-top:12px;animation:fadeIn .25s ease}
+.review-panel .review-title{font-size:13px;font-weight:600;color:var(--accent2);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.review-panel .review-title::before{content:"⏸";font-size:16px}
+.review-panel .review-draft{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 16px;font-size:13px;max-height:200px;overflow-y:auto;margin-bottom:12px;white-space:pre-wrap;line-height:1.5;color:var(--text2)}
+.review-panel textarea{width:100%;resize:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;font-family:inherit;line-height:1.5;min-height:60px;outline:none;transition:border-color .15s;margin-bottom:10px}
+.review-panel textarea:focus{border-color:var(--accent)}
+.review-panel textarea::placeholder{color:var(--text2)}
+.review-actions{display:flex;gap:10px}
+.review-actions button{padding:8px 20px;border-radius:8px;border:none;font-size:13px;font-weight:500;cursor:pointer;transition:background .15s}
+.review-actions .btn-approve{background:var(--green);color:#000}
+.review-actions .btn-approve:hover{background:#86efac}
+.review-actions .btn-revise{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+.review-actions .btn-revise:hover{background:var(--surface2);border-color:var(--accent)}
+
+/* Error toast */
+.toast{position:fixed;top:16px;right:16px;background:var(--red);color:#fff;padding:12px 20px;border-radius:8px;font-size:13px;z-index:999;animation:fadeIn .2s ease;display:none}
+
+/* Responsive */
+@media(max-width:768px){
+  .sidebar{display:none}
+  .msg{max-width:95%}
+  .msg.assistant{width:95%}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1><span>🔬</span> Research Agent</h1>
+      <p>Multi-Agent Financial Research</p>
+    </div>
+    <div class="section-title">Specialists</div>
+    <div class="specialist-list" id="specialistList"></div>
+    <div class="stats" id="statsPanel">
+      <div class="section-title" style="padding:0 0 8px">Session Stats</div>
+      <div class="row"><span>Prompt tokens</span><span class="val" id="statPT">-</span></div>
+      <div class="row"><span>Completion tokens</span><span class="val" id="statCT">-</span></div>
+      <div class="row"><span>LLM calls</span><span class="val" id="statCalls">-</span></div>
+      <div class="row"><span>Est. cost</span><span class="val" id="statCost">-</span></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-label" id="statusLabel">Connecting...</span>
+      <span class="thread-id" id="threadDisplay">-</span>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <div class="icon">🔬</div>
+        <h2>Financial Research Agent</h2>
+        <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
+        <div class="examples">
+          <div class="example" onclick="fillQuery(this)">分析宁德时代 2024 年的营收和利润表现</div>
+          <div class="example" onclick="fillQuery(this)">贵州茅台最近的新闻舆情和市场情绪如何？</div>
+          <div class="example" onclick="fillQuery(this)">对比隆基绿能和通威股份的 ROE 和毛利率</div>
+          <div class="example" onclick="fillQuery(this)">查一下比亚迪最近的公告披露和股价走势</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-row">
+        <textarea id="queryInput" rows="1" placeholder="输入研究问题..." onkeydown="handleKey(event)"></textarea>
+        <button id="sendBtn" onclick="sendQuery()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+        </button>
+      </div>
+      <div class="input-meta">
+        <label>User ID: <input id="userIdInput" value="demo_user" /></label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const ALL_SPECIALISTS = [
+  {id:'data_expert',    label:'Data Expert',      desc:'财务数据 / 行情'},
+  {id:'report_expert',  label:'Report Expert',    desc:'公告 / 年报 PDF'},
+  {id:'coder_expert',   label:'Coder Expert',     desc:'Python 计算'},
+  {id:'news_expert',    label:'News Expert',      desc:'新闻 / 快讯'},
+  {id:'knowledge_expert',label:'Knowledge Expert',desc:'用户知识库'},
+  {id:'sentiment_expert',label:'Sentiment Expert', desc:'舆情量化'},
+];
+
+let currentThread = null;
+let streaming = false;
+let available = new Set();
+let hitlPendingThread = null;
+
+// --- Init ---
+function init() {
+  renderSpecialists([]);
+  checkHealth();
+  setInterval(refreshUsage, 15000);
+  autoResize(document.getElementById('queryInput'));
+}
+
+// --- Specialists panel ---
+function renderSpecialists(availableList) {
+  available = new Set(availableList);
+  const el = document.getElementById('specialistList');
+  el.innerHTML = ALL_SPECIALISTS.map(s => {
+    const state = available.has(s.id) ? 'available' : (availableList.length ? 'unavailable' : '');
+    return `<div class="specialist" id="spec-${s.id}">
+      <div class="dot ${state}"></div>
+      <span class="name">${s.label}</span>
+      <span class="badge" id="badge-${s.id}">routing</span>
+    </div>`;
+  }).join('');
+}
+
+function highlightSpecialist(name) {
+  ALL_SPECIALISTS.forEach(s => {
+    const dot = document.querySelector(`#spec-${s.id} .dot`);
+    const nm = document.querySelector(`#spec-${s.id} .name`);
+    const badge = document.getElementById(`badge-${s.id}`);
+    if (s.id === name) {
+      dot.className = 'dot active';
+      nm.classList.add('lit');
+      badge.classList.add('show');
+    } else {
+      if (available.has(s.id)) dot.className = 'dot available';
+      nm.classList.remove('lit');
+      badge.classList.remove('show');
+    }
+  });
+}
+
+function clearHighlights() {
+  ALL_SPECIALISTS.forEach(s => {
+    const dot = document.querySelector(`#spec-${s.id} .dot`);
+    const badge = document.getElementById(`badge-${s.id}`);
+    if (dot && available.has(s.id)) dot.className = 'dot available';
+    if (badge) badge.classList.remove('show');
+    const nm = document.querySelector(`#spec-${s.id} .name`);
+    if (nm) nm.classList.remove('lit');
+  });
+}
+
+// --- Health check ---
+async function checkHealth() {
+  try {
+    const r = await fetch('/health');
+    const d = await r.json();
+    const dot = document.getElementById('statusDot');
+    const label = document.getElementById('statusLabel');
+    if (d.status === 'ok') {
+      dot.className = 'status-dot';
+      label.textContent = 'All systems online';
+    } else {
+      dot.className = 'status-dot degraded';
+      label.textContent = 'Degraded';
+    }
+  } catch {
+    document.getElementById('statusDot').className = 'status-dot offline';
+    document.getElementById('statusLabel').textContent = 'Offline';
+  }
+}
+
+// --- Usage stats ---
+async function refreshUsage() {
+  try {
+    const r = await fetch('/api/usage');
+    const d = await r.json();
+    let pt=0, ct=0, calls=0, cost=0;
+    for (const m of Object.values(d.by_model||{})) {
+      pt += m.prompt_tokens||0;
+      ct += m.completion_tokens||0;
+      calls += m.call_count||0;
+      cost += m.total_cost_usd||0;
+    }
+    document.getElementById('statPT').textContent = pt.toLocaleString();
+    document.getElementById('statCT').textContent = ct.toLocaleString();
+    document.getElementById('statCalls').textContent = calls;
+    document.getElementById('statCost').textContent = '$' + cost.toFixed(4);
+  } catch {}
+}
+
+// --- Messages ---
+function addUserMsg(text) {
+  document.getElementById('welcome')?.remove();
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.textContent = text;
+  document.getElementById('messages').appendChild(d);
+  scrollToBottom();
+}
+
+function createAssistantMsg() {
+  document.getElementById('welcome')?.remove();
+  const d = document.createElement('div');
+  d.className = 'msg assistant';
+  d.innerHTML = '<div class="phase-tag" id="phaseTag">thinking</div><div class="handoffs" id="handoffs"></div><div class="content" id="streamContent"></div><div class="typing" id="typingIndicator"><span></span><span></span><span></span></div>';
+  document.getElementById('messages').appendChild(d);
+  scrollToBottom();
+  return d;
+}
+
+function scrollToBottom() {
+  const m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
+
+// --- Auto-resize textarea ---
+function autoResize(el) {
+  el.addEventListener('input', () => {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  });
+}
+
+// --- Fill example query ---
+function fillQuery(el) {
+  const input = document.getElementById('queryInput');
+  input.value = el.textContent;
+  input.focus();
+  input.dispatchEvent(new Event('input'));
+}
+
+// --- Key handler ---
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendQuery();
+  }
+}
+
+// --- Toast ---
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 4000);
+}
+
+// --- Send query (SSE via fetch POST) ---
+async function sendQuery() {
+  const input = document.getElementById('queryInput');
+  const query = input.value.trim();
+  if (!query || streaming) return;
+
+  streaming = true;
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true;
+  input.value = '';
+  input.style.height = 'auto';
+
+  addUserMsg(query);
+  const msgEl = createAssistantMsg();
+  const phaseTag = msgEl.querySelector('#phaseTag');
+  const handoffsEl = msgEl.querySelector('#handoffs');
+  const contentEl = msgEl.querySelector('#streamContent');
+  const typingEl = msgEl.querySelector('#typingIndicator');
+
+  const userId = document.getElementById('userIdInput').value.trim() || 'anonymous';
+
+  try {
+    const resp = await fetch('/api/supervisor/research/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query, user_id: userId, thread_id: currentThread}),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({detail: resp.statusText}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const threadId = resp.headers.get('X-Thread-ID');
+    if (threadId) {
+      currentThread = threadId;
+      document.getElementById('threadDisplay').textContent = threadId.slice(0, 12) + '…';
+      document.getElementById('threadDisplay').title = threadId;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalText = '';
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop();
+
+      for (const frame of frames) {
+        const line = frame.trim();
+        if (!line.startsWith('data:')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+        switch (evt.phase) {
+          case 'update':
+            phaseTag.textContent = 'processing';
+            if (evt.metadata?.available_specialists) {
+              renderSpecialists(evt.metadata.available_specialists);
+            }
+            if (evt.content && evt.content !== 'stream opened') {
+              contentEl.textContent = evt.content;
+              scrollToBottom();
+            }
+            break;
+
+          case 'handoff': {
+            phaseTag.textContent = '→ ' + (evt.metadata?.specialist || evt.content);
+            const tag = document.createElement('span');
+            tag.className = 'handoff-tag';
+            tag.textContent = evt.metadata?.specialist || evt.content;
+            handoffsEl.appendChild(tag);
+            highlightSpecialist(evt.metadata?.specialist);
+            scrollToBottom();
+            break;
+          }
+
+          case 'final':
+            phaseTag.textContent = 'final answer';
+            finalText = evt.content || '';
+            contentEl.innerHTML = renderMarkdown(finalText);
+            typingEl.style.display = 'none';
+            clearHighlights();
+            scrollToBottom();
+            break;
+
+          case 'review_requested': {
+            phaseTag.textContent = 'awaiting review';
+            phaseTag.style.color = 'var(--yellow)';
+            typingEl.style.display = 'none';
+            clearHighlights();
+            const draftText = evt.content || contentEl.textContent || '';
+            if (draftText) contentEl.innerHTML = renderMarkdown(draftText);
+            const reviewEl = document.createElement('div');
+            reviewEl.className = 'review-panel';
+            reviewEl.id = 'reviewPanel';
+            reviewEl.innerHTML = `
+              <div class="review-title">Human Review Required</div>
+              <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
+                Supervisor 已生成初稿，请审阅后决定 Approve（通过）或 Revise（修改）。
+              </p>
+              <textarea id="reviewFeedback" placeholder="（可选）输入修改意见…"></textarea>
+              <div class="review-actions">
+                <button class="btn-approve" onclick="hitlApprove()">✓ Approve</button>
+                <button class="btn-revise" onclick="hitlRevise()">✎ Revise</button>
+              </div>
+            `;
+            msgEl.appendChild(reviewEl);
+            hitlPendingThread = currentThread;
+            scrollToBottom();
+            break;
+          }
+
+          case 'error':
+            phaseTag.textContent = 'error';
+            phaseTag.style.color = 'var(--red)';
+            contentEl.textContent = evt.content || 'Unknown error';
+            typingEl.style.display = 'none';
+            clearHighlights();
+            break;
+
+          case 'heartbeat':
+            break;
+
+          case 'done':
+            typingEl.style.display = 'none';
+            if (!finalText && contentEl.textContent) {
+              finalText = contentEl.textContent;
+            }
+            clearHighlights();
+            break;
+        }
+      }
+    }
+
+    if (finalText) {
+      contentEl.innerHTML = renderMarkdown(finalText);
+    }
+    typingEl.style.display = 'none';
+    refreshUsage();
+
+  } catch (err) {
+    const contentEl = msgEl.querySelector('#streamContent');
+    const typingEl = msgEl.querySelector('#typingIndicator');
+    if (contentEl) contentEl.textContent = 'Error: ' + err.message;
+    if (typingEl) typingEl.style.display = 'none';
+    showToast('Request failed: ' + err.message);
+  } finally {
+    streaming = false;
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+// --- Minimal markdown rendering ---
+function renderMarkdown(text) {
+  let html = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>')
+    .replace(/^\s*(\d+)\. (.+)$/gm, '<li>$2</li>')
+    .replace(/`([^`]+)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
+  html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, '<ul>$1</ul>');
+  return html;
+}
+
+// --- HITL approve / revise ---
+async function hitlApprove() {
+  if (!hitlPendingThread) return;
+  const feedback = document.getElementById('reviewFeedback')?.value.trim() || '';
+  await _hitlSubmit('approve', feedback);
+}
+
+async function hitlRevise() {
+  if (!hitlPendingThread) return;
+  const feedback = document.getElementById('reviewFeedback')?.value.trim() || '';
+  if (!feedback) { showToast('Please provide revision feedback.'); return; }
+  await _hitlSubmit('resume', feedback);
+}
+
+async function _hitlSubmit(action, feedback) {
+  const threadId = hitlPendingThread;
+  hitlPendingThread = null;
+
+  const panel = document.getElementById('reviewPanel');
+  if (panel) {
+    panel.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px 0">Resuming…</div>';
+  }
+
+  try {
+    const resp = await fetch(`/api/supervisor/research/${threadId}/${action}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({feedback}),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({detail: resp.statusText}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    if (panel) panel.remove();
+
+    const msgs = document.getElementById('messages');
+    const resultEl = document.createElement('div');
+    resultEl.className = 'msg assistant';
+    resultEl.innerHTML = `<div class="phase-tag" style="color:var(--green)">approved — final answer</div><div class="content">${renderMarkdown(data.reply || '')}</div>`;
+    msgs.appendChild(resultEl);
+    scrollToBottom();
+    refreshUsage();
+  } catch (err) {
+    showToast('HITL ' + action + ' failed: ' + err.message);
+    if (panel) panel.innerHTML = `<div style="color:var(--red);font-size:12px">Error: ${err.message}</div>`;
+    hitlPendingThread = threadId;
+  }
+}
+
+// --- New conversation ---
+function newThread() {
+  currentThread = null;
+  document.getElementById('threadDisplay').textContent = '-';
+  const m = document.getElementById('messages');
+  m.innerHTML = `<div class="welcome" id="welcome">
+    <div class="icon">🔬</div>
+    <h2>Financial Research Agent</h2>
+    <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
+    <div class="examples">
+      <div class="example" onclick="fillQuery(this)">分析宁德时代 2024 年的营收和利润表现</div>
+      <div class="example" onclick="fillQuery(this)">贵州茅台最近的新闻舆情和市场情绪如何？</div>
+      <div class="example" onclick="fillQuery(this)">对比隆基绿能和通威股份的 ROE 和毛利率</div>
+      <div class="example" onclick="fillQuery(this)">查一下比亚迪最近的公告披露和股价走势</div>
+    </div>
+  </div>`;
+}
+
+init();
+</script>
+</body>
+</html>

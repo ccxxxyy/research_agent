@@ -7,9 +7,10 @@ import contextlib
 import uuid
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, Request as FastAPIRequest
+from fastapi import APIRouter, HTTPException, Request as FastAPIRequest, status
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.types import Command
 from loguru import logger
 
 from research_agent.api.dependencies import (
@@ -18,10 +19,12 @@ from research_agent.api.dependencies import (
     SupervisorGraphDep,
 )
 from research_agent.api.schemas import (
+    ApproveRequest,
     ResearchSupervisorRequest,
     ResearchSupervisorResponse,
     ResearchSupervisorSSEEvent,
     ResearchSupervisorSSEPhase,
+    ResumeRequest,
     SupervisorChatRequest,
     SupervisorChatResponse,
 )
@@ -464,6 +467,35 @@ async def _research_event_stream(
                             )
                         )
                 outcome["graph_astream_ok"] = True
+
+                # --- HITL: detect graph interrupted for human review ---
+                try:
+                    _state = await graph.aget_state(cfg)
+                    if _state and getattr(_state, "next", None):
+                        outcome["graph_astream_ok"] = False
+                        draft = str(
+                            outcome.get("last_plain_synthesis") or ""
+                        )
+                        await frames.put(
+                            _format_sse(
+                                ResearchSupervisorSSEEvent(
+                                    phase=ResearchSupervisorSSEPhase.REVIEW_REQUESTED,
+                                    node="human_review",
+                                    content=draft,
+                                    metadata={
+                                        "thread_id": thread_id,
+                                        "action_required": "approve_or_revise",
+                                    },
+                                )
+                            )
+                        )
+                        logger.info(
+                            "HITL review requested: thread={}",
+                            thread_id,
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "Research-supervisor streaming crashed: {}", exc
@@ -598,4 +630,109 @@ async def supervisor_research_stream(
             "X-Thread-ID": thread_id,
             "X-User-ID": user_id,
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# HITL — approve / resume a paused research thread
+# ---------------------------------------------------------------------------
+
+
+async def _verify_thread_interrupted(
+    graph, thread_id: str
+) -> None:
+    """Raise 409 if the thread is NOT in an interrupted state."""
+    cfg = _graph_config(thread_id, None)
+    try:
+        state = await graph.aget_state(cfg)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Cannot read graph state: {exc}",
+        ) from exc
+
+    if not state or not getattr(state, "next", None):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Thread '{thread_id}' is not paused for human review. "
+                "It may have already been approved or never existed."
+            ),
+        )
+
+
+@router.post(
+    "/research/{thread_id}/approve",
+    response_model=ResearchSupervisorResponse,
+)
+async def supervisor_research_approve(
+    thread_id: str,
+    request: ApproveRequest,
+    graph: ResearchSupervisorGraphDep,
+) -> ResearchSupervisorResponse:
+    """Approve a HITL-paused research draft and resume the graph.
+
+    The ``human_review`` node receives ``{"action": "approve", ...}``
+    via ``Command(resume=...)``, passes through without injecting
+    feedback, and the graph continues to reflection (if enabled) or
+    terminates.
+
+    If ``feedback`` is non-empty, it is still forwarded as an approve
+    action but the downstream reflection critic / writer will see the
+    reviewer's notes in the message stream.
+    """
+    await _verify_thread_interrupted(graph, thread_id)
+
+    cfg = _graph_config(thread_id, None)
+    logger.info("HITL approve: thread={}", thread_id)
+
+    result = await graph.ainvoke(
+        Command(resume={"action": "approve", "feedback": request.feedback}),
+        config=cfg,
+    )
+    messages = result.get("messages", [])
+    reply = _final_assistant_text(messages)
+
+    return ResearchSupervisorResponse(
+        reply=reply,
+        thread_id=thread_id,
+        specialists_reached=_specialists_reached(messages),
+        message_count=len(messages),
+    )
+
+
+@router.post(
+    "/research/{thread_id}/resume",
+    response_model=ResearchSupervisorResponse,
+)
+async def supervisor_research_resume(
+    thread_id: str,
+    request: ResumeRequest,
+    graph: ResearchSupervisorGraphDep,
+) -> ResearchSupervisorResponse:
+    """Resume a HITL-paused research with revision feedback.
+
+    The ``human_review`` node receives ``{"action": "revise", ...}``
+    via ``Command(resume=...)``.  When ``feedback`` is non-empty, the
+    node injects it as a ``HumanMessage`` so the reflection loop (or
+    a downstream rewrite step) can address the reviewer's concerns.
+    """
+    await _verify_thread_interrupted(graph, thread_id)
+
+    action = "revise" if request.feedback else "approve"
+    cfg = _graph_config(thread_id, None)
+    logger.info("HITL resume: thread={} action={}", thread_id, action)
+
+    result = await graph.ainvoke(
+        Command(resume={"action": action, "feedback": request.feedback}),
+        config=cfg,
+    )
+    messages = result.get("messages", [])
+    reply = _final_assistant_text(messages)
+
+    return ResearchSupervisorResponse(
+        reply=reply,
+        thread_id=thread_id,
+        specialists_reached=_specialists_reached(messages),
+        message_count=len(messages),
     )

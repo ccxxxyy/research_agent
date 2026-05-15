@@ -63,6 +63,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 _AUTH_EXEMPT_PATHS = frozenset({
+    "/",
     "/health",
     "/metrics",
     "/docs",
@@ -89,7 +90,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not self._secret_key:
             return await call_next(request)
 
-        if request.url.path in _AUTH_EXEMPT_PATHS:
+        path = request.url.path
+        if path in _AUTH_EXEMPT_PATHS or path.startswith("/static"):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")

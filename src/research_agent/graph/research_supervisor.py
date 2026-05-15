@@ -59,12 +59,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import interrupt
 from langgraph_supervisor import create_supervisor
 from loguru import logger
 
@@ -303,6 +304,84 @@ class _ResearchState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
+# ---------------------------------------------------------------------------
+# Human-in-the-Loop review node
+# ---------------------------------------------------------------------------
+
+def _build_human_review_node():
+    """Create a graph node that pauses execution for human review.
+
+    The node extracts the supervisor's draft from the message stream
+    and calls ``interrupt()`` — LangGraph persists the graph state to
+    the checkpointer and halts execution.  The SSE layer detects the
+    pause and emits a ``review_requested`` event.
+
+    When the reviewer calls ``/approve`` or ``/resume``, the graph is
+    resumed with ``Command(resume=value)``.  The ``interrupt()`` call
+    returns that value:
+
+    * ``{"action": "approve", ...}`` — node passes through; draft
+      proceeds to reflection / END unchanged.
+    * ``{"action": "revise", "feedback": "..."}`` — node injects the
+      feedback as a ``HumanMessage`` so downstream nodes (reflection
+      or a potential supervisor re-run) can incorporate it.
+    """
+
+    async def human_review_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
+        messages = state.get("messages", [])
+        draft = ""
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+                content = msg.content
+                if isinstance(content, str) and content.strip():
+                    draft = content
+                    break
+
+        decision = interrupt({
+            "draft": draft,
+            "action_required": "approve_or_revise",
+        })
+
+        if isinstance(decision, dict) and decision.get("action") == "revise":
+            feedback = decision.get("feedback", "")
+            if feedback:
+                return {
+                    "messages": [
+                        HumanMessage(
+                            content=f"[REVIEWER FEEDBACK]\n{feedback}"
+                        )
+                    ]
+                }
+
+        return {"messages": []}
+
+    return human_review_node
+
+
+def _wrap_with_hitl_only(
+    supervisor: CompiledStateGraph,
+    *,
+    checkpointer: BaseCheckpointSaver | None,
+) -> CompiledStateGraph:
+    """Wrap supervisor with a human-review interrupt (no reflection)."""
+
+    async def supervisor_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
+        result = await supervisor.ainvoke(
+            {"messages": state.get("messages", [])},
+        )
+        return {"messages": result.get("messages", [])}
+
+    parent: StateGraph = StateGraph(_ResearchState)
+    parent.add_node("supervisor", supervisor_node)
+    parent.add_node("human_review", _build_human_review_node())
+    parent.add_edge(START, "supervisor")
+    parent.add_edge("supervisor", "human_review")
+    parent.add_edge("human_review", END)
+    compiled = parent.compile(checkpointer=checkpointer)
+    logger.info("Research supervisor wrapped with HITL review (no reflection).")
+    return compiled
+
+
 def _wrap_with_reflection(
     supervisor: CompiledStateGraph,
     *,
@@ -310,6 +389,7 @@ def _wrap_with_reflection(
     pass_threshold: float,
     max_iterations: int,
     checkpointer: BaseCheckpointSaver | None,
+    enable_hitl: bool = False,
 ) -> CompiledStateGraph:
     """Wrap a compiled supervisor in a parent graph that runs reflection.
 
@@ -355,15 +435,25 @@ def _wrap_with_reflection(
     parent: StateGraph = StateGraph(_ResearchState)
     parent.add_node("supervisor", supervisor_node)
     parent.add_node("reflection", reflection_node)
-    parent.add_edge(START, "supervisor")
-    parent.add_edge("supervisor", "reflection")
-    parent.add_edge("reflection", END)
+
+    if enable_hitl:
+        parent.add_node("human_review", _build_human_review_node())
+        parent.add_edge(START, "supervisor")
+        parent.add_edge("supervisor", "human_review")
+        parent.add_edge("human_review", "reflection")
+        parent.add_edge("reflection", END)
+    else:
+        parent.add_edge(START, "supervisor")
+        parent.add_edge("supervisor", "reflection")
+        parent.add_edge("reflection", END)
+
     compiled = parent.compile(checkpointer=checkpointer)
     logger.info(
         "Research supervisor wrapped with reflection: "
-        "pass_threshold={:.2f} max_iterations={}",
+        "pass_threshold={:.2f} max_iterations={} hitl={}",
         pass_threshold,
         max_iterations,
+        enable_hitl,
     )
     return compiled
 
@@ -382,6 +472,7 @@ def build_research_supervisor(
     enable_reflection: bool = False,
     reflection_pass_threshold: float = 0.85,
     reflection_max_iterations: int = 2,
+    enable_hitl: bool = False,
 ) -> CompiledStateGraph:
     """Compile the Phase-4.7 financial-research supervisor graph.
 
@@ -416,6 +507,10 @@ def build_research_supervisor(
             carries the audit trail.
         reflection_pass_threshold: Passed to ``build_reflection_subgraph``.
         reflection_max_iterations: Passed to ``build_reflection_subgraph``.
+        enable_hitl: When True, inserts a ``human_review`` node that
+            calls ``interrupt()`` after the supervisor draft is
+            produced. The graph pauses for human approval; callers
+            resume via ``Command(resume=...)``.
 
     Returns:
         A compiled LangGraph app.
@@ -488,15 +583,20 @@ def build_research_supervisor(
             pass_threshold=reflection_pass_threshold,
             max_iterations=reflection_max_iterations,
             checkpointer=checkpointer,
+            enable_hitl=enable_hitl,
         )
+    elif enable_hitl:
+        inner = workflow.compile()
+        compiled = _wrap_with_hitl_only(inner, checkpointer=checkpointer)
     else:
         compiled = workflow.compile(checkpointer=checkpointer)
 
     logger.info(
-        "Research supervisor compiled: tier={} specialists={} reflection={}",
+        "Research supervisor compiled: tier={} specialists={} reflection={} hitl={}",
         supervisor_tier.value,
         roster,
         enable_reflection,
+        enable_hitl,
     )
     return compiled
 

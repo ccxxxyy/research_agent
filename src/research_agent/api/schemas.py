@@ -102,23 +102,28 @@ class ResearchSupervisorResponse(BaseModel):
 class ResearchSupervisorSSEPhase(str, Enum):
     """Phase tags for SSE events emitted during streaming.
 
-    * ``handoff``  — supervisor called ``transfer_to_<specialist>``.
-    * ``update``   — a node produced a state update (specialist or
-                     supervisor). Content is the most recent
-                     assistant message from that update, truncated.
-    * ``final``    — the supervisor produced its final user-visible
-                     answer. Full content included.
-    * ``error``    — graph invocation raised. Content is the short
-                     error message; the client should stop consuming.
-    * ``heartbeat`` — synthetic keep-alive emitted when no graph news
-                       has arrived within the configured idle window
-                       so reverse proxies retain the SSE connection.
-    * ``done``     — stream terminator. Always emitted last.
+    * ``handoff``           — supervisor called ``transfer_to_<specialist>``.
+    * ``update``            — a node produced a state update (specialist or
+                              supervisor). Content is the most recent
+                              assistant message from that update, truncated.
+    * ``final``             — the supervisor produced its final user-visible
+                              answer. Full content included.
+    * ``review_requested``  — HITL interrupt: the graph paused for human
+                              review. Content is the draft; metadata
+                              carries ``thread_id`` and
+                              ``action_required``.
+    * ``error``             — graph invocation raised. Content is the short
+                              error message; the client should stop consuming.
+    * ``heartbeat``         — synthetic keep-alive emitted when no graph news
+                              has arrived within the configured idle window
+                              so reverse proxies retain the SSE connection.
+    * ``done``              — stream terminator. Always emitted last.
     """
 
     HANDOFF = "handoff"
     UPDATE = "update"
     FINAL = "final"
+    REVIEW_REQUESTED = "review_requested"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
     DONE = "done"
@@ -145,13 +150,36 @@ class HealthResponse(BaseModel):
     services: dict[str, str] = {}
 
 
-# ---------- Resume / Approve ----------
-
-class ResumeRequest(BaseModel):
-    """Resume a paused or failed research task."""
-    pass
+# ---------- Resume / Approve (HITL) ----------
 
 
 class ApproveRequest(BaseModel):
-    """Approve a paused research task and optionally inject feedback."""
-    feedback: str = ""
+    """Approve a HITL-paused research draft and resume execution.
+
+    If ``feedback`` is non-empty, it is injected as a
+    ``HumanMessage`` so downstream nodes (reflection / writer) can
+    incorporate the reviewer's notes.  An empty feedback string
+    means "ship the draft as-is".
+    """
+
+    feedback: str = Field(
+        default="",
+        max_length=4000,
+        description="Optional refinement notes; empty = approve as-is.",
+    )
+
+
+class ResumeRequest(BaseModel):
+    """Resume a HITL-paused research task with revision feedback.
+
+    Unlike ``ApproveRequest``, ``feedback`` is expected to contain
+    actionable revision instructions.  The graph treats this as a
+    ``revise`` action — the human_review node injects the feedback
+    and the downstream reflection/writer loop rewrites accordingly.
+    """
+
+    feedback: str = Field(
+        default="",
+        max_length=4000,
+        description="Revision feedback for the supervisor's draft.",
+    )
