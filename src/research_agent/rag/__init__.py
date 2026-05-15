@@ -1,20 +1,33 @@
-"""RAG building blocks — cross-encoder reranker for knowledge search.
+"""RAG building blocks — retrieval, grading, rewriting, and reranking.
 
-This package's sole production export is ``CrossEncoderReranker``,
-used by ``mcp_servers.knowledge_server._search()`` to rerank hybrid
-retrieval (FAISS + BM25 + RRF) candidates.
+This package exports the core Corrective-RAG pipeline components as
+independently testable classes:
 
-All other RAG primitives (PDF loading, chunking, embedding) live in
-``mcp_servers.knowledge_server`` as private helpers — they are tightly
-coupled to the FAISS index format and not shared.
+* ``BM25Index`` — sparse BM25 index over tokenized documents.
+* ``hybrid_rrf_fuse`` — weighted Reciprocal-Rank Fusion of dense +
+  sparse retrieval lists.
+* ``RetrievalGrader`` — three-bucket quality classifier
+  (high / medium / low) driving the corrective loop.
+* ``QueryRewriter`` — LLM-based query rewriter for low-quality hits.
+* ``CrossEncoderReranker`` — local cross-encoder for result reranking.
+
+The ``knowledge_server`` MCP tool module delegates to these classes
+for its retrieval pipeline.
 """
 
+from research_agent.rag.grader import RetrievalGrader
+from research_agent.rag.query_rewriter import QueryRewriter
 from research_agent.rag.reranker import (
     DEFAULT_RERANKER_MODEL,
     CrossEncoderReranker,
 )
+from research_agent.rag.retriever import BM25Index, hybrid_rrf_fuse
 
 __all__ = [
+    "BM25Index",
     "CrossEncoderReranker",
     "DEFAULT_RERANKER_MODEL",
+    "QueryRewriter",
+    "RetrievalGrader",
+    "hybrid_rrf_fuse",
 ]

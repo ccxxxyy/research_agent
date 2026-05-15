@@ -385,60 +385,9 @@ def _invalidate_bm25(collection: str) -> None:
 
 
 # ---------------------------------------------------------------------
-# BM25 index (rebuilt from FAISS docstore)
+# BM25 index — delegated to rag.retriever.BM25Index
 # ---------------------------------------------------------------------
-class _BM25Index:
-    """Wrapper around ``rank_bm25.BM25Okapi`` plus the originating docs.
-
-    We keep ``docs`` parallel to the underlying ``BM25Okapi`` corpus so
-    BM25 score lookups can be mapped back to ``(content, metadata)``
-    without a second round-trip to the vector store.
-
-    Tokenization is intentionally simple: lower-case + split on
-    non-word characters. CJK characters survive as single-char tokens,
-    which BM25 handles fine for queries that share noun phrases with
-    the documents (the dominant case for finance-style RAG).
-    """
-
-    _SPLIT_RE = re.compile(r"\W+", flags=re.UNICODE)
-
-    def __init__(self, docs: list[dict[str, Any]]) -> None:
-        from rank_bm25 import BM25Okapi
-
-        self.docs = docs
-        # Track whether we are running on a real corpus or just the
-        # sentinel below; ``search`` uses this to short-circuit.
-        self._is_empty: bool = not docs
-        tokenized = [self._tokenize(d["content"]) for d in docs]
-        # rank_bm25 cannot handle empty corpora — guard with a sentinel
-        # whose only purpose is to satisfy ``BM25Okapi.__init__``. The
-        # sentinel must NEVER surface as a real hit (it would inject
-        # an empty-content "document" into the hybrid-fusion pipeline
-        # downstream), so ``search`` checks ``_is_empty`` first.
-        if not tokenized:
-            tokenized = [[""]]
-            self.docs = [{"content": "", "metadata": {}}]
-        self._bm25 = BM25Okapi(tokenized)
-
-    @classmethod
-    def _tokenize(cls, text: str) -> list[str]:
-        return [t for t in cls._SPLIT_RE.split(text.lower()) if t]
-
-    def search(self, query: str, top_k: int) -> list[tuple[int, float]]:
-        """Return ``[(corpus_index, bm25_score)]`` sorted desc.
-
-        Returns an empty list when:
-          - the query has no tokens after normalisation, or
-          - the index was built from an empty corpus (no real docs).
-        """
-        if self._is_empty:
-            return []
-        tokens = self._tokenize(query)
-        if not tokens:
-            return []
-        scores = self._bm25.get_scores(tokens)
-        ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
-        return ranked[:top_k]
+from research_agent.rag.retriever import BM25Index as _BM25Index  # noqa: E402
 
 
 def _build_bm25_for_collection(collection: str) -> _BM25Index:
@@ -695,87 +644,20 @@ def _collection_count(collection: str) -> int:
 # ---------------------------------------------------------------------
 # Tool 2: hybrid search with corrective-RAG quality signals
 # ---------------------------------------------------------------------
+from research_agent.rag.grader import RetrievalGrader as _RetrievalGrader  # noqa: E402
+
+_GRADER = _RetrievalGrader(
+    high_threshold=QUALITY_HIGH_THRESHOLD,
+    medium_threshold=QUALITY_MEDIUM_THRESHOLD,
+)
+
+
 def _classify_quality(top_score: float, mean_score: float, unique_sources: int) -> str:
-    """Heuristic three-bucket classifier for retrieval quality.
-
-    The agent uses this label to decide whether to re-issue the search
-    with a rewritten query. The thresholds are tuned for normalised
-    cosine on bge-small-zh (we set ``normalize_embeddings=True`` in
-    ``_get_embedder``); pasting raw cosine values from a different
-    embedder will need re-calibration.
-
-    "high"   → top hit is clearly on-topic; agent should answer.
-    "medium" → mixed signal; agent should answer but warn user it may
-               be partial.
-    "low"    → top hit is weak; agent should rewrite and retry.
-    """
-    if top_score >= QUALITY_HIGH_THRESHOLD and unique_sources >= 1:
-        return "high"
-    if top_score >= QUALITY_MEDIUM_THRESHOLD and mean_score >= QUALITY_MEDIUM_THRESHOLD * 0.6:
-        return "medium"
-    return "low"
+    """Delegate to ``rag.grader.RetrievalGrader``."""
+    return _GRADER.grade(top_score, mean_score, unique_sources)
 
 
-def _hybrid_fuse(
-    vector_hits: list[tuple[dict[str, Any], float]],
-    bm25_hits: list[tuple[int, float, dict[str, Any]]],
-    *,
-    k_rrf: int = 60,
-    vector_weight: float = 0.6,
-    bm25_weight: float = 0.4,
-) -> list[dict[str, Any]]:
-    """Fuse vector + BM25 result lists with weighted Reciprocal Rank Fusion.
-
-    Returns one record per UNIQUE document (deduped by
-    ``(source, page, content[:80])``) carrying:
-        * ``content``, ``metadata``
-        * ``vector_score``  — raw cosine similarity (∈ [0, 1] post-norm)
-        * ``bm25_score``    — raw BM25 (unbounded, model-dependent)
-        * ``rrf_score``     — fused rank score (the actual sort key)
-        * ``vector_rank``, ``bm25_rank``  — 1-indexed rank in each list
-                                            (None if not present)
-    """
-    fused: dict[str, dict[str, Any]] = {}
-
-    def _key(meta: dict[str, Any], content: str) -> str:
-        return f"{meta.get('source', '')}|p={meta.get('page', '?')}|{content[:80]}"
-
-    for rank, (doc, score) in enumerate(vector_hits, start=1):
-        k = _key(doc["metadata"], doc["content"])
-        rec = fused.setdefault(
-            k,
-            {
-                "content": doc["content"],
-                "metadata": doc["metadata"],
-                "vector_score": score,
-                "bm25_score": 0.0,
-                "rrf_score": 0.0,
-                "vector_rank": rank,
-                "bm25_rank": None,
-            },
-        )
-        rec["vector_score"] = max(rec["vector_score"], score)
-        rec["rrf_score"] += vector_weight / (k_rrf + rank)
-
-    for rank, (_, score, doc) in enumerate(bm25_hits, start=1):
-        k = _key(doc["metadata"], doc["content"])
-        rec = fused.setdefault(
-            k,
-            {
-                "content": doc["content"],
-                "metadata": doc["metadata"],
-                "vector_score": 0.0,
-                "bm25_score": score,
-                "rrf_score": 0.0,
-                "vector_rank": None,
-                "bm25_rank": rank,
-            },
-        )
-        rec["bm25_score"] = max(rec["bm25_score"], score)
-        rec["bm25_rank"] = rank if rec["bm25_rank"] is None else min(rec["bm25_rank"], rank)
-        rec["rrf_score"] += bm25_weight / (k_rrf + rank)
-
-    return sorted(fused.values(), key=lambda r: r["rrf_score"], reverse=True)
+from research_agent.rag.retriever import hybrid_rrf_fuse as _hybrid_fuse  # noqa: E402, F811
 
 
 async def _maybe_rerank(
