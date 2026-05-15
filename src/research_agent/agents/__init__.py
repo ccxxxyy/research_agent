@@ -19,7 +19,9 @@ from research_agent.agents.specialists import (
     build_data_expert,
     build_knowledge_expert,
     build_math_expert,
+    build_news_expert,
     build_report_expert,
+    build_sentiment_expert,
     build_text_analyst,
     build_time_expert,
 )
@@ -32,7 +34,9 @@ __all__ = [
     "build_data_expert",
     "build_knowledge_expert",
     "build_math_expert",
+    "build_news_expert",
     "build_report_expert",
+    "build_sentiment_expert",
     "build_text_analyst",
     "build_time_expert",
 ]

@@ -284,6 +284,88 @@ def _extract_update_snippet(node_update: dict) -> tuple[str, str]:
 
 _SYNTH_NODES_FOR_HISTORY = frozenset({"supervisor", "reflection"})
 
+_KNOWN_SPECIALISTS = frozenset({
+    "data_expert", "report_expert", "coder_expert",
+    "knowledge_expert", "news_expert", "sentiment_expert",
+    "math_expert", "time_expert", "text_analyst",
+})
+
+
+def _namespace_specialist(namespace: tuple) -> str | None:
+    """Extract specialist name from a subgraph namespace tuple.
+
+    ``subgraphs=True`` yields ``(namespace, chunk)`` pairs where
+    ``namespace`` is a tuple of strings tracing the nesting path:
+
+    * ``()`` — root / parent graph.
+    * ``("supervisor",)`` — inside the wrapped supervisor node
+      (when reflection or HITL wraps the supervisor).
+    * ``("supervisor", "data_expert")`` or ``("data_expert",)`` —
+      inside a specialist subgraph.
+
+    Returns the specialist name if found, ``None`` otherwise.
+    """
+    if not namespace:
+        return None
+    for part in namespace:
+        base = str(part).split(":")[0]
+        if base in _KNOWN_SPECIALISTS:
+            return base
+    return None
+
+
+def _emit_specialist_internal(
+    specialist: str,
+    node_name: str,
+    node_update: dict,
+    frames: "asyncio.Queue[str | None]",
+) -> None:
+    """Push SSE frames for a specialist's internal steps.
+
+    Only tool invocations are surfaced (``TOOL_CALL`` phase) to
+    keep the stream concise.  Raw ``ToolMessage`` results are
+    skipped — they are often verbose JSON payloads that add noise
+    without value for the end-user.
+    """
+    msgs = node_update.get("messages") or []
+    if not msgs:
+        return
+    last = msgs[-1]
+    if not isinstance(last, AIMessage):
+        return
+    tool_calls = getattr(last, "tool_calls", None) or []
+    if not tool_calls:
+        return
+    for tc in tool_calls:
+        name = (
+            tc.get("name")
+            if isinstance(tc, dict)
+            else getattr(tc, "name", "") or ""
+        )
+        args = (
+            tc.get("args", {})
+            if isinstance(tc, dict)
+            else getattr(tc, "args", {}) or {}
+        )
+        if not name or name.startswith("transfer_to_"):
+            continue
+        args_preview = ", ".join(
+            f"{k}={v!r}" for k, v in (args or {}).items()
+        )[:200]
+        frames.put_nowait(
+            _format_sse(
+                ResearchSupervisorSSEEvent(
+                    phase=ResearchSupervisorSSEPhase.TOOL_CALL,
+                    node=specialist,
+                    content=f"{name}({args_preview})",
+                    metadata={
+                        "specialist": specialist,
+                        "tool": str(name),
+                    },
+                )
+            )
+        )
+
 
 async def _persist_stream_research_to_memory(
     *,
@@ -397,16 +479,39 @@ async def _research_event_stream(
 
             final_emitted_local = False
             try:
-                async for chunk in graph.astream(
+                async for event in graph.astream(
                     {"messages": messages},
                     config=cfg,
                     stream_mode="updates",
+                    subgraphs=True,
                 ):
+                    # With subgraphs=True each event is
+                    # (namespace_tuple, chunk_dict).
+                    if isinstance(event, tuple) and len(event) == 2:
+                        namespace, chunk = event
+                    elif isinstance(event, dict):
+                        namespace, chunk = (), event
+                    else:
+                        continue
                     if not isinstance(chunk, dict):
                         continue
+
+                    specialist_ns = _namespace_specialist(namespace)
+
                     for node_name, node_update in chunk.items():
                         if not isinstance(node_update, dict):
                             continue
+
+                        # --- Specialist internal events ---
+                        if specialist_ns:
+                            _emit_specialist_internal(
+                                specialist_ns,
+                                node_name,
+                                node_update,
+                                frames,
+                            )
+                            continue
+
                         tool_call_name, snippet = _extract_update_snippet(
                             node_update
                         )
