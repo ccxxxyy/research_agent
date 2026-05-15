@@ -71,6 +71,10 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 
 .msg .handoff-tag{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--accent2);margin:4px 4px 4px 0}
 .msg .handoff-tag::before{content:"→";color:var(--accent)}
+.msg .tool-call-line{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);padding:3px 0;font-family:'Fira Code','Consolas',monospace;opacity:0.85}
+.msg .tool-call-line .tc-icon{color:var(--accent);font-size:11px}
+.msg .tool-call-line .tc-specialist{color:var(--accent2);font-weight:600}
+.msg .tool-call-line .tc-tool{color:var(--green,#4ade80)}
 
 .msg .phase-tag{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text2);margin-bottom:6px}
 
@@ -425,6 +429,21 @@ async function sendQuery() {
             tag.textContent = evt.metadata?.specialist || evt.content;
             handoffsEl.appendChild(tag);
             highlightSpecialist(evt.metadata?.specialist);
+            scrollToBottom();
+            break;
+          }
+
+          case 'tool_call': {
+            const tcLine = document.createElement('div');
+            tcLine.className = 'tool-call-line';
+            const sp = evt.metadata?.specialist || evt.node || '';
+            const tool = evt.metadata?.tool || '';
+            tcLine.innerHTML =
+              `<span class="tc-icon">⚙</span>` +
+              `<span class="tc-specialist">${sp}</span> ` +
+              `<span class="tc-tool">${tool}</span>` +
+              (evt.content ? `<span>(${evt.content.split('(').slice(1).join('(')})</span>` : '');
+            contentEl.appendChild(tcLine);
             scrollToBottom();
             break;
           }

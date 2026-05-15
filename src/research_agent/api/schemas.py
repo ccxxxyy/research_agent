@@ -112,6 +112,10 @@ class ResearchSupervisorSSEPhase(str, Enum):
                               review. Content is the draft; metadata
                               carries ``thread_id`` and
                               ``action_required``.
+    * ``tool_call``         — a specialist called one of its MCP tools.
+                              ``metadata.specialist`` identifies the agent;
+                              ``metadata.tool`` names the tool;
+                              ``content`` has a short args preview.
     * ``error``             — graph invocation raised. Content is the short
                               error message; the client should stop consuming.
     * ``heartbeat``         — synthetic keep-alive emitted when no graph news
@@ -122,6 +126,7 @@ class ResearchSupervisorSSEPhase(str, Enum):
 
     HANDOFF = "handoff"
     UPDATE = "update"
+    TOOL_CALL = "tool_call"
     FINAL = "final"
     REVIEW_REQUESTED = "review_requested"
     ERROR = "error"

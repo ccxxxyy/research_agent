@@ -66,14 +66,17 @@ class _FakeGraph:
         return {"messages": [human, *self._scripted]}
 
     async def astream(
-        self, inputs: dict, config: dict | None = None, stream_mode: str = "updates"
-    ) -> AsyncIterator[dict]:
-        # Emit one update per scripted message, grouped by node.
-        # The endpoint consumes ``{node_name: {"messages": [...]}}``
-        # so we wrap accordingly.
+        self,
+        inputs: dict,
+        config: dict | None = None,
+        stream_mode: str = "updates",
+        **kwargs: object,
+    ) -> AsyncIterator[dict | tuple]:
+        subgraphs = kwargs.get("subgraphs", False)
         for msg in self._scripted:
             node = getattr(msg, "name", None) or "supervisor"
-            yield {node: {"messages": [msg]}}
+            chunk = {node: {"messages": [msg]}}
+            yield ((), chunk) if subgraphs else chunk
 
 
 class _SlowFakeGraph(_FakeGraph):
@@ -84,11 +87,14 @@ class _SlowFakeGraph(_FakeGraph):
         inputs: dict,
         config: dict | None = None,
         stream_mode: str = "updates",
-    ) -> AsyncIterator[dict]:
+        **kwargs: object,
+    ) -> AsyncIterator[dict | tuple]:
+        subgraphs = kwargs.get("subgraphs", False)
         for msg in self._scripted:
             await asyncio.sleep(0.12)
             node = getattr(msg, "name", None) or "supervisor"
-            yield {node: {"messages": [msg]}}
+            chunk = {node: {"messages": [msg]}}
+            yield ((), chunk) if subgraphs else chunk
 
 
 def _handoff(name: str) -> AIMessage:
@@ -359,6 +365,90 @@ class TestResearchSSE:
             "data_expert",
             "news_expert",
         ]
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_tool_call_from_subgraph(self) -> None:
+        """Specialist internal tool calls appear as ``tool_call`` SSE events."""
+
+        class _SubgraphFakeGraph(_FakeGraph):
+            async def astream(
+                self, inputs: dict, config: dict | None = None, **kwargs: object
+            ) -> AsyncIterator[tuple]:
+                # Opening: supervisor handoff
+                yield (
+                    (),
+                    {
+                        "supervisor": {
+                            "messages": [
+                                AIMessage(
+                                    content="",
+                                    name="supervisor",
+                                    tool_calls=[
+                                        {
+                                            "name": "transfer_to_data_expert",
+                                            "args": {},
+                                            "id": "h1",
+                                        }
+                                    ],
+                                )
+                            ]
+                        }
+                    },
+                )
+                # Subgraph: data_expert calls a tool
+                yield (
+                    ("data_expert",),
+                    {
+                        "agent": {
+                            "messages": [
+                                AIMessage(
+                                    content="",
+                                    name="agent",
+                                    tool_calls=[
+                                        {
+                                            "name": "fin_get_basic_info",
+                                            "args": {"code": "300750"},
+                                            "id": "tc1",
+                                        }
+                                    ],
+                                )
+                            ]
+                        }
+                    },
+                )
+                # Final supervisor answer
+                yield (
+                    (),
+                    {
+                        "supervisor": {
+                            "messages": [
+                                AIMessage(content="done", name="supervisor")
+                            ]
+                        }
+                    },
+                )
+
+        graph = _SubgraphFakeGraph([])
+        app = _build_test_app(graph)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(
+                "/api/supervisor/research/stream",
+                json={"query": "test"},
+            )
+
+        events = _parse_sse(r.content)
+        phases = [e["phase"] for e in events]
+
+        assert "handoff" in phases
+        assert "tool_call" in phases
+        tool_events = [e for e in events if e["phase"] == "tool_call"]
+        assert len(tool_events) == 1
+        assert tool_events[0]["metadata"]["specialist"] == "data_expert"
+        assert tool_events[0]["metadata"]["tool"] == "fin_get_basic_info"
+        assert "300750" in tool_events[0]["content"]
 
     @pytest.mark.asyncio
     async def test_stream_error_emits_error_phase(self) -> None:

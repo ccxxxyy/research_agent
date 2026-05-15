@@ -1,13 +1,14 @@
-"""end-to-end demo — knowledge_expert over a real PDF + Chroma.
+"""end-to-end demo — knowledge_expert over a real PDF + FAISS.
 
-This script is the **production flow-of-the-day for RAG**: it spawns
-the ``knowledge_server`` MCP subprocess, wires its tools into a
+This script is the **production flow-of-the-day for RAG**: it loads
+the ``knowledge_server`` tools in-process, wires them into a
 ``knowledge_expert`` specialist registered behind the research
 supervisor, and asks a question that forces the agent to:
 
   1. ``knowledge_ingest_pdf`` — chunk + embed a freshly-written PDF
      into a brand-new Chroma collection.
-  2. ``knowledge_search``     — hybrid (vector + BM25) retrieval.
+  2. ``knowledge_search``     — hybrid (FAISS vector + BM25 + RRF)
+     retrieval with optional cross-encoder reranking.
   3. answer with a quoted excerpt + ``source`` + ``page``.
 
 Run::
@@ -75,8 +76,8 @@ def _step(msg: str) -> None:
     """Print a one-line, time-stamped progress beacon.
 
     Used aggressively in this demo because it has historically hung
-    in opaque places (Chroma SQLite locks, MCP subprocess re-spawn,
-    LLM stream stall). With these beacons every step is visible
+    in opaque places (embedder cold-start, FAISS I/O, LLM stream
+    stall). With these beacons every step is visible
     even when stdout is redirected to a file and the process is
     killed mid-flight.
     """
@@ -217,21 +218,11 @@ def _transfers_reached(calls: list[str]) -> set[str]:
 def _make_collection_name() -> str:
     """Return a fresh collection name unique to this run.
 
-    Using a per-run name (timestamp suffix) sidesteps two real
-    failure modes we have seen on Windows:
-
-      a) **SQLite writer deadlock.** The MCP subprocess and the
-         parent process must NOT both open Chroma's persistent
-         SQLite file at the same time — the second writer can
-         block indefinitely. By giving every run a fresh
-         collection AND avoiding any in-process Chroma access,
-         only ONE process (the MCP subprocess) ever touches the
-         persistent store.
-
-      b) **Stale state from previous runs.** Re-using the same
-         collection name across runs would silently double-ingest
-         the PDF on retry, polluting the BM25 stats and making
-         "high-quality" thresholds easier to spuriously hit.
+    Using a per-run name (timestamp suffix) prevents stale state
+    from previous runs — re-using the same collection name across
+    runs would silently double-ingest the PDF, polluting the BM25
+    stats and making "high-quality" thresholds easier to spuriously
+    hit.
     """
     return f"demo_esg_{time.strftime('%Y%m%d_%H%M%S')}"
 
@@ -404,10 +395,6 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    # NOTE: we deliberately do NOT auto-delete the demo collection
-    # at exit. Doing so would require opening Chroma in the parent
-    # process, which on Windows can deadlock against the still-warm
-    # SQLite handles held by the MCP subprocess that just exited.
     # Each run uses a fresh timestamped collection (see
     # ``_make_collection_name``) so the on-disk directory cost stays
     # bounded; users can prune via ``knowledge_list_collections`` /
