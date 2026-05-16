@@ -136,6 +136,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log_file_path=settings.observability.log_file_path,
     )
 
+    from research_agent.observability.tracing import setup_tracing
+
+    setup_tracing(settings.observability)
+
     from research_agent.memory.checkpointer import init_checkpointer
     from research_agent.memory.store import init_memory_store
 
