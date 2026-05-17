@@ -5,7 +5,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-190%20passing-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-275%20passing-brightgreen.svg)](#测试)
 
 ---
 
@@ -80,7 +80,9 @@
 | MCP 协议化工具 | 工具实现可换 Python/Node/Rust；同一份 fastmcp server 可独立测试也可被 agent 远程调用 |
 | Hybrid RAG + Rerank + Corrective signal | 单一向量检索召回不稳；BM25 补关键词命中；cross-encoder rerank 提精度；`quality` 标签让 agent 自己决定要不要重写查询 |
 | 三档 Checkpointer fallback (PG → SQLite → Memory) | 开发不需要起 docker，生产又能持久化；TCP 探测预检防 Windows ProactorEventLoop 被 psycopg pool 卡死 |
-| SSE `stream_mode='updates'` | 直接把 LangGraph 的节点级状态变更转成 handoff/update/final/error/done 五类事件给前端 |
+| SSE `stream_mode='updates'` + `subgraphs=True` | 节点级状态变更转成 8 类事件（`handoff` / `update` / `final` / `tool_call` / `review_requested` / `heartbeat` / `error` / `done`）；`subgraphs=True` 透传 specialist 内部工具调用，便于 UI 显示"data_expert 正在调 get_kline" |
+| HITL 真实可恢复 | `human_review` 节点调 LangGraph `interrupt()` 把状态完整存进 checkpointer；进程重启都能从同一个 `thread_id` resume，由 `POST .../approve` 或 `.../resume` 续跑 |
+| Observability 三件套 | `request_id` 中间件贯穿 HTTP 头 / loguru 日志 / LangSmith trace 标签；`/api/usage` 暴露按 tier 分桶的 token 用量 + 美元成本；`/metrics` 输出 Prometheus 文本（不依赖 `prometheus_client`，零额外开销） |
 
 ---
 
@@ -91,12 +93,12 @@
 | 编排 | `langgraph` + `langgraph-supervisor` |
 | 工具协议 | `fastmcp` + `langchain-mcp-adapters` |
 | RAG | `faiss-cpu`（向量）+ `rank-bm25`（关键词）+ `BAAI/bge-small-zh-v1.5`（embedder）+ `BAAI/bge-reranker-base`（cross-encoder rerank） |
-| LLM | `langchain-openai` + `litellm`，三档路由（LIGHT/MEDIUM/HEAVY），按 `AgentName` → `ModelTier` 映射 |
-| 持久化 | `langgraph-checkpoint-postgres` / `langgraph-checkpoint-sqlite`；`InMemoryStore` 作长期 user store |
+| LLM | `langchain-openai` 的 `ChatOpenAI` 直接打 OpenAI / DeepSeek / Dashscope 兼容端点；三档路由（LIGHT/MEDIUM/HEAVY），按 `AgentName` → `ModelTier` 映射，自动按 `FALLBACK_CHAIN` 降级 |
+| 持久化 | 短期 thread 状态：`langgraph-checkpoint-postgres` → `langgraph-checkpoint-sqlite` → `MemorySaver` 三级 fallback；长期用户记忆：`PostgresStore` → `AsyncSqliteStore` → `InMemoryStore` 三级 fallback（均按 TCP 探测预检自动降级） |
 | Web | `fastapi` + `uvicorn` + `sse-starlette`，Pydantic v2 严格校验 |
 | 数据源 | `akshare`（A 股行情/基本面/公告/新闻）+ `httpx` + `pypdf`（cninfo PDF 解析）+ `snownlp`（中文情感） |
 | 可观测 | `loguru` 结构化日志 + `langsmith` tracing |
-| 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（190 tests） |
+| 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（275 tests） |
 
 ---
 
@@ -105,23 +107,41 @@
 ### 4.1 准备依赖
 
 ```bash
-# 安装 uv（如已装可跳过）
+# 安装 uv
 pip install uv
 
-# 同步依赖（会自动创建 .venv，约 1-2 分钟）
+# 同步依赖
 uv sync --extra dev
 
 # 配置环境变量
 cp .env.example .env
 # 至少填一个 LLM 提供商的 key —— OpenAI / DeepSeek / Dashscope 任选其一
-# Postgres/Redis 可不填，应用会自动回退到 SQLite + 内存限流
+# Postgres/Redis 若不填，自动回退到 SQLite + 内存限流
 ```
 
-### 4.2 跑测试（推荐第一步：确认绿）
+**常用开关**：
+
+```bash
+# 启用人审拦截（draft 出来后等待点 Approve / Revise 后继续）
+HITL_ENABLED=true
+
+# 启用 LangSmith 在线 trace（先在 https://smith.langchain.com 拿到 key）
+LANGCHAIN_TRACING_V2=true
+LANGSMITH_API_KEY=ls__xxx
+LANGSMITH_PROJECT=research-agent
+
+# 启用 reflection 子图（默认 OFF 省配额；打开后能看到 critic 节点）
+REFLECTION_ENABLED=true
+
+# SSE 心跳间隔，0 关闭（ 5s 更直观）
+SSE_RESEARCH_HEARTBEAT_SECONDS=5
+```
+
+### 4.2 跑测试（确认绿）
 
 ```bash
 .venv/Scripts/python.exe -m pytest -m "not network and not slow" -q
-# 期望：190 passed
+# 期望：275 passed
 ```
 
 `network` 标记下的测试会真打 akshare/cninfo 等外网，`slow` 标记下的测试会下载 bge embedder 权重（~100MB）。这两组在 CI 里默认跳过。
@@ -140,9 +160,14 @@ uv run uvicorn research_agent.main:app --host 0.0.0.0 --port 8080
 
 ### 4.4 跑一个端到端 demo（含真实业务数据）
 
+> **本地知识库**：FAISS 索引文件存在 `./data/knowledge_db/<collection>/` 下，首次部署是空的。`knowledge_expert` 检索空索引会返回零结果。跑前先 seed（或经 `POST /api/knowledge/ingest` 自己灌 PDF），否则 supervisor 路由到 `knowledge_expert` 会拿到空 hit。
+>
+> Embedder（`BAAI/bge-small-zh-v1.5` ~100 MB）和 Reranker（`BAAI/bge-reranker-base` ~280 MB）首次 ingest 会从 HuggingFace Hub 下载到 `~/.cache/huggingface/`
+
 ```bash
-# 1) 先给 FAISS 知识库灌几份真实的 A 股年报（用 cninfo 公开 PDF）
+# 1) 先给 FAISS 知识库灌几份真实的 A 股年报（用 cninfo 公开 PDF，幂等，可重复运行）
 uv run python scripts/seed_real_research_reports.py
+# 完成后 ./data/knowledge_db/prod_reports/ 下应该看到 index.faiss + index.pkl
 
 # 2) 跑全栈研究 demo（supervisor 会拉通所有 6 个 specialist）
 uv run python scripts/demo_full_research.py
@@ -160,22 +185,48 @@ docker compose logs -f app
 
 ## 五、主要 REST 接口
 
+### 5.1 健康检查 / 可观测性
+
 | Method | Path | 说明 |
 |---|---|---|
-| GET | `/health` | 多依赖健康探测（postgres / redis / faiss / supervisor 图） |
-| POST | `/api/supervisor/chat` | Phase-3 演示：minimal supervisor（math/time/text 三个 toy specialist） |
+| GET | `/health` | 多依赖健康探测（postgres / redis / memory_store / supervisor 图 / specialist roster） |
+| GET | `/api/usage` | 累计 LLM token 用量（按 tier / 按模型分桶）+ 美元成本估算 |
+| GET | `/metrics` | Prometheus 文本暴露格式（QPS、按 specialist 调用次数、请求耗时直方图） |
+
+### 5.2 Supervisor（核心研究流）
+
+| Method | Path | 说明 |
+|---|---|---|
+| POST | `/api/supervisor/chat` | minimal supervisor（math/time/text 三个 toy specialist） |
 | POST | `/api/supervisor/research` | **同步**调用 research supervisor，返回最终答案 + 经过的 specialist 列表 |
-| POST | `/api/supervisor/research/stream` | **SSE 流式**调用 research supervisor（handoff / update / final / error / done） |
+| POST | `/api/supervisor/research/stream` | **SSE 流式**调用（事件：`handoff` / `update` / `final` / `tool_call` / `review_requested` / `heartbeat` / `error` / `done`） |
+| POST | `/api/supervisor/research/{thread_id}/approve` | **HITL**：审核通过被 `interrupt()` 暂停的 draft，graph 从断点续跑 |
+| POST | `/api/supervisor/research/{thread_id}/resume` | **HITL**：携带 `feedback` 修订意见 resume；feedback 通过 `Command(resume=...)` 注入到 `interrupt()` 返回值 |
+
+### 5.3 知识库 / 记忆 / 情感
+
+| Method | Path | 说明 |
+|---|---|---|
 | POST | `/api/knowledge/ingest` | 上传 PDF 入 FAISS 私有知识库 |
 | POST | `/api/knowledge/search` | 在指定 collection 做 Hybrid + Rerank 检索 |
-| GET | `/api/memory/research/{user_id}` | 查询用户最近若干次研究记录（长期记忆） |
-| POST | `/api/sentiment/text` | 对一段或一批中文文本做 SnowNLP + 金融词典量化情感 |
+| GET | `/api/knowledge/collections` | 列出已建索引 |
+| DELETE | `/api/knowledge/collections/{name}` | 删除指定 collection |
+| GET | `/api/memory/context` | 取该 user 的长期偏好 + 最近研究摘要（拼到 supervisor preamble） |
+| GET | `/api/memory/history` | 该 user 的历次研究记录（thread_id + 查询 + 简介） |
+| POST | `/api/memory/preferences` | 写入用户偏好（KV，namespace 按 user_id 隔离） |
+| DELETE | `/api/memory/preferences/{key}` | 删除指定偏好 |
+| POST | `/api/sentiment/analyze` | 对一段或一批中文文本做 SnowNLP + 金融词典量化情感 |
+| GET | `/api/sentiment/report/{symbol}` | 综合舆情报告（拉取相关新闻 + 量化打分） |
 
-请求/响应 Pydantic schema 见 `src/research_agent/api/schemas.py`。
+请求/响应 Pydantic schema 在 `src/research_agent/api/schemas.py`。HTTP 响应头一律带 `X-Request-ID`，可与 loguru 日志和 LangSmith trace 一一对应。
+
+### 5.4 前端 Chat UI
+
+`src/research_agent/static/index.html` 自带一个零依赖的单文件 Chat UI（HTML + 原生 JS + Fetch+SSE），访问 `http://localhost:8080/` 。侧栏会从 `app.state.available_specialists` 实时显示 specialist 在线状态；触发 HITL 时弹审核面板，Approve / Revise 调用对应 REST 路由。
 
 ---
 
-## 六、面试演示亮点（建议讲解顺序）
+## 六、细节
 
 1. **多模型分层路由**（`llm/provider.py` + `llm/tier.py`）
    - 同一个 `ModelRouter` 暴露 `for_agent(AgentName)`，自动映射到 LIGHT/MEDIUM/HEAVY。
@@ -186,28 +237,43 @@ docker compose logs -f app
    - 任何 specialist 的工具集为空就自动从 prompt 里抹掉，避免 `transfer_to_<missing>` 幽灵路由。
    - 故事：「supervisor 永远只看到一份与运行时团队一致的 system prompt — **配置漂移导致幻觉路由的常见坑**」。
 
-3. **Corrective RAG 全套**（`mcp_servers/knowledge_server.py` + `rag/reranker.py`）
-   - FAISS 召回（normalize 后的 cosine） + BM25Okapi + RRF 融合 + bge-reranker-base cross-encoder 重排。
-   - 每次 search 返回 `quality ∈ {high, medium, low}`；agent prompt 教它 quality 低就改写查询重试，最多 3 轮。
-   - 故事：「**Corrective 循环写在 ReAct prompt 里**，因为 specialist 自己看到 quality 信号本身就够触发重试；要做成显式 LangGraph 节点也可以，但增加图复杂度，**当前选择是工程上的取舍**。」
+3. **Corrective RAG 全套**（`rag/` 模块拆成 5 个独立职责文件 + `mcp_servers/knowledge_server.py` 复用它们）
+   - 召回：FAISS 向量（cosine on normalized vectors）+ `rag/retriever.py` 中的 `BM25Index` → `hybrid_rrf_fuse` 加权 RRF 融合。
+   - 重排：`rag/reranker.py` 的 `bge-reranker-base` cross-encoder（按需 disable）。
+   - 质量评估：`rag/grader.py` 的 `RetrievalGrader`（query-doc overlap + 平均分数 → high/medium/low 三档）。
+   - 改写：`rag/query_rewriter.py` 的 LLM-based `QueryRewriter`，quality=low 时触发，agent prompt 自决要不要重试，最多 3 轮。
+   - 故事：「这套抽象之前散落在 `knowledge_server.py` 里，重构成 5 个文件后**每个组件都能独立测**（`tests/unit/test_rag_{retriever,grader,query_rewriter}.py` 共 26 个 case），**而且任何一个组件可独立替换**（比如把 grader 换成 LLM 打分，或 reranker 换成 bge-m3）。」
 
 4. **MCP 协议化工具 + 一个真实的取舍**（`mcp_servers/` + `tools/knowledge_tools.py`）
    - 5 个 server 走真 stdio 子进程，1 个（knowledge）走进程内并诚实写在 docstring 里——因为 Windows + Python 3.13 + anyio + heavy ML import 链有死锁。
-   - 故事：「**调试这件事是给面试官展示真实排障能力的好素材**：从 `chromadb posthog 守护线程污染 stdout` → 写 `_stdio_firewall` → 迁 ChromaDB → FAISS → 发现 sentence-transformers 仍然干扰 → 工程上决定 in-process 同源代码，保留 MCP 接口作为契约文档。」
+   - 故事：「从 `chromadb posthog 守护线程污染 stdout` → 写 `_stdio_firewall` → 迁 ChromaDB → FAISS → 发现 sentence-transformers 仍然干扰 → 工程上决定 in-process 同源代码，保留 MCP 接口作为契约文档。」
 
 5. **三级 Checkpointer 自动 fallback**（`memory/checkpointer.py` + `memory/_pg_reachability.py`）
    - 启动时一个 2s 的 TCP 探测，避开 psycopg ConnectionPool 在 Windows ProactorEventLoop 下卡 25 分钟的坑。
-   - 故事：「这是个真事故，故事性强 — `pool` 这种"反复重试"的设计在 happy path 下没问题，但 `/health` 探活落到它身上整个 worker 就挂了。」
+   - 故事：「`pool` 这种"反复重试"的设计在 happy path 下没问题，但 `/health` 探活落到它身上整个 worker 就挂了。」
 
 6. **FastAPI SSE 流式**（`api/routes/supervisor.py`）
-   - 用 `stream_mode='updates'` 把每个节点的状态变更映射成 5 类事件。
-   - 故事：「不用 `astream_events` 是因为 supervisor 拓扑下事件太碎，UI 端会被淹没；**节点级 delta 视图刚好对齐"哪个 specialist 在说话"的直觉**。」
+   - 用 `stream_mode='updates' + subgraphs=True` 把节点级 delta 映射成 8 类事件：`handoff` / `update` / `final` / `tool_call` / `review_requested` / `heartbeat` / `error` / `done`。
+   - 故事：「不用 `astream_events` 是因为 supervisor 拓扑下事件太碎，UI 端会被淹没；**节点级 delta 视图刚好对齐"哪个 specialist 在说话"的直觉**。`subgraphs=True` 是 LangGraph 1.0 的能力，让 specialist 内部的工具调用也能透到顶层 SSE，前端能看到'data_expert 正在调 get_kline'这种实时帧。」
 
 7. **Reflection 反思循环**（`graph/reflection.py`，可选启用，见 [ADR-0003](docs/adr/0003-reflection-loop.md)）
    - critic-first 子图：先用 LIGHT 模型给 supervisor 的最终答案打分（faithfulness / citation / completeness / structure / clarity 五维），不达标才用 HEAVY 模型重写，最多 2 轮。
    - 包成父 StateGraph 节点（`supervisor → reflection → END`），checkpointer 挂在父图上 —— **崩在 reflection 中途从 critic 节点恢复，不会从头跑一遍 6 个 specialist**。
    - `finalize` 节点返回**历史最高分草稿**而不是最新草稿，防止"过度修正"造成的回归。
    - 故事：「supervisor 的合成 prompt 已经写得很长了，再塞自检规则会稀释；**质量校验是分类任务，不该和创作任务挤在一个 LLM 调用里** —— 这就是为什么要单独切一个不同 tier 的 critic 出来。」
+
+8. **Human-in-the-Loop 真实可恢复**（`graph/research_supervisor.py` 的 `human_review` 节点 + `api/routes/supervisor.py` 的 approve/resume）
+   - `HITL_ENABLED=true` 时，supervisor 出 draft 后进入 `human_review` 节点，调用 LangGraph `interrupt()` 把状态完整 dump 到 checkpointer。
+   - SSE 实时探测 `state.next != ()` 并推 `review_requested` 事件，前端弹审核面板。
+   - 审核者点 **Approve** 或填写 **Revise feedback** 触发 `POST .../approve` / `.../resume`，通过 `Command(resume={"action":..., "feedback":...})` 把决策注入到 `interrupt()` 的返回值，graph 从断点续跑。
+   - **错误码分级**：404（thread 不存在）/ 409（thread 已完成）/ 500（checkpointer I/O 故障），前端可分别提示，不会把"thread 不存在"误显示成"已完成"。
+   - 故事：「金融场景禁止 AI 自动出投资建议——这是合规底线。所以 HITL 不是 mock，**进程重启都能从同一个 thread_id resume**，是 checkpointer 必须挂 Postgres / SQLite 而不是 in-memory的原因。」
+
+9. **Observability 三件套**（`api/middleware.py` + `observability/{logging,metrics,tracing}.py` + `api/routes/usage.py`）
+   - `RequestIdMiddleware` 给每个请求注入 UUID，并写入 HTTP 响应头 `X-Request-ID`、loguru 日志上下文、LangSmith trace 标签 —— **nginx 一个 ID 就能贯穿到具体 prompt**。
+   - `MetricsMiddleware` 累计 QPS、按 specialist 的调用次数、请求耗时直方图，由 `GET /metrics` 输出标准 Prometheus 文本。零额外依赖（手写 `_Counters`，不引 `prometheus_client`）。
+   - `UsageCallbackHandler` 走 `run_inline=True` 在 async 路径内联执行（避免 LangChain 默认的 `run_in_executor` 跨线程开销），把每次 `on_llm_end` 的 token 用量按 `(tier, model_name)` 累加 + 用 `MODEL_PRICING` 估成本，由 `GET /api/usage` 暴露。
+   - 故事：「LLM 应用'盲目调'的代价太高了——一次实验跑爆几百块的事故每周都在群里看见。**所以 token 和 trace 必须从 day 1 就有，而非等出事再补**。」
 
 ---
 
@@ -217,22 +283,21 @@ docker compose logs -f app
 
 | # | 决定 | 何时该读 |
 |---|---|---|
-| [0001](docs/adr/0001-faiss-over-chroma.md) | 向量库从 ChromaDB 迁到 FAISS | 想问"为什么不用 Chroma"时 |
-| [0002](docs/adr/0002-knowledge-server-inprocess.md) | knowledge_expert 走 in-process 不走 MCP-stdio | 想问"为什么 6 个 server 里偏偏这一个不走子进程"时 |
-| [0003](docs/adr/0003-reflection-loop.md) | Reflection 作为子图挂 supervisor 后面 | 想问"为什么不把反思放 supervisor prompt 里"时 |
+| [0001](docs/adr/0001-faiss-over-chroma.md) | 向量库从 ChromaDB 迁到 FAISS | "为什么不用 Chroma" |
+| [0002](docs/adr/0002-knowledge-server-inprocess.md) | knowledge_expert 走 in-process 不走 MCP-stdio | "为什么 6 个 server 里偏偏这一个不走子进程" |
+| [0003](docs/adr/0003-reflection-loop.md) | Reflection 作为子图挂 supervisor 后面 | "为什么不把反思放 supervisor prompt 里" |
 
 ---
 
-## 七、已知限制 / 不完整的地方（坦诚版）
+## 七、已知限制 / 未来扩展
 
 | 项 | 现状 | 计划 |
 |---|---|---|
-| **Reflection 反思循环**（Writer / Reasoner 自评-重写） | ✅ 已落地为 `graph/reflection.py` 子图，通过 `REFLECTION_ENABLED=true` 开启；默认 OFF 以省 LLM 配额，详见 [ADR-0003](docs/adr/0003-reflection-loop.md) | 加 LangSmith 评估集量化 ON / OFF 的答案质量 delta |
-| **knowledge_server 不走 MCP-stdio** | Windows asyncio + 重 ML 库 import 死锁，已切到 in-process 同源代码，详见 [ADR-0002](docs/adr/0002-knowledge-server-inprocess.md) | 后续可以尝试 fastmcp 的 SSE/HTTP transport，绕开 stdio JSON-RPC 帧 |
-| **Redis 引入但未消费** | docker-compose 起了 Redis，但 `RateLimitMiddleware` 仍是进程内 dict | 接 Redis 做分布式限流 + LLM response 缓存 |
-| **SSE keep-alive（研究流）** | ✅ `/research/stream` 在图空闲时按 `SSE_RESEARCH_HEARTBEAT_SECONDS`（默认 15s）发 `phase=heartbeat`，`0` 关闭 | 前端可忽略 heartbeat，仅依赖 `phase=done` |
-| **没有 LangSmith 自动化评估集** | tracing 已接，但没建 dataset/experiment | 用 LangSmith Evaluation 做 supervisor 路由准确率 + RAG 召回率回归测试 |
-| **`pgvector/pgvector:pg16` 引擎未消费** | docker-compose 装了，但 RAG 走 FAISS，pgvector 是预留 | 把长期记忆从 InMemoryStore 升级成 pgvector embeddings + ANN 召回 |
+| **knowledge_server 不走 MCP-stdio** | 🟡 工程取舍：Windows + Python 3.13 + asyncio + heavy ML import 链有系统性死锁，已切到 in-process 同源代码——业务逻辑不变，MCP 协议契约保留在 `@mcp.tool` 装饰器上作为文档。详见 [ADR-0002](docs/adr/0002-knowledge-server-inprocess.md) | 若未来需跨进程/跨语言，可换 fastmcp 的 SSE/HTTP transport 绕开 stdio JSON-RPC 帧 |
+| **LangSmith 评估集已建但未上 CI** | ✅ `evals/` 下有 supervisor routing 评估套件（30 labeled examples + 路由准确率 / 回复质量两个 evaluator + `python -m evals.eval_supervisor` 入口）；启动时 `setup_tracing()` 自动注入 LangChain env vars | 写一个 GitHub Actions：每个 PR 触发评估、路由准确率回归 >5% 直接红 |
+| **pgvector 引擎装了但未用作向量搜索后端** | 🟡 设计取舍：docker-compose 用 `pgvector/pgvector:pg16` 是为给 Postgres checkpointer + KV-style 长期记忆提供后端；RAG 走本地 FAISS 因为 demo 不依赖外部服务 | 当用户研究量 >100 条时，把"语义相似历史研究召回"切到 pgvector + ANN |
+| **LLM 响应缓存** | ❌ 未实现 | 金融场景幻觉缓存有风险（同一问题不同时间答案应不同），上线前需做"按问题类型条件缓存"，工作量中等 |
+| **Reflection 评估 delta** | ✅ 子图已落地（`REFLECTION_ENABLED=true`），但尚未量化 ON/OFF 答案质量差异 | 需 LLM 预算跑 30 examples × 2 组对照 |
 
 ---
 
@@ -241,60 +306,70 @@ docker compose logs -f app
 ```
 src/research_agent/
 ├── agents/              # Specialist 构造器 + 角色 prompt
+│   ├── __init__.py      # build_xxx_expert + SPECIALIST_BUILDERS 全 re-export
 │   └── specialists.py   # 6 个 build_xxx_expert + KNOWLEDGE/REPORT/NEWS/... PROMPT
 ├── api/                 # FastAPI 层
-│   ├── middleware.py    # Auth + 进程内 RateLimit
-│   ├── routes/          # health / knowledge / memory / sentiment / supervisor
-│   └── schemas.py       # Pydantic 请求/响应（含 SSE event 模型）
+│   ├── middleware.py    # Auth + RateLimit + RequestTimeout + RequestId
+│   ├── dependencies.py  # FastAPI Depends 工厂
+│   ├── routes/
+│   │   ├── health.py    # /health
+│   │   ├── knowledge.py # /api/knowledge/{ingest,search,collections}
+│   │   ├── memory.py    # /api/memory/{context,history,preferences}
+│   │   ├── sentiment.py # /api/sentiment/{analyze, report/{symbol}}
+│   │   ├── supervisor.py# /api/supervisor/{chat,research,research/stream,research/{tid}/approve,…}
+│   │   └── usage.py     # /api/usage + /metrics
+│   └── schemas.py       # Pydantic 请求/响应（含 SSE 8 类事件枚举）
 ├── graph/
 │   ├── minimal_supervisor.py    # Phase-3 教学版（math/time/text 三 toy 工具）
-│   ├── research_supervisor.py   # Phase-4 产品版（六 specialist + HEAVY supervisor，可选包 reflection 子图）
+│   ├── research_supervisor.py   # Phase-4 产品版（六 specialist + HEAVY supervisor + 可选 reflection + 可选 HITL human_review 节点）
 │   └── reflection.py            # Phase-5 critic-first 反思子图（Writer / Reasoner 自评-重写）
 ├── llm/
-│   ├── provider.py      # ModelRouter（基于 LiteLLM，含 fallback chain）
+│   ├── provider.py      # ModelRouter（三档 tier + with_fallbacks 降级链；用 langchain-openai 直连 OpenAI/DeepSeek/Dashscope 兼容端点）
 │   ├── tier.py          # ModelTier + AgentName + AGENT_TIER_MAP
-│   ├── callbacks.py     # token usage / cost callback
-│   └── usage_tracker.py
+│   └── usage_tracker.py # UsageTracker + UsageCallbackHandler(run_inline=True)
 ├── memory/
 │   ├── checkpointer.py  # PG → SQLite → Memory 三级 fallback
 │   ├── _pg_reachability.py  # TCP 探测预检
-│   ├── store.py         # 长期 InMemoryStore（user prefs + recent_research）
+│   ├── store.py         # 长期 InMemoryStore / SqliteStore / PostgresStore
 │   └── manager.py
-├── mcp_servers/         # 6 个 fastmcp server（5 个走 stdio，1 个走 in-process）
-│   ├── code_server.py
-│   ├── echo_server.py
-│   ├── fin_data_server.py
-│   ├── knowledge_server.py
-│   ├── news_server.py
-│   ├── news_sentiment_server.py
-│   ├── pdf_report_server.py
-│   └── client_factory.py        # 统一 loader（含 in-process knowledge_tools）
+├── mcp_servers/         # 5 个走 stdio + 1 个 in-process（详见 ADR-0002）
+│   ├── code_server.py             # Python 沙箱执行
+│   ├── echo_server.py             # 调试用
+│   ├── fin_data_server.py         # akshare 行情/基本面
+│   ├── knowledge_server.py        # FAISS+BM25 RAG（生产入口在 tools/knowledge_tools.py，in-process）
+│   ├── news_server.py             # 东方财富 / 财联社新闻
+│   ├── news_sentiment_server.py   # SnowNLP + 金融词典量化情感
+│   ├── pdf_report_server.py       # 生成 PDF 简报
+│   └── client_factory.py          # 统一 loader（含 in-process knowledge_tools）
 ├── observability/
-│   ├── logging.py       # loguru 配置
-│   └── tracing.py       # LangSmith 集成
-├── rag/
-│   └── reranker.py      # bge-reranker-base cross-encoder（可选 disable）
+│   ├── logging.py       # loguru 配置（注入 request_id 上下文）
+│   ├── metrics.py       # Prometheus 文本格式 + MetricsMiddleware（零依赖）
+│   └── tracing.py       # LangSmith setup_tracing()，lifespan 启动时自动调用
+├── rag/                 # 每个文件一职责
+│   ├── retriever.py     # BM25Index + hybrid_rrf_fuse（加权 RRF）
+│   ├── grader.py        # RetrievalGrader（high / medium / low 启发式）
+│   ├── query_rewriter.py# LLM-based 查询改写（Corrective-RAG 改写一环）
+│   ├── reranker.py      # bge-reranker-base cross-encoder（可选 disable）
+│   ├── embedder.py / chunker.py / loader.py
+│   └── __init__.py      # 全公开 API re-export
+├── static/
+│   └── index.html       # 零依赖单文件 Chat UI（HTML + 原生 JS + SSE + HITL 审核面板）
 ├── tools/
 │   ├── native.py        # toy @tool（calculate / time / word_count）
 │   └── knowledge_tools.py  # in-process 暴露 knowledge_server 同名 4 工具
 ├── config.py            # pydantic-settings（LLM/Database/Observability 三层子配置）
 └── main.py              # FastAPI app factory + lifespan + CLI 入口
 
-scripts/                  # 10 demos + 6 smoke tests
-tests/                    # unit + integration（参见 pytest 徽章）
+evals/                    # LangSmith 评估套件（30 labeled examples + 路由 + 回复质量 evaluator）
+scripts/                  # 10 demos + 6 smoke tests + 1 seed（seed_real_research_reports.py 灌真实 A 股年报）
+tests/                    # unit（275 passing）+ integration（参见 pytest 徽章）
 ```
 
 ---
 
-## 九、贡献 / 反馈
+## 九、其他
 
-这是一个面向**面试演示和学习**的工程，欢迎围绕以下方向 PR：
-- 把 Redis 接进限流 + LLM cache
-- 增加更多业务 specialist（如 macro_expert / fund_flow_expert）
-- LangSmith 自动化评估集（量化 reflection ON / OFF 的答案质量 delta）
-
----
-
-## License
-
-MIT
+- LLM 响应缓存（条件缓存，避开金融场景的"过期数据"陷阱）
+- 增加更多业务 specialist（如 `macro_expert` / `fund_flow_expert`）
+- LangSmith 自动化评估接入 GitHub Actions（量化 reflection ON / OFF 的答案质量 delta）
+- LangGraph 1.0 → 2.0 弃用迁移（`langgraph.prebuilt.create_react_agent` → `langchain.agents.create_agent`）
