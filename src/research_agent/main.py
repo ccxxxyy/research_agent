@@ -193,26 +193,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Graceful shutdown: release resources in reverse order ---
     logger.info("Shutting down: releasing resources...")
 
-    # Close memory store connection pool
-    if hasattr(memory_store, "conn") and hasattr(memory_store.conn, "close"):
+    async def _close_conn(owner_name: str, conn: object) -> None:
+        """Close a connection-like object, awaiting it iff its ``close``
+        is a coroutine function.
+
+        Postgres pools expose a sync ``close``; ``aiosqlite.Connection``
+        and a few LangGraph async stores expose an *async* ``close`` —
+        calling those without ``await`` raises a ``RuntimeWarning``
+        ("coroutine was never awaited") and the underlying socket may
+        leak. We detect the variant at runtime and dispatch correctly.
+        """
+        close_fn = getattr(conn, "close", None)
+        if close_fn is None:
+            return
         try:
-            memory_store.conn.close()
-            logger.info("Memory store connection pool closed.")
-        except Exception as e:
-            logger.warning("Error closing memory store pool: {}", e)
+            if asyncio.iscoroutinefunction(close_fn):
+                await close_fn()
+            else:
+                close_fn()
+            logger.info("{} closed.", owner_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Error closing {}: {}", owner_name, exc)
+
+    # Close memory store connection pool / async sqlite connection
+    if hasattr(memory_store, "conn"):
+        await _close_conn("Memory store connection", memory_store.conn)
 
     # Close checkpointer connection pool / sqlite connection
     if hasattr(checkpointer, "conn"):
-        conn = checkpointer.conn
-        if hasattr(conn, "close"):
-            try:
-                if asyncio.iscoroutinefunction(getattr(conn, "close", None)):
-                    await conn.close()
-                else:
-                    conn.close()
-                logger.info("Checkpointer connection closed.")
-            except Exception as e:
-                logger.warning("Error closing checkpointer connection: {}", e)
+        await _close_conn("Checkpointer connection", checkpointer.conn)
 
     logger.info("Shutdown complete.")
 

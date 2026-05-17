@@ -5,7 +5,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-275%20passing-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-281%20passing-brightgreen.svg)](#测试)
 
 ---
 
@@ -98,7 +98,7 @@
 | Web | `fastapi` + `uvicorn` + `sse-starlette`，Pydantic v2 严格校验 |
 | 数据源 | `akshare`（A 股行情/基本面/公告/新闻）+ `httpx` + `pypdf`（cninfo PDF 解析）+ `snownlp`（中文情感） |
 | 可观测 | `loguru` 结构化日志 + `langsmith` tracing |
-| 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（275 tests） |
+| 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（281 tests） |
 
 ---
 
@@ -141,7 +141,7 @@ SSE_RESEARCH_HEARTBEAT_SECONDS=5
 
 ```bash
 .venv/Scripts/python.exe -m pytest -m "not network and not slow" -q
-# 期望：275 passed
+# 期望：281 passed, 14 deselected（不带 network/slow）
 ```
 
 `network` 标记下的测试会真打 akshare/cninfo 等外网，`slow` 标记下的测试会下载 bge embedder 权重（~100MB）。这两组在 CI 里默认跳过。
@@ -180,6 +180,39 @@ docker compose up -d
 # 起：app(8080) + postgres(5432) + redis(6379)
 docker compose logs -f app
 ```
+
+### 4.6 实测基线
+
+下面这组数字来自一次真实端到端运行，可作为机器跑通后的对照基线：
+
+| 指标 | 实测 |
+|---|---|
+| 单元测试 | **281 passed, 14 deselected**（`-m "not network and not slow"`），耗时 ~26 s |
+| 启动到 ready | ~13 s（首次拉 MCP-stdio + 编译 supervisor，含 4 个子进程冷启） |
+| `/health` | 单机无 PG / 无 Redis：`status=degraded`，自动落到 `AsyncSqliteSaver` + `InMemoryStore`，**功能完整** |
+| Specialist 在线数 | **6 / 6**（fin_data:5 / pdf_report:4 / code:1 / knowledge:4 / news:5 / sentiment:2 = **21 个工具**） |
+| 知识库 `prod_reports` 大小 | **822 chunks**（寒武纪 / 中际旭创 / 兆易创新 年报；seed 脚本自动建） |
+| 端到端复合查询<br>（"寒武纪近 5 日股价 + 知识库 2024 业务进展"） | **192 s**，`specialists_reached=['data_expert','knowledge_expert']`，`msg_count=12`，输出含 akshare 实时行情 + 年报原文逐字引用 |
+| 单次复合查询 LLM 成本 | **~$0.090 USD**（40 calls / 122,310 tokens；heavy 11 + medium 23 + light 6） |
+| 模型路由 | 实测路由到 `deepseek-v4-pro`（HEAVY+MEDIUM 共 34 calls / $0.089）+ `qwen3.6-plus`（LIGHT 6 calls / $0.0007） |
+
+> **如何复现**：起服务 → `python scripts/seed_real_research_reports.py`（首次 ~5 min）→ Chat UI 或 `POST /api/supervisor/research` 提同样的复合问题。
+
+### 4.7 Windows 客户端常见坑
+
+**PowerShell 默认是 GBK 编码**，发 JSON 中文请求 / 打印中文 SSE 会乱码。两个解决方法：
+
+```powershell
+# 方法 A：临时把 PowerShell 当次会话切到 UTF-8（推荐）
+chcp 65001 | Out-Null
+$env:PYTHONIOENCODING = "utf-8"
+
+# 方法 B：用 Python 客户端直接发，绕过 shell 编码（演示脚本推荐）
+$body = '{"message":"中文请求"}'
+.venv\Scripts\python.exe -c "import urllib.request,json,sys; sys.stdout.reconfigure(encoding='utf-8'); ..."
+```
+
+服务端始终按 UTF-8 解析，问题只在客户端 → 服务端的请求体编码上。
 
 ---
 
@@ -362,7 +395,7 @@ src/research_agent/
 
 evals/                    # LangSmith 评估套件（30 labeled examples + 路由 + 回复质量 evaluator）
 scripts/                  # 10 demos + 6 smoke tests + 1 seed（seed_real_research_reports.py 灌真实 A 股年报）
-tests/                    # unit（275 passing）+ integration（参见 pytest 徽章）
+tests/                    # unit（281 passing）+ integration（参见 pytest 徽章）
 ```
 
 ---
