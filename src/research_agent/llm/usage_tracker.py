@@ -107,7 +107,22 @@ class UsageCallbackHandler(BaseCallbackHandler):
     The handler extracts ``token_usage`` from ``LLMResult.llm_output``
     (the dict OpenAI-compatible providers populate) and records it
     under ``(tier_label, model_name)``.
+
+    Performance note
+    ----------------
+    The recording path is fast and non-blocking (a single
+    ``threading.Lock`` acquire + a dict update). We set
+    ``run_inline = True`` so LangChain executes us **directly on the
+    event loop** when the wrapped LLM is invoked via ``ainvoke`` /
+    ``astream`` — instead of paying the default ``run_in_executor``
+    round-trip for every LLM call. For sync ``invoke`` callers nothing
+    changes.
     """
+
+    # Run synchronously in the async dispatch path. Safe because the
+    # body is non-blocking (lock + dict update + structured log). See
+    # ``langchain_core.callbacks.base.BaseCallbackHandler.run_inline``.
+    run_inline: bool = True
 
     def __init__(self, tracker: UsageTracker, *, tier_label: str = "") -> None:
         super().__init__()

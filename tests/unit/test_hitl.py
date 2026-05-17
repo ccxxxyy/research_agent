@@ -34,11 +34,25 @@ from langgraph.store.memory import InMemoryStore
 
 
 class _FakeState:
-    """Minimal stand-in for a LangGraph StateSnapshot."""
+    """Minimal stand-in for a LangGraph StateSnapshot.
 
-    def __init__(self, *, is_interrupted: bool = False) -> None:
+    Real ``StateSnapshot.values`` is always a dict (never ``None``).
+    Non-existent threads are signalled by ``aget_state`` returning
+    ``None``; completed threads have empty ``next`` but populated
+    ``values``; interrupted threads have a non-empty ``next``.
+    """
+
+    def __init__(
+        self,
+        *,
+        is_interrupted: bool = False,
+        is_empty: bool = False,
+    ) -> None:
         self.next = ("human_review",) if is_interrupted else ()
         self.tasks = ()
+        self.values = (
+            {} if is_empty else {"messages": [AIMessage(content="draft")]}
+        )
 
 
 class _HITLStreamGraph:
@@ -320,3 +334,107 @@ class TestResumeRoute:
             )
 
         assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Thread-state error classification (P1-C)
+# ---------------------------------------------------------------------------
+
+
+class _AbsentThreadGraph:
+    """``aget_state`` returns ``None`` — thread does not exist."""
+
+    async def aget_state(self, config: dict) -> None:
+        return None
+
+    async def ainvoke(self, inputs: Any, config: dict | None = None) -> dict:
+        return {"messages": []}
+
+
+class _EmptyStateGraph:
+    """``aget_state`` returns a state with no ``next`` AND empty values.
+
+    LangGraph's PostgresStore / SqliteStore can technically return an
+    empty snapshot for an unknown thread_id (depending on backend
+    semantics) instead of ``None``. We treat that as "does not exist".
+    """
+
+    async def aget_state(self, config: dict) -> _FakeState:
+        return _FakeState(is_interrupted=False, is_empty=True)
+
+    async def ainvoke(self, inputs: Any, config: dict | None = None) -> dict:
+        return {"messages": []}
+
+
+class _CheckpointerFailingGraph:
+    """``aget_state`` raises — emulates DB / checkpointer failure."""
+
+    async def aget_state(self, config: dict):
+        raise RuntimeError("checkpointer DB unreachable")
+
+    async def ainvoke(self, inputs: Any, config: dict | None = None) -> dict:
+        return {"messages": []}
+
+
+class TestThreadStateErrorMatrix:
+    """Verify ``_verify_thread_interrupted`` produces the right status code."""
+
+    @pytest.mark.asyncio
+    async def test_approve_404_when_thread_does_not_exist(self) -> None:
+        graph = _AbsentThreadGraph()
+        app = _build_hitl_app(graph)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(
+                "/api/supervisor/research/missing-thread/approve",
+                json={"feedback": ""},
+            )
+        assert r.status_code == 404
+        assert "does not exist" in r.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_approve_404_when_state_is_empty(self) -> None:
+        """Empty state (no next, no values) is treated as non-existent."""
+        graph = _EmptyStateGraph()
+        app = _build_hitl_app(graph)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(
+                "/api/supervisor/research/empty-thread/resume",
+                json={"feedback": ""},
+            )
+        assert r.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_approve_500_when_checkpointer_fails(self) -> None:
+        graph = _CheckpointerFailingGraph()
+        app = _build_hitl_app(graph)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(
+                "/api/supervisor/research/any-thread/approve",
+                json={"feedback": ""},
+            )
+        assert r.status_code == 500
+        assert "checkpointer DB unreachable" in r.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_resume_409_message_says_completed(self) -> None:
+        """Existing but terminated thread should report 409 with a
+        message that clarifies the thread isn't gone, just done."""
+        graph = _CompletedGraph()
+        app = _build_hitl_app(graph)
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            r = await client.post(
+                "/api/supervisor/research/completed-thread/resume",
+                json={"feedback": ""},
+            )
+        assert r.status_code == 409
+        detail = r.json()["detail"].lower()
+        assert "not paused" in detail
+        assert "already" in detail

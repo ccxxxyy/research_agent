@@ -746,22 +746,56 @@ async def supervisor_research_stream(
 async def _verify_thread_interrupted(
     graph, thread_id: str
 ) -> None:
-    """Raise 409 if the thread is NOT in an interrupted state."""
+    """Raise the correct HTTP error if the thread is not awaiting review.
+
+    Status code matrix:
+
+    * ``404`` — checkpointer has *no record* of ``thread_id``
+      (``aget_state`` returns ``None`` or a state with empty
+      ``values`` and empty ``next``). The thread never existed.
+    * ``409`` — the thread exists but is *not paused for review*
+      (``state.next`` is empty). The graph has already terminated.
+    * ``500`` — the checkpointer itself errored out (DB
+      unreachable, schema mismatch, etc.). Caller can retry.
+    """
     cfg = _graph_config(thread_id, None)
     try:
         state = await graph.aget_state(cfg)
     except Exception as exc:
+        # Underlying checkpointer / DB failure — distinct from a
+        # missing thread, so surface as a true 500.
+        logger.exception(
+            "HITL: checkpointer failed reading thread state: {}", thread_id
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Cannot read graph state: {exc}",
         ) from exc
 
-    if not state or not getattr(state, "next", None):
+    if state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread '{thread_id}' does not exist.",
+        )
+
+    state_next = getattr(state, "next", None)
+    state_values = getattr(state, "values", None) or {}
+
+    # An "empty" state (no values, no next) means the checkpointer
+    # never saw this thread_id — equivalent to "not found".
+    if not state_next and not state_values:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread '{thread_id}' does not exist.",
+        )
+
+    if not state_next:
+        # Thread is real but already terminated.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Thread '{thread_id}' is not paused for human review. "
-                "It may have already been approved or never existed."
+                "It has already been approved or completed."
             ),
         )
 
