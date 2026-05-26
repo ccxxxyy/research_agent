@@ -1,21 +1,15 @@
-"""Phase-4.5 API tests — research-supervisor HTTP endpoints.
+"""API 测试 — research-supervisor HTTP 端点。
 
-These tests are deliberately *not* marked ``integration`` because
-they substitute a fake ``CompiledStateGraph`` for the real
-research-supervisor graph via FastAPI's dependency-overrides. No
-LLM, no MCP subprocess, no network — just the HTTP-layer contract.
+这些测试刻意不标记为 ``integration``，因为它们通过 FastAPI 的dependency-overrides 用假的 ``CompiledStateGraph`` 替换了真实的research-supervisor 图。
+无 LLM、无 MCP 子进程、无网络 — 仅测试HTTP 层契约。
 
-What we lock down
+锁定的行为
 -----------------
-  * ``POST /api/supervisor/research`` returns the right JSON shape,
-    resolves ``thread_id`` when omitted, and reports the distinct
-    specialists it saw the supervisor route to.
-  * ``POST /api/supervisor/research/stream`` emits SSE frames in the
-    expected order (``handoff`` → ``final`` → ``done``), optional idle
-    ``heartbeat`` pings (see ``SSE_RESEARCH_HEARTBEAT_SECONDS``), and
-    carries the ``X-Thread-ID`` header.
-  * The 503 fallback path fires when the lifespan failed to build
-    the graph (``app.state.research_supervisor_graph is None``).
+  * ``POST /api/supervisor/research`` 返回正确的 JSON 结构，
+    省略时自动解析 ``thread_id``，并报告 supervisor 路由到的不同专家。
+  * ``POST /api/supervisor/research/stream`` 按预期顺序发出 SSE 帧(``handoff`` → ``final`` → ``done``)，
+    可选的空闲 ``heartbeat``心跳（参见 ``SSE_RESEARCH_HEARTBEAT_SECONDS``），以及携带``X-Thread-ID`` 响应头。
+  * 当 lifespan 未能构建图时（``app.state.research_supervisor_graph is None``），触发 503 回退路径。
 """
 
 from __future__ import annotations
@@ -43,25 +37,22 @@ from research_agent.api.routes.supervisor import router as supervisor_router
 
 
 # ---------------------------------------------------------------------------
-# Fake graph — mimics the CompiledStateGraph surface we actually call.
+# 模拟图 — 模仿我们实际调用的 CompiledStateGraph 接口。
 # ---------------------------------------------------------------------------
 
 
 class _FakeGraph:
-    """Minimal stand-in for a compiled LangGraph app.
+    """编译后 LangGraph 应用的最小替身。
 
-    We implement only ``ainvoke`` and ``astream``. Both are driven
-    by a scripted message trace injected at construction time so
-    each test can assert the exact routing the endpoint observed.
+    仅实现 ``ainvoke`` 和 ``astream``。两者都由构造时注入的预设消息序列驱动，使每个测试可以断言端点观察到的精确路由。
     """
 
     def __init__(self, scripted_messages: list[Any]) -> None:
         self._scripted = scripted_messages
 
     async def ainvoke(self, inputs: dict, config: dict | None = None) -> dict:
-        # The endpoint passes a HumanMessage as the first input; we
-        # echo it back prepended to the scripted AI messages so
-        # message_count is realistic.
+        # 端点将 HumanMessage 作为第一个输入传入；我们将其回显并
+        # 前置于预设的 AI 消息之前，使 message_count 更接近真实情况。
         human = inputs["messages"][0]
         return {"messages": [human, *self._scripted]}
 
@@ -80,7 +71,7 @@ class _FakeGraph:
 
 
 class _SlowFakeGraph(_FakeGraph):
-    """Adds a fixed delay before each scripted update to simulate LLM idle."""
+    """在每个预设更新前添加固定延迟以模拟 LLM 空闲。"""
 
     async def astream(
         self,
@@ -98,7 +89,7 @@ class _SlowFakeGraph(_FakeGraph):
 
 
 def _handoff(name: str) -> AIMessage:
-    """Build an AIMessage that looks like a supervisor hand-off call."""
+    """构建一条看起来像 supervisor 移交调用的 AIMessage。"""
     return AIMessage(
         content="",
         name="supervisor",
@@ -119,7 +110,7 @@ def _reflection_plain(text: str) -> AIMessage:
 
 
 class _SpyMemory(MemoryManager):
-    """Records ``save_research_result`` calls; optional fake history preamble."""
+    """记录 ``save_research_result`` 调用；可选的假历史前言。"""
 
     def __init__(
         self, *, fake_recent_research: list[dict[str, str]] | None = None
@@ -154,7 +145,7 @@ class _SpyMemory(MemoryManager):
 
 
 # ---------------------------------------------------------------------------
-# App fixture with overridable research-supervisor dep
+# 可覆盖 research-supervisor 依赖的应用 fixture
 # ---------------------------------------------------------------------------
 
 
@@ -163,19 +154,15 @@ def _build_test_app(
     *,
     memory: MemoryManager | None = None,
 ) -> FastAPI:
-    """Construct a trimmed FastAPI app with only the supervisor router.
+    """构建一个仅包含 supervisor 路由的精简 FastAPI 应用。
 
-    We do NOT boot the production lifespan (which would hit Chroma,
-    Postgres, MCP). Instead we register just the router we care
-    about and wire the dependency directly via ``dependency_overrides``.
+    不启动生产 lifespan（它会连接 Chroma、Postgres、MCP）。而是只注册我们关心的路由，并通过 ``dependency_overrides``直接注入依赖。
     """
     app = FastAPI()
     app.include_router(supervisor_router)
 
     if graph is None:
-        # Simulate the "MCP failed, graph was never built" case by
-        # leaving ``app.state.research_supervisor_graph`` unset and
-        # letting the real dependency raise the 503.
+        # 模拟 "MCP 失败，图未能构建" 的情况：不设置 ``app.state.research_supervisor_graph``，让真实依赖抛出 503。
         pass
     else:
         app.dependency_overrides[get_research_supervisor_graph] = lambda: graph
@@ -183,17 +170,14 @@ def _build_test_app(
     if memory is not None:
         app.dependency_overrides[get_memory_manager] = lambda: memory
 
-    # The minimal-supervisor dep isn't exercised here, but leaving
-    # it unset would make a typo in the test URL surface as a
-    # confusing 500 instead of 404; wire a trivial override so the
-    # routing table is fully satisfied.
+    # minimal-supervisor 依赖在这里不会被执行，但不设置的话测试 URL 中的拼写错误会表现为令人困惑的 500 而非 404；注入一个简单覆盖以确保路由表完整。
     app.dependency_overrides[get_supervisor_graph] = lambda: graph
 
     return app
 
 
 # ---------------------------------------------------------------------------
-# /api/supervisor/research  (non-streaming JSON)
+# /api/supervisor/research（非流式 JSON）
 # ---------------------------------------------------------------------------
 
 
@@ -222,9 +206,9 @@ class TestResearchJSON:
         assert r.status_code == 200
         body = r.json()
         assert body["reply"].startswith("### 核心发现")
-        assert body["thread_id"]  # resolved to a fresh UUID
+        assert body["thread_id"]  # 解析为一个新的 UUID
         assert body["specialists_reached"] == ["data_expert", "report_expert"]
-        assert body["message_count"] >= 5  # human + scripted
+        assert body["message_count"] >= 5  # 人类消息 + 预设消息
 
     @pytest.mark.asyncio
     async def test_thread_id_is_echoed_when_supplied(self) -> None:
@@ -244,9 +228,7 @@ class TestResearchJSON:
 
     @pytest.mark.asyncio
     async def test_503_when_graph_unavailable(self) -> None:
-        """If the lifespan failed to build the supervisor, routes
-        should surface a 503 — not a 500 — so clients can retry
-        without parsing a stack trace."""
+        """如果 lifespan 未能构建 supervisor，路由应返回 503 — 而非 500 — 这样客户端可以直接重试，无需解析堆栈跟踪。"""
         app = _build_test_app(graph=None)
 
         async with AsyncClient(
@@ -280,10 +262,9 @@ class TestResearchJSON:
 
 
 def _parse_sse(body: bytes) -> list[dict]:
-    """Decode an SSE payload into a list of parsed JSON events.
+    """将 SSE 负载解码为解析后的 JSON 事件列表。
 
-    SSE frames are separated by ``\\n\\n`` and each ``data:`` line
-    contains one JSON blob. We ignore comment/keep-alive lines.
+    SSE 帧由 ``\\n\\n`` 分隔，每行 ``data:`` 包含一个 JSON 对象。忽略注释/保活行。
     """
     events: list[dict] = []
     text = body.decode("utf-8")
@@ -325,27 +306,25 @@ class TestResearchSSE:
         events = _parse_sse(r.content)
         phases = [e["phase"] for e in events]
 
-        # 1. First frame is the "stream opened" update we emit
-        #    before any graph work, so clients see motion fast.
+        # 1. 第一帧是我们在任何图工作之前发出的"流已打开"更新，以便客户端尽快看到进度。
         assert phases[0] == "update"
-        # 2. At least one handoff per specialist, in order.
+        # 2. 每个专家至少有一次移交，按顺序排列。
         handoff_specialists = [
             e["metadata"]["specialist"]
             for e in events
             if e["phase"] == "handoff"
         ]
         assert handoff_specialists == ["data_expert", "report_expert"]
-        # 3. Exactly one ``final`` phase (the first supervisor plain
-        #    message with no tool-calls).
+        # 3. 恰好一个 ``final`` 阶段（第一条无工具调用的 supervisor纯文本消息）。
         final_frames = [e for e in events if e["phase"] == "final"]
         assert len(final_frames) == 1
         assert "final synthesis body" in final_frames[0]["content"]
-        # 4. Last phase is always ``done``.
+        # 4. 最后一个阶段始终是 ``done``。
         assert phases[-1] == "done"
 
     @pytest.mark.asyncio
     async def test_stream_opening_event_includes_available_specialists(self) -> None:
-        """First SSE frame echoes available_specialists so clients detect degradation."""
+        """第一个 SSE 帧回显 available_specialists，以便客户端检测降级情况。"""
         graph = _FakeGraph([_supervisor_final("ok")])
         app = _build_test_app(graph)
         app.state.available_specialists = ["data_expert", "news_expert"]
@@ -368,13 +347,13 @@ class TestResearchSSE:
 
     @pytest.mark.asyncio
     async def test_stream_emits_tool_call_from_subgraph(self) -> None:
-        """Specialist internal tool calls appear as ``tool_call`` SSE events."""
+        """专家内部的工具调用以 ``tool_call`` SSE 事件的形式出现。"""
 
         class _SubgraphFakeGraph(_FakeGraph):
             async def astream(
                 self, inputs: dict, config: dict | None = None, **kwargs: object
             ) -> AsyncIterator[tuple]:
-                # Opening: supervisor handoff
+                # 开场：supervisor 移交
                 yield (
                     (),
                     {
@@ -395,7 +374,7 @@ class TestResearchSSE:
                         }
                     },
                 )
-                # Subgraph: data_expert calls a tool
+                # 子图：data_expert 调用工具
                 yield (
                     ("data_expert",),
                     {
@@ -416,7 +395,7 @@ class TestResearchSSE:
                         }
                     },
                 )
-                # Final supervisor answer
+                # supervisor 最终回答
                 yield (
                     (),
                     {
@@ -454,8 +433,7 @@ class TestResearchSSE:
     async def test_stream_error_emits_error_phase(self) -> None:
         class _BoomGraph(_FakeGraph):
             async def astream(self, *a: Any, **kw: Any) -> AsyncIterator[dict]:
-                # Yield nothing before raising so we exercise the
-                # except branch of ``_research_event_stream``.
+                # 在抛出异常前不产出任何内容，以便测试 ``_research_event_stream`` 的 except 分支。
                 if False:
                     yield {}
                 raise RuntimeError("boom")
@@ -471,7 +449,7 @@ class TestResearchSSE:
                 json={"query": "go"},
             )
 
-        assert r.status_code == 200  # SSE is 200 even on async error
+        assert r.status_code == 200  # 即使异步出错，SSE 也返回 200
         events = _parse_sse(r.content)
         phases = [e["phase"] for e in events]
         assert "error" in phases
@@ -496,7 +474,7 @@ class TestResearchSSE:
     async def test_stream_emits_heartbeat_when_graph_idles(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Short heartbeat interval + slow graph ⇒ at least one ``heartbeat``."""
+        """较短的心跳间隔 + 慢速图 ⇒ 至少产生一个 ``heartbeat``。"""
 
         monkeypatch.setattr(
             supervisor_route,
@@ -596,7 +574,7 @@ class TestResearchSSE:
         ) as client:
             await client.post(
                 "/api/supervisor/research/stream",
-                json={"query": "q"},  # default user_id anonymous
+                json={"query": "q"},  # 默认 user_id 为匿名
             )
 
         assert spy.save_calls == []
@@ -668,14 +646,13 @@ class TestResearchSSE:
 
 
 # ---------------------------------------------------------------------------
-# Hand-off extractor unit-level sanity
+# 移交提取器单元级健全性检查
 # ---------------------------------------------------------------------------
 
 
 class TestSpecialistsReached:
-    """Guard the dedup / ordering contract of the helper used in the
-    JSON response. The helper is part of the public response shape
-    so we lock it down separately from the HTTP tests."""
+    """守护 JSON 响应中使用的辅助函数的去重/排序契约。
+    该辅助函数是公开响应结构的一部分，将其与 HTTP 测试分开锁定。"""
 
     def test_preserves_first_seen_order(self) -> None:
         from research_agent.api.routes.supervisor import _specialists_reached
@@ -684,7 +661,7 @@ class TestSpecialistsReached:
             HumanMessage(content="q"),
             _handoff("report_expert"),
             _handoff("data_expert"),
-            _handoff("report_expert"),  # duplicate, must be dropped
+            _handoff("report_expert"),  # 重复项，必须被去除
             AIMessage(content="done", name="supervisor"),
         ]
         assert _specialists_reached(msgs) == ["report_expert", "data_expert"]

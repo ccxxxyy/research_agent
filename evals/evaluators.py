@@ -1,13 +1,10 @@
-"""LangSmith evaluators for the research supervisor.
+"""研究 supervisor 的 LangSmith 评估器。
 
-Three evaluators score each experiment run:
+三个评估器为每次实验运行评分：
 
-1. **routing_accuracy** — deterministic Jaccard similarity between
-   expected and actual specialist sets.
-2. **reply_quality** — LLM-as-judge (LIGHT tier) scoring relevance,
-   completeness, and factuality on a 1-5 scale.
-3. **memory_persistence** — deterministic check that long-term memory
-   was written (or correctly skipped for anonymous users).
+1. routing_accuracy — 预期与实际专家集合之间的确定性 Jaccard 相似度。
+2. reply_quality — LLM 作为评判（LIGHT 层），对相关性、完整性和事实性进行 1-5 分评分。
+3. memory_persistence — 确定性检查：长期记忆是否已写入（或对匿名用户正确跳过）。
 """
 
 from __future__ import annotations
@@ -20,12 +17,12 @@ from langsmith.schemas import Example, Run
 
 
 # ---------------------------------------------------------------------------
-# 1. Routing accuracy (deterministic)
+# 1. 路由准确率（确定性）
 # ---------------------------------------------------------------------------
 
 
 def routing_accuracy(run: Run, example: Example) -> dict:
-    """Jaccard similarity between expected and actual specialists."""
+    """预期与实际专家集合之间的 Jaccard 相似度。"""
     expected = set(example.inputs.get("expected_specialists") or [])
     outputs = run.outputs or {}
     actual = set(outputs.get("specialists_reached") or [])
@@ -45,7 +42,7 @@ def routing_accuracy(run: Run, example: Example) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 2. Reply quality (LLM-as-judge)
+# 2. 回复质量（LLM 作为评判）
 # ---------------------------------------------------------------------------
 
 _JUDGE_PROMPT = """\
@@ -69,10 +66,9 @@ Respond ONLY with valid JSON (no markdown fences):
 
 
 def _build_reply_quality_evaluator(llm_caller):
-    """Factory: returns an evaluator that uses *llm_caller* for judging.
+    """工厂方法：返回一个使用 llm_caller 进行评判的评估器。
 
-    ``llm_caller`` must be an async callable ``(prompt: str) -> str``
-    that returns the raw LLM text response.
+    ``llm_caller`` 必须是一个异步可调用对象 ``(prompt: str) -> str``，返回原始 LLM 文本响应。
     """
 
     async def reply_quality(run: Run, example: Example) -> dict:
@@ -123,10 +119,9 @@ def _build_reply_quality_evaluator(llm_caller):
 
 
 def create_reply_quality_evaluator(*, model: str = "", api_key: str = "", api_base: str = ""):
-    """Convenience: build an evaluator backed by an OpenAI-compatible model.
+    """便捷方法：构建由 OpenAI 兼容模型支持的评估器。
 
-    Falls back to env vars ``OPENAI_API_KEY`` / ``OPENAI_API_BASE`` when
-    arguments are empty.
+    当参数为空时，回退到环境变量 ``OPENAI_API_KEY`` / ``OPENAI_API_BASE``。
     """
     from openai import AsyncOpenAI
 
@@ -137,7 +132,7 @@ def create_reply_quality_evaluator(*, model: str = "", api_key: str = "", api_ba
         client_kwargs["base_url"] = api_base
 
     client = AsyncOpenAI(**client_kwargs)
-    chosen_model = model or "gpt-4o-mini"
+    chosen_model = model or "qwen-plus"
 
     async def _call(prompt: str) -> str:
         resp = await client.chat.completions.create(
@@ -152,26 +147,26 @@ def create_reply_quality_evaluator(*, model: str = "", api_key: str = "", api_ba
 
 
 # ---------------------------------------------------------------------------
-# 3. Memory persistence (deterministic)
+# 3. 记忆持久化（确定性）
 # ---------------------------------------------------------------------------
 
 
 def memory_persistence(run: Run, example: Example) -> dict:
-    """Check that long-term memory was written when it should have been."""
+    """检查长期记忆是否在应写入时已被写入。"""
     user_id = example.inputs.get("user_id", "anonymous")
     outputs = run.outputs or {}
     reply = outputs.get("reply", "")
     memory_saved = outputs.get("memory_saved", False)
 
     if user_id == "anonymous":
-        # Anonymous users should NOT trigger a save
+        # 匿名用户不应触发保存
         score = 0.0 if memory_saved else 1.0
-        comment = "anonymous: correctly skipped" if score == 1.0 else "anonymous: unexpected save"
+        comment = "匿名用户: 正确跳过" if score == 1.0 else "匿名用户: 意外保存"
     elif not reply.strip():
         score = 1.0 if not memory_saved else 0.0
-        comment = "empty reply: save correctly skipped" if score == 1.0 else "empty reply: unexpected save"
+        comment = "空回复: 正确跳过保存" if score == 1.0 else "空回复: 意外保存"
     else:
         score = 1.0 if memory_saved else 0.0
-        comment = "saved correctly" if score == 1.0 else "MISSING: should have saved"
+        comment = "正确保存" if score == 1.0 else "缺失: 应已保存"
 
     return {"key": "memory_persistence", "score": score, "comment": comment}

@@ -1,4 +1,4 @@
-"""Phase-3: MCP echo server tools load and execute via stdio."""
+"""MCP echo server 工具通过 stdio 加载并执行。"""
 
 from __future__ import annotations
 
@@ -9,11 +9,10 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
 def _extract_text(value: object) -> str:
-    """Normalize a tool return into a plain string.
+    """将工具返回值规范化为纯字符串。
 
-    ``langchain_mcp_adapters`` may return either a scalar (older versions) or
-    a list of content blocks such as ``[{'type': 'text', 'text': 'ABC', ...}]``
-    (newer versions). We flatten both shapes for assertions.
+    ``langchain_mcp_adapters`` 可能返回标量（旧版本）或内容块列表，
+    如 ``[{'type': 'text', 'text': 'ABC', ...}]``（新版本）。将两种形式展平以便用于断言。
     """
     if isinstance(value, list):
         parts: list[str] = []
@@ -53,7 +52,7 @@ async def test_mcp_echo_tools_round_trip() -> None:
 
 
 def test_echo_upper_tool_logic_sync() -> None:
-    """Direct FastMCP-decorated call path is not exposed; smoke import only."""
+    """FastMCP 装饰器的直接调用路径未暴露；仅做冒烟导入测试。"""
     from research_agent.mcp_servers import echo_server as echo_mod
 
     assert echo_mod.mcp.name == "Echo"

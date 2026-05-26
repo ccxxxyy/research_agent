@@ -1,16 +1,14 @@
-"""Phase-4.4 unit tests — research supervisor graph compiles & wires correctly.
+"""单元测试 — 验证 research supervisor 图的编译与连线正确性。
 
-These tests deliberately avoid:
-  * real MCP subprocesses (no ``load_*_server_tools()`` calls),
-  * real network / LLM traffic (no ``graph.ainvoke``).
+这些测试刻意避免了：
+  * 真实 MCP 子进程（不调用 ``load_*_server_tools()``），
+  * 真实网络 / LLM 流量（不调用 ``graph.ainvoke``）。
 
-The goal is to guard the *wiring contract* of ``build_research_supervisor``:
-the set of specialists, input validation, and prompt adaptation. Heavy
-end-to-end coverage lives in:
+目标是守护 ``build_research_supervisor`` 的*连线契约*：专家集合、输入校验和提示词适配。重度端到端覆盖位于：
 
   * ``tests/unit/test_mcp_fin_data_server.py``
   * ``tests/unit/test_mcp_pdf_report_server.py``
-  * ``scripts/demo_financial_research.py`` (manual / nightly)
+  * ``scripts/demo_financial_research.py``（手动 / 夜间构建）
 """
 
 from __future__ import annotations
@@ -40,22 +38,20 @@ from research_agent.llm.provider import ModelRouter
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixture
 # ---------------------------------------------------------------------------
 
 
 def _fake_tool(name: str) -> BaseTool:
-    """Create a minimal BaseTool suitable for ``create_react_agent``.
+    """创建一个适用于 ``create_react_agent`` 的最小 BaseTool。
 
-    Using ``@tool`` keeps us on the same contract ``create_react_agent``
-    expects without dragging in a real MCP subprocess. The function body
-    is never invoked in these tests — we only check that the graph
-    compiles with the tools attached.
+    使用 ``@tool`` 装饰器保持与 ``create_react_agent`` 期望的相同契约，
+    而无需引入真实的 MCP 子进程。函数体在这些测试中不会被调用 —仅检查图能否在附加这些工具后成功编译。
     """
 
     @tool(name)
     def _t(payload: str) -> str:
-        """Fake tool; intentionally does nothing."""
+        """假工具；故意不执行任何操作。"""
         return payload
 
     return _t  # type: ignore[return-value]
@@ -110,7 +106,7 @@ def fake_news_tools() -> list[BaseTool]:
 
 @pytest.fixture
 def router() -> ModelRouter:
-    # Fake credentials — compile-time only, no network calls happen here.
+    # 假凭据 — 仅用于编译阶段，此处不会发生网络调用。
     cfg = LLMConfig(
         deepseek_api_key="sk-test-not-used-at-compile-time",
         deepseek_api_base="https://example.invalid/v1",
@@ -119,7 +115,7 @@ def router() -> ModelRouter:
 
 
 # ---------------------------------------------------------------------------
-# Specialist builder guard-rails
+# 专家构建器的护栏测试
 # ---------------------------------------------------------------------------
 
 
@@ -154,9 +150,9 @@ class TestSpecialistBuilders:
         self, router: ModelRouter, fake_data_tools: list[BaseTool]
     ) -> None:
         agent = build_data_expert(router, fake_data_tools)
-        # ``create_react_agent`` returns a compiled graph with ``ainvoke``.
+        # ``create_react_agent`` 返回一个包含 ``ainvoke`` 的已编译图。
         assert hasattr(agent, "ainvoke")
-        # The ``name`` is what ``langgraph_supervisor`` keys off of.
+        # ``name`` 是 ``langgraph_supervisor`` 用来匹配的键。
         assert getattr(agent, "name", None) == "data_expert"
 
     def test_report_expert_compiles_with_tools(
@@ -182,7 +178,7 @@ class TestSpecialistBuilders:
 
 
 # ---------------------------------------------------------------------------
-# Prompt assembly
+# 提示词组装
 # ---------------------------------------------------------------------------
 
 
@@ -202,7 +198,7 @@ class TestSupervisorPrompt:
         assert "knowledge_expert" in prompt
         assert "news_expert" in prompt
         assert "sentiment_expert" in prompt
-        # Section texts actually appended.
+        # 各节文本确实被追加。
         assert SUPERVISOR_PROMPT_DATA in prompt
         assert SUPERVISOR_PROMPT_REPORT in prompt
         assert SUPERVISOR_PROMPT_CODER in prompt
@@ -210,9 +206,8 @@ class TestSupervisorPrompt:
         assert SUPERVISOR_PROMPT_NEWS in prompt
 
     def test_missing_specialists_are_not_mentioned(self) -> None:
-        """Mentioning a specialist that doesn't exist in the team would
-        cause the supervisor to emit ``transfer_to_<missing>`` tool
-        calls that fail at runtime. This is the property we guard."""
+        """提及团队中不存在的专家会导致 supervisor 发出在运行时失败的
+        ``transfer_to_<missing>`` 工具调用。这就是要守护的属性。"""
         prompt = _build_supervisor_prompt(
             has_data=True,
             has_report=False,
@@ -229,7 +224,7 @@ class TestSupervisorPrompt:
         assert "sentiment_expert" not in prompt
 
     def test_knowledge_only_prompt_omits_other_experts(self) -> None:
-        """Symmetric guard for the knowledge_expert-only team."""
+        """针对仅含 knowledge_expert 团队的对称守护测试。"""
         prompt = _build_supervisor_prompt(
             has_data=False,
             has_report=False,
@@ -247,7 +242,7 @@ class TestSupervisorPrompt:
         assert "sentiment_expert" not in prompt
 
     def test_news_only_prompt_omits_other_experts(self) -> None:
-        """Symmetric guard for the news_expert-only team."""
+        """针对仅含 news_expert 团队的对称守护测试。"""
         prompt = _build_supervisor_prompt(
             has_data=False,
             has_report=False,
@@ -265,12 +260,9 @@ class TestSupervisorPrompt:
         assert "sentiment_expert" not in prompt
 
     def test_rules_always_included(self) -> None:
-        """The routing rules ("hand off one subtask at a time", "never
-        invent numbers", etc.) are non-negotiable — they must appear
-        regardless of team composition."""
-        # Each tuple is one (has_data, has_report, has_coder,
-        # has_knowledge, has_news, has_sentiment) combination — six
-        # single-specialist setups plus one full-team setup.
+        """路由规则（"每次只移交一个子任务"、"不可捏造数字"等）是不可协商的 —
+        无论团队组成如何，它们都必须出现。"""
+        # 每个元组是一个 (has_data, has_report, has_coder, has_knowledge, has_news, has_sentiment) 组合 — 六种单专家配置加一种全团队配置。
         for flags in [
             (True, False, False, False, False, False),
             (False, True, False, False, False, False),
@@ -343,7 +335,7 @@ class TestSupervisorPrompt:
 
 
 # ---------------------------------------------------------------------------
-# Graph builder
+# 图构建器
 # ---------------------------------------------------------------------------
 
 
@@ -369,8 +361,8 @@ class TestBuildResearchSupervisor:
         assert hasattr(graph, "ainvoke")
         assert hasattr(graph, "get_graph")
 
-        # All five specialists should appear as subgraph nodes.
-        # ``get_graph()`` returns a nx-like object; its ``nodes`` is a dict.
+        # 所有五个专家都应作为子图节点出现。
+        # ``get_graph()`` 返回一个类似 nx 的对象；其 ``nodes`` 是一个字典。
         node_names = set(graph.get_graph().nodes.keys())
         assert "data_expert" in node_names
         assert "report_expert" in node_names
@@ -406,8 +398,7 @@ class TestBuildResearchSupervisor:
     def test_knowledge_only_compiles(
         self, router: ModelRouter, fake_knowledge_tools: list[BaseTool]
     ) -> None:
-        """A knowledge-only team is the smoke configuration for the
-        Phase-4.6 RAG closure — guard that it compiles standalone."""
+        """仅含 knowledge 的团队是 Phase-4.6 RAG 闭环的冒烟配置 —守护其能独立编译。"""
         graph = build_research_supervisor(
             model_router=router, knowledge_tools=fake_knowledge_tools
         )
@@ -421,8 +412,7 @@ class TestBuildResearchSupervisor:
     def test_news_only_compiles(
         self, router: ModelRouter, fake_news_tools: list[BaseTool]
     ) -> None:
-        """A news-only team is the smoke configuration for the news
-        plane — guard that it compiles standalone too."""
+        """仅含 news 的团队是新闻平面的冒烟配置 — 同样守护其能独立编译。"""
         graph = build_research_supervisor(
             model_router=router, news_tools=fake_news_tools
         )
@@ -438,8 +428,7 @@ class TestBuildResearchSupervisor:
             build_research_supervisor(model_router=router)
 
     def test_all_empty_lists_raise(self, router: ModelRouter) -> None:
-        """Passing empty lists is semantically identical to passing
-        nothing — the builder should reject both uniformly."""
+        """传递空列表在语义上等同于不传递任何内容 — 构建器应统一拒绝两者。"""
         with pytest.raises(ValueError, match="at least one specialist"):
             build_research_supervisor(
                 model_router=router,
@@ -453,11 +442,8 @@ class TestBuildResearchSupervisor:
     def test_enable_reflection_wraps_graph(
         self, router: ModelRouter, fake_data_tools: list[BaseTool]
     ) -> None:
-        """``enable_reflection=True`` replaces the supervisor with a
-        parent graph that exposes ``supervisor`` and ``reflection``
-        as top-level nodes. This is the structural contract: callers
-        keep the same ``ainvoke`` API but the DAG now reflects the
-        two-stage pipeline."""
+        """``enable_reflection=True`` 将 supervisor 替换为一个父级图，
+        将 ``supervisor`` 和 ``reflection`` 暴露为顶层节点。这是结构性契约：调用方保持相同的 ``ainvoke`` API，但 DAG 现在反映了两阶段流水线。"""
         graph = build_research_supervisor(
             model_router=router,
             data_tools=fake_data_tools,
@@ -466,26 +452,20 @@ class TestBuildResearchSupervisor:
         node_names = set(graph.get_graph().nodes.keys())
         assert "supervisor" in node_names
         assert "reflection" in node_names
-        # When reflection is on, the inner supervisor is encapsulated;
-        # specialist nodes should NOT leak into the parent topology
-        # (they live one level deeper, inside the supervisor node).
+        # 当反射开启时，内部 supervisor 被封装；
+        # 专家节点不应泄漏到父级拓扑中（它们位于更深一层，在 supervisor 节点内部）。
         assert "data_expert" not in node_names
 
     def test_reflection_off_keeps_legacy_topology(
         self, router: ModelRouter, fake_data_tools: list[BaseTool]
     ) -> None:
-        """The default (``enable_reflection=False``) must NOT introduce
-        the reflection wrapper. The legacy supervisor already names
-        its router node ``supervisor`` (that's a ``langgraph_supervisor``
-        contract), so the marker that distinguishes "wrapped" from
-        "not wrapped" is the presence of the ``reflection`` node, plus
-        the specialists being top-level (not encapsulated)."""
+        """默认设置（``enable_reflection=False``）不得引入反射包装器。 旧版 supervisor 已将其路由节点命名为 ``supervisor``（这是``langgraph_supervisor`` 的契约），
+        因此区分"已包装"与"未包装"的标志是 ``reflection`` 节点的存在，以及专家节点位于顶层（未被封装）。"""
         graph = build_research_supervisor(
             model_router=router, data_tools=fake_data_tools
         )
         node_names = set(graph.get_graph().nodes.keys())
-        # Specialists are at the top level in the unwrapped graph.
+        # 在未包装的图中，专家节点位于顶层。
         assert "data_expert" in node_names
-        # The reflection node is what the wrapper adds — absence
-        # confirms we're on the legacy topology.
+        # 反射节点是包装器添加的 — 其缺失确认处于旧版拓扑上。
         assert "reflection" not in node_names

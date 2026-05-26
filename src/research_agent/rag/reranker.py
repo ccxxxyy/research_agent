@@ -1,46 +1,38 @@
-"""Cross-encoder reranker — local, fast, no API calls.
+"""cross-encoder 重排序器 — 本地运行、快速、无需 API 调用。
 
-Why a cross-encoder, not an LLM?
---------------------------------
-The first iteration of this module shipped an ``LLMReranker`` that
-asked an LLM to score every (query, document) pair via JSON. That
-worked, but had three problems:
+为什么选择 cross-encoder 而非 LLM？
+------------------------------------
+本模块的第一版使用 ``LLMReranker``，通过 JSON 格式让 LLM 对每个 (query, document) 对打分。虽然可行，但存在三个问题：
 
-* **Latency** — one LLM round-trip per document. With ``top_k=5`` and
-  even a fast LIGHT-tier model this is 3-10 s of wall-clock per
-  search call, which compounds with the corrective-RAG retry loop.
-* **Cost** — every search burns 5+ LIGHT-tier prompts, paid per
-  request.
-* **Drift** — the score JSON is parsed from a chat completion; the
-  model sometimes returns prose, ``score: "high"``, or a numeric
-  string with units, all of which the parser had to babysit.
+* 延迟 — 每个文档一次 LLM 往返。即使使用快速的 LIGHT 级别模型，``top_k=5`` 时每次搜索也需要 3-10 秒，在 corrective-RAG 重试循环中会累积放大。
+* 成本 — 每次搜索消耗 5+ 个 LIGHT 级别的 prompt 调用，按次计费。
+* 漂移 — 分数 JSON 从聊天补全中解析；模型有时返回散文、``score: "high"``、或带单位的数字字符串，解析器不得不逐一兜底处理。
 
-A small **cross-encoder** (here ``BAAI/bge-reranker-base``, ~280 MB)
-solves all three: it runs locally on CPU at ~50 ms / pair, costs
-nothing per request, and returns a real-valued logit. The bi-encoder
-embeddings used for the initial FAISS retrieval and a cross-encoder
-used for reranking are complementary by design — the bi-encoder is
-fast enough to score thousands of candidates, the cross-encoder is
-accurate enough to re-order the top few.
+一个小型 cross-encoder（此处为 ``BAAI/bge-reranker-base``，约 280 MB）可同时解决以上三个问题：本地 CPU 运行约 50 ms / 对，无按次成本，且返回真实值 logit。
+用于初始 FAISS 检索的 bi-encoder 嵌入和用于重排序的 cross-encoder 在设计上互补 — bi-encoder 足够快以评分数千候选项，cross-encoder 足够准确以重排顶部少量结果。
 
-Where this is wired
--------------------
-The single production caller is
-``research_agent.mcp_servers.knowledge_server._search()``. That
-function over-fetches from RRF (typically ``top_k * 3``), feeds the
-candidates here, and trims the reranked output to ``top_k``. The
-``rerank_score`` is attached to each result so downstream agents
-(the ``knowledge_expert`` corrective-RAG loop in particular) can
-inspect the cross-encoder's verdict alongside the bi-encoder vector
-score.
+调用位置
+--------
+唯一的生产调用方为``research_agent.mcp_servers.knowledge_server._search()``。
+该函数从 RRF 过量检索（通常为 ``top_k * 3``），将候选项送入此处，并将重排序输出裁剪至 ``top_k``。
+每个结果上附加 ``rerank_score``，以便下游 Agent（特别是 ``knowledge_expert`` 的 corrective-RAG 循环）可以在 bi-encoder 向量分数旁查看 cross-encoder 的判定。
+假设 FAISS + BM25 融合后返回了 3 个候选文档，经过 cross-encoder 重排序后（列表按rerank_score分数从大到小排序）：
+[
+    {
+        "content": "2024年归母净利润为1.23亿元，同比增长15%...",
+        "metadata": {"source": "annual_report.pdf", "page": 12},
+        "vector_score": 0.72,
+        "bm25_score": 3.1,
+        "rrf_score": 0.0158,
+        "rerank_score": 2.8734    # ← cross-encoder 给的分数（越高越相关）
+    },
+    ...
+]
 
-Optional / failure-tolerant
----------------------------
-Reranking is gated by the ``KNOWLEDGE_RERANKER_ENABLED`` env var
-(default ``"1"``). When disabled — or when the model fails to load
-on a given host — the consumer falls back to RRF order. ``search()``
-never raises because reranking went wrong; the worst case is "you
-get RRF order plus a one-line warning in the log".
+可选 / 容错
+------------
+重排序由环境变量 ``KNOWLEDGE_RERANKER_ENABLED``（默认 ``"1"``）控制。
+当禁用或模型在主机上加载失败时 — 消费方回退到 RRF 顺序，``search()`` 绝不会因重排序失败而抛出异常；最差情况是"使用 RRF 顺序并在日志中输出一行警告"。
 """
 
 from __future__ import annotations
@@ -54,24 +46,22 @@ from loguru import logger
 _MODELSCOPE_CACHE_PATH = os.path.expanduser(
     "~/.cache/modelscope/hub/models/BAAI/bge-reranker-base"
 )
-"""Pre-computed path to the ModelScope cache directory.
+"""ModelScope 缓存目录的预计算路径。
 
-On Chinese networks HuggingFace Hub's Xet S3 backend is often
-unreachable. If the weights were pre-downloaded (e.g. via
-``modelscope.snapshot_download('BAAI/bge-reranker-base')`` after
-``uv sync --extra modelscope``) they land here. We prefer this path
-when it exists and contains the safetensors file, avoiding any
-network call at model-load time.
+在中国网络环境下 HuggingFace Hub 的 Xet S3 后端经常不可达。
+如果权重已预下载（例如通过 ``uv sync --extra modelscope`` 后执行``modelscope.snapshot_download('BAAI/bge-reranker-base')``），文件会落在此路径。
+当该路径存在且包含 safetensors 文件时优先使用，从而在模型加载时避免任何网络调用。
+即：如果已经通过 ModelScope 预下载了模型权重到本地缓存目录，就直接用本地文件，完全不联网。
 """
 
 
 def _resolve_default_model() -> str:
-    """Pick the best available model path at import time.
+    """在导入时选择最佳可用模型路径。
 
-    Priority:
-      1. Explicit ``KNOWLEDGE_RERANKER_MODEL`` env var (user override).
-      2. ModelScope local cache (fast, no network).
-      3. HuggingFace model id (needs network or HF cache hit).
+    优先级：
+      1. 显式设置的 ``KNOWLEDGE_RERANKER_MODEL`` 环境变量（用户覆盖）。
+      2. ModelScope 本地缓存（快速、无网络访问）。
+      3. HuggingFace 模型 ID（需要网络或 HF 缓存命中）。
     """
     explicit = os.environ.get("KNOWLEDGE_RERANKER_MODEL", "").strip()
     if explicit:
@@ -82,37 +72,31 @@ def _resolve_default_model() -> str:
 
 
 DEFAULT_RERANKER_MODEL = _resolve_default_model()
-"""Default cross-encoder model path.
+"""默认 cross-encoder 模型路径。
 
-Resolved at import time via :func:`_resolve_default_model`:
+在导入时通过 :func:`_resolve_default_model` 解析：
 
-* If ``KNOWLEDGE_RERANKER_MODEL`` is set, that wins.
-* Otherwise, if ``~/.cache/modelscope/hub/models/BAAI/
-  bge-reranker-base/model.safetensors`` exists (pre-downloaded with
-  the optional ``modelscope`` extra), we use the local path — zero
-  network IO.
-* Otherwise falls back to the HuggingFace model id
-  ``BAAI/bge-reranker-base`` (needs HF Hub access or a warm
-  ``~/.cache/huggingface`` cache).
+* 若设置了 ``KNOWLEDGE_RERANKER_MODEL``，以其为准。
+* 否则，若 ``~/.cache/modelscope/hub/models/BAAI/bge-reranker-base/model.safetensors`` 存在（通过可选的``modelscope`` extra 预下载），使用本地路径 — 零网络 IO。
+* 否则回退到 HuggingFace 模型 ID ``BAAI/bge-reranker-base``（需要 HF Hub 访问或 ``~/.cache/huggingface`` 缓存命中）。
 
-``BAAI/bge-reranker-base`` is bilingual (zh + en), ~1 GB on disk,
-and runs at ~50 ms per pair on a modern CPU.
+``BAAI/bge-reranker-base`` 为中英双语模型，磁盘占用约 1 GB，在 CPU 上每对约 50 ms。
+
+这个常量在 import 时就被确定了（调用上面的 _resolve_default_model()）。是中英双语模型，磁盘约 1GB，CPU 每对约 50ms。
 """
 
-# Module-level cache: loading a CrossEncoder spins up a tokenizer and
-# pulls a few hundred MB of weights into RAM. We keep one instance
-# alive for the lifetime of the process and reuse it across all
-# search calls.
+# 模块级缓存：加载 CrossEncoder 会启动分词器并将数百 MB 权重拉入内存。在进程生命周期内保留一个实例，并在所有搜索调用中复用。
 _CROSS_ENCODER: Any | None = None
 
 
 def _get_cross_encoder(model_name: str | None = None) -> Any:
-    """Return the singleton CrossEncoder, building it on first call.
+    """返回单例 CrossEncoder，首次调用时构建。
 
-    The ``sentence_transformers`` import is deferred so a process
-    that never asks for reranking (e.g. a unit test of unrelated
-    helpers) doesn't pay the ~1 s import cost. First call additionally
-    pays the model-weight load — ~3 s warm cache, longer on cold.
+    ``sentence_transformers`` 的导入被延迟，以便从不请求重排序的进程（如不相关辅助功能的单元测试）无需承担约 1 秒的导入开销。
+    首次调用还需要加载模型权重 — 缓存热时约 3 秒，冷启动更长。
+
+    全局单例模式。模型权重几百 MB，加载一次后在整个进程生命周期内复用。
+    sentence_transformers 库的 import 也是延迟的（lazy import），避免不需要重排序的代码路径承担约 1 秒的导入开销。
     """
     global _CROSS_ENCODER
     if _CROSS_ENCODER is None:
@@ -125,24 +109,17 @@ def _get_cross_encoder(model_name: str | None = None) -> Any:
 
 
 class CrossEncoderReranker:
-    """Local cross-encoder reranker.
+    """本地 cross-encoder 重排序器。
 
-    Operates on the dict shape used by
-    :mod:`research_agent.mcp_servers.knowledge_server` so the
-    integration is drop-in: each input dict needs a ``"content"``
-    key (the chunk text); everything else is preserved verbatim and
-    a new ``"rerank_score"`` field is added. The output is the same
-    list, sorted descending by ``rerank_score``.
+    操作 :mod:`research_agent.mcp_servers.knowledge_server` 所使用的字典结构，因此集成是即插即用的：输入一组字典，每个字典需要一个 ``"content"``键（分块文本）；
+    其余字段原样保留，并添加一个新的 ``"rerank_score"``字段。输出为同一列表，按 ``rerank_score`` 降序排列。
+
+    输出：同样的字典列表，按 cross-encoder 分数降序排列，每个字典多了一个 "rerank_score" 字段
 
     Args:
-        model_name: HuggingFace model id. ``None`` (default) uses
-            :data:`DEFAULT_RERANKER_MODEL`, which itself respects
-            the ``KNOWLEDGE_RERANKER_MODEL`` env var.
-        max_pairs: Hard ceiling on how many (query, document) pairs
-            we send through the cross-encoder per call. Protects
-            against accidentally feeding 1000 candidates and pegging
-            the CPU. Anything beyond ``max_pairs`` is left unranked
-            at the tail of the output.
+        model_name: HuggingFace 模型 ID。``None``（默认）使用:data:`DEFAULT_RERANKER_MODEL`，其本身遵循``KNOWLEDGE_RERANKER_MODEL`` 环境变量。
+        max_pairs: 每次调用发送给 cross-encoder 的 (query, document)对数硬上限。防止意外输入 1000 个候选项导致 CPU 满载。
+            超过 ``max_pairs`` 的部分将保持未排序状态置于输出尾部。
 
     Example::
 
@@ -161,8 +138,8 @@ class CrossEncoderReranker:
         max_pairs: int = 64,
     ) -> None:
         self._model_name = model_name
-        # Bound the per-call cost. 64 pairs ≈ 3 s on CPU with the
-        # base reranker — already well above any sensible top_k.
+        # 限制每次调用的开销，防止不小心传入 1000 个候选把 CPU 打满。64 对在 base reranker + CPU 上约 3 秒
+        # — 已远超任何合理的 top_k 值。
         self._max_pairs = max(1, int(max_pairs))
 
     async def rerank(
@@ -170,15 +147,13 @@ class CrossEncoderReranker:
         query: str,
         documents: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Re-score ``documents`` against ``query`` and sort descending.
+        """对 ``documents`` 相对于 ``query`` 重新打分并降序排列。
 
-        Trivial cases (0 or 1 document) short-circuit without loading
-        the model — useful in offline test paths and on cold starts
-        where the candidate list is empty.
+        简单情况（0 或 1 个文档）会短路 直接返回而不加载模型 — 对离线测试路径和候选列表为空的冷启动场景很有用（适合测试和空结果场景）。
 
-        The function never raises: any exception from the model
-        layer is caught and surfaces as the input order with a
-        warning log, so the caller can keep its happy path.
+        此函数永不抛出异常：模型层的任何异常都会被捕获，返回输入顺序原始顺序并输出警告日志，以便调用方可以保持正常流程。
+
+        正常流程：取前 max_pairs 个送模型打分，超出的部分保留在尾部不排序
         """
         if not documents:
             return []
@@ -203,10 +178,8 @@ class CrossEncoderReranker:
         for doc, score in zip(head, scores):
             doc["rerank_score"] = round(float(score), 4)
 
-        # Items past the max_pairs ceiling never went through the
-        # model. We keep them, but they sort below any reranked item
-        # because their score is None. Use a sentinel float for the
-        # sort so None doesn't crash the comparison.
+        # 超过 max_pairs 上限的条目从未经过模型。保留它们，但由于分数为 None，它们排在所有已重排序条目之后。，遇到 None 就当作 -∞（负无穷大。
+        # 使用哨兵浮点值进行排序，：没打分的文档自动排到最后面，float("-inf") 就是那个"哨兵值"，它不是真实分数，只是为了让排序能正常工作而设置的一个占位符，以避免 None 导致比较崩溃。
         for d in tail:
             d.setdefault("rerank_score", None)
 
@@ -217,18 +190,15 @@ class CrossEncoderReranker:
         return sorted(documents, key=_sort_key, reverse=True)
 
     def _predict(self, query: str, documents: list[dict[str, Any]]) -> list[float]:
-        """Run the cross-encoder on (query, content) pairs.
+        """对 (query, content) 组成配对，送入运行 cross-encoder。
 
-        Pulled out as a sync method so the async ``rerank`` can ship
-        it through ``asyncio.to_thread`` without leaking torch import
-        details into the public surface.
+        抽取为同步方法，以便异步的 ``rerank`` 可以通过``asyncio.to_thread`` 调用，而不会将 torch 导入细节泄漏到公共接口。
         """
         model = _get_cross_encoder(self._model_name)
         pairs = [(query, doc.get("content", "") or "") for doc in documents]
         raw = model.predict(pairs)
-        # ``CrossEncoder.predict`` returns a numpy ndarray for batch
-        # input. Convert to a plain list of floats so downstream
-        # callers aren't forced to import numpy.
+        # ``CrossEncoder.predict`` 对批量输入返回 numpy ndarray。CrossEncoder.predict(pairs) 是调用模型给每对 (查询, 文档) 打分，返回一个 numpy 数组，包含每对的分数。比如传入 5 对，它返回 array([2.87, 1.20, -0.45, 0.33, 1.55])
+        # 转换为普通 float 列表，以免下游调用方被迫导入 numpy。把 array([2.87, 1.20, -0.45]) 转成普通 Python 列表 [2.87, 1.20, -0.45]
         return [float(s) for s in raw]
 
 

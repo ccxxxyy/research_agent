@@ -1,4 +1,4 @@
-"""Shared test fixtures for unit, integration, and e2e tests."""
+"""单元测试、集成测试和端到端测试的共享 fixture。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from research_agent.memory.manager import MemoryManager
 
 @pytest.fixture
 def settings() -> Settings:
-    """Test settings with safe defaults."""
+    """使用安全默认值的测试配置。"""
     return Settings(app_env="testing")
 
 

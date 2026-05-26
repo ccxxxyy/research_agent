@@ -1,21 +1,20 @@
-"""Demonstrate the two-gate sandbox that protects ``calculate`` from code injection.
+"""演示保护 ``calculate`` 免受代码注入的双重安全门。
 
-Run:
+运行::
+
     uv run python scripts/demo_calculator_sandbox.py
 
-This script is NOT a unit test — it is a narrated demo meant to be read
-alongside the source. It walks through the attacker's mental model:
+本脚本 不是 单元测试 — 它是一个带叙述的演示，适合对照源码阅读。它模拟攻击者的思维模型：
 
-    Attacker POV:  "calculate() uses eval. Surely I can escape."
-    Defender POV:  "Two gates. Show me one that gets through."
+    攻击者视角:  "calculate() 使用 eval。我肯定能逃逸。"
+    防御者视角:  "两道门。给我看看哪个能穿过去。"
 
-For every attempt we print:
-  1. the raw payload
-  2. the compile-time ``co_names`` tuple (Gate 1's evidence)
-  3. the return value from ``calculate`` (the defender's verdict)
+对于每次尝试打印：
+  1. 原始载荷
+  2. 编译期的 ``co_names`` 元组（安全门 1 的依据）
+  3. ``calculate`` 的返回值（防御者的裁决）
 
-We also run two "what if" ablations at the end: what if we had ONLY
-Gate 1? ONLY Gate 2? — to make the layered-defence argument tangible.
+最后还运行两个"假如"消融实验：如果只有安全门 1？只有安全门 2？— 使分层防御的论点变得具体可感。
 """
 
 from __future__ import annotations
@@ -24,14 +23,13 @@ from research_agent.tools.native import calculate
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 辅助函数
 # ---------------------------------------------------------------------------
 
 def _inspect_co_names(expression: str) -> tuple[str, ...]:
-    """Return the names the Python compiler would resolve at runtime.
+    """返回 Python 编译器在运行时将要解析的名称。
 
-    This is exactly what Gate 1 inspects inside ``calculate``. By printing
-    it for each probe, the reader can see WHY a payload was rejected.
+    这正是 ``calculate`` 中安全门 1 所检查的内容。通过对每个探针打印此元组，可以看到载荷为何被拒绝。
     """
     try:
         code = compile(expression, "<demo>", "eval")
@@ -49,86 +47,85 @@ def _banner(title: str) -> None:
 def _run(label: str, expression: str) -> None:
     names = _inspect_co_names(expression)
     result = calculate.invoke({"expression": expression})
-    verdict = "BLOCKED" if result.startswith("Error:") else "ALLOWED"
+    verdict = "已拦截" if result.startswith("Error:") else "已放行"
     print(f"\n  [{verdict}] {label}")
-    print(f"    payload   : {expression!r}")
+    print(f"    载荷      : {expression!r}")
     print(f"    co_names  : {names}")
-    print(f"    returned  : {result}")
+    print(f"    返回值    : {result}")
 
 
 # ---------------------------------------------------------------------------
-# Part 1 — happy path (baseline: legitimate math still works)
+# 第 1 部分 — 正常路径（基线：合法数学运算应正常工作）
 # ---------------------------------------------------------------------------
 
 def demo_happy_path() -> None:
-    _banner("Part 1 — Legitimate math (should all ALLOW)")
+    _banner("第 1 部分 — 合法数学运算（应全部放行）")
 
-    _run("basic arithmetic",        "2 + 3 * 4")
-    _run("whitelisted builtin",     "round(3.14159, 2)")
-    _run("whitelisted math module", "sqrt(16) + pi")
+    _run("基本算术",            "2 + 3 * 4")
+    _run("白名单内置函数",      "round(3.14159, 2)")
+    _run("白名单 math 模块",    "sqrt(16) + pi")
 
 
 # ---------------------------------------------------------------------------
-# Part 2 — attack catalogue (every one MUST be blocked)
+# 第 2 部分 — 攻击目录（每个都必须被拦截）
 # ---------------------------------------------------------------------------
 
 def demo_attacks() -> None:
-    _banner("Part 2 — Attack catalogue (should all BLOCK)")
+    _banner("第 2 部分 — 攻击目录（应全部拦截）")
 
     _run(
-        "classic RCE via __import__",
+        "经典 RCE：通过 __import__",
         "__import__('os').system('echo pwned')",
     )
     _run(
-        "filesystem read via open",
+        "文件系统读取：通过 open",
         "open('/etc/passwd').read()",
     )
     _run(
-        "environ dump via builtins chain",
+        "环境变量泄露：通过 builtins 链",
         "__builtins__['__import__']('os').environ",
     )
     _run(
-        "subclass walk (the classic sandbox break)",
+        "子类遍历（经典沙箱逃逸）",
         "(1).__class__.__bases__[0].__subclasses__()",
     )
     _run(
-        "dynamic exec",
+        "动态 exec",
         "exec('import os; os.system(\"id\")')",
     )
     _run(
-        "nested eval",
+        "嵌套 eval",
         "eval(\"1+1\")",
     )
     _run(
-        "globals inspection",
+        "globals 检查",
         "globals()",
     )
     _run(
-        "attribute walk starting from a literal",
+        "从字面量开始的属性遍历",
         "().__class__.__mro__",
     )
 
 
 # ---------------------------------------------------------------------------
-# Part 3 — syntax-invalid payloads (rejected before either gate)
+# 第 3 部分 — 语法无效的载荷（在任一安全门之前就被拒绝）
 # ---------------------------------------------------------------------------
 
 def demo_garbage() -> None:
-    _banner("Part 3 — Malformed payloads (SyntaxError handling)")
+    _banner("第 3 部分 — 畸形载荷（SyntaxError 处理）")
 
-    _run("double operator", "2 ++ ** 3")
-    _run("unclosed paren",  "((1+2)")
+    _run("重复运算符", "2 ++ ** 3")
+    _run("未闭合括号", "((1+2)")
 
 
 # ---------------------------------------------------------------------------
-# Part 4 — ablation: WHY we need both gates
+# 第 4 部分 — 消融实验：为什么需要两道安全门
 # ---------------------------------------------------------------------------
 
 def _unsafe_gate1_only(expression: str) -> str:
-    """Hypothetical ``calculate`` variant with ONLY Gate 1 (name whitelist).
+    """假设的 ``calculate`` 变体，**仅有** 安全门 1（名称白名单）。
 
-    Notice: ``__builtins__`` is NOT cleared, so any name that slips through
-    the whitelist resolves to a real builtin.
+    注意：``__builtins__`` 未被清空，因此任何通过白名单的名称都会解析到真实的内置函数。
     """
     allowed = {"abs": abs, "round": round, "min": min, "max": max}
     code = compile(expression, "<gate1-only>", "eval")
@@ -139,11 +136,9 @@ def _unsafe_gate1_only(expression: str) -> str:
 
 
 def _unsafe_gate2_only(expression: str) -> str:
-    """Hypothetical ``calculate`` variant with ONLY Gate 2 (empty builtins).
+    """假设的 ``calculate`` 变体，**仅有** 安全门 2（清空 builtins）。
 
-    Notice: there is NO static name check, so any syntactically valid
-    expression is compiled and evaluated. ``__builtins__={}`` is the only
-    line of defence.
+    注意：没有静态名称检查，因此任何语法有效的表达式都会被编译并执行。``__builtins__={}`` 是唯一的防线。
     """
     allowed = {"abs": abs, "round": round, "min": min, "max": max}
     code = compile(expression, "<gate2-only>", "eval")
@@ -154,66 +149,59 @@ def _unsafe_gate2_only(expression: str) -> str:
 
 
 def demo_ablation() -> None:
-    _banner("Part 4 — Ablation: why we need BOTH gates")
+    _banner("第 4 部分 — 消融实验：为什么需要两道安全门")
 
     print(
-        "\n  Scenario A — developer accidentally adds '__import__' to the"
-        "\n  whitelist. Would Gate 2 alone still save us?"
+        "\n  场景 A — 开发者不小心将 '__import__' 加入了白名单。"
+        "\n  仅靠安全门 2 还能救我们吗？"
     )
     evil = "__import__('os').system('echo should-not-run')"
 
-    # Gate 1 only, but with a misconfigured whitelist:
+    # 仅安全门 1，但白名单配置错误：
     misconfigured_allowed = {"__import__": __import__}
     code = compile(evil, "<ablation>", "eval")
     all_names_allowed = all(n in misconfigured_allowed for n in code.co_names)
-    print(f"    co_names fully allow-listed? {all_names_allowed}  -> Gate 1 WOULD PASS")
+    print(f"    co_names 全部在白名单中? {all_names_allowed}  -> 安全门 1 会放行")
 
-    # Gate 2 is our last line of defence:
+    # 安全门 2 是最后一道防线：
     try:
         eval(code, {"__builtins__": {}}, misconfigured_allowed)  # noqa: S307
-        print("    Gate 2 verdict: RAN (sandbox breached!)")
+        print("    安全门 2 裁决: 已执行（沙箱被突破！）")
     except Exception as e:
-        print(f"    Gate 2 verdict: BLOCKED — {type(e).__name__}: {e}")
+        print(f"    安全门 2 裁决: 已拦截 — {type(e).__name__}: {e}")
 
     print(
-        "\n  Scenario B — developer forgets to set __builtins__={}. Would"
-        "\n  Gate 1 alone still save us?"
+        "\n  场景 B — 开发者忘记设置 __builtins__={}。"
+        "\n  仅靠安全门 1 还能救我们吗？"
     )
     evil = "__import__('os').system('echo should-not-run')"
     result = _unsafe_gate1_only(evil)
-    print(f"    Gate 1 verdict: {result}")
+    print(f"    安全门 1 裁决: {result}")
 
     print(
-        "\n  Scenario C — developer forgets the name whitelist. Would"
-        "\n  Gate 2 alone still save us for a bare-literal attack chain?"
+        "\n  场景 C — 开发者忘记了名称白名单。"
+        "\n  仅靠安全门 2 能否阻止字面量属性链攻击？"
     )
     evil = "(1).__class__.__bases__[0].__subclasses__()"
     result = _unsafe_gate2_only(evil)
-    print(f"    Gate 2 verdict: {result}")
+    print(f"    安全门 2 裁决: {result}")
 
 
 # ---------------------------------------------------------------------------
-# Part 5 — the takeaway
+# 第 5 部分 — 要点总结
 # ---------------------------------------------------------------------------
 
 def demo_summary() -> None:
-    _banner("Part 5 — Takeaway")
+    _banner("第 5 部分 — 要点总结")
     print(
         """
-  * Gate 1  (compile + co_names whitelist)  — syntactic filter.
-      Fast, catches attribute chains (__class__, __bases__, ...),
-      import names, and any reference to an unexpected symbol.
+  * 安全门 1（compile + co_names 白名单）— 语法级过滤。
+      速度快，捕获属性链（__class__、__bases__ 等）、import名称，以及任何对非预期符号的引用。
 
-  * Gate 2  (eval with __builtins__={})     — runtime isolation.
-      Even if an attacker slips a forbidden name past Gate 1
-      (misconfigured whitelist, future patch, unknown bug),
-      the empty builtins namespace ensures there is nothing
-      meaningful to call.
+  * 安全门 2（eval 配合 __builtins__={}）— 运行时隔离。
+      即使攻击者将一个被禁名称绕过安全门 1（白名单配置错误、未来补丁、未知漏洞），空的 builtins 命名空间确保没有任何有意义的函数可供调用。
 
-  Neither gate is individually sufficient. Both together produce
-  "defence in depth": an attacker must defeat both a static filter
-  AND a runtime sandbox in a single payload. In interview terms:
-  this is the principle of least privilege applied to agent tools.
+  两道门单独均不充分。两者结合产生"纵深防御"：攻击者必须在一个载荷中同时击败静态过滤器和运行时沙箱。术语来说：这是最小权限原则在 Agent 工具上的应用。
         """.rstrip()
     )
 

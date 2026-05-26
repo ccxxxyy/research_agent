@@ -1,60 +1,36 @@
-"""Seed the production knowledge-base with real A-share research reports.
+"""将真实 A 股研报灌入生产知识库。
 
-What this script does
----------------------
-Pulls the most recent 1-2 disclosures (annual / quarterly report,
-preferred over 临时公告) for a curated set of representative A-share
-tickers off **巨潮资讯** (cninfo), downloads each PDF into the
-``./data/pdf_cache/`` content-addressable cache, and ingests the
-resulting PDFs into the persistent FAISS collection ``prod_reports``
-(one collection holds all reports — chunk metadata carries
-``source = local PDF path`` so the agent can still cite per-document).
+本脚本的功能
+------------
+从 巨潮资讯（cninfo）拉取一组代表性 A 股标的最近 1-2 份披露（优先年报/季报而非临时公告），
+将各 PDF 下载到``./data/pdf_cache/`` 内容寻址缓存，再灌入持久化 FAISS collection``prod_reports``（所有报告共用一个 collection —
+分块元数据携带``source = 本地 PDF 路径``，Agent 仍可按文档引用）。
 
-The seeded collection becomes the operational corpus the
-``knowledge_expert`` searches at runtime when the supervisor needs
-historical research context — see ``scripts/demo_full_research.py``
-for the matching end-to-end demo question.
+灌入后的 collection 成为 ``knowledge_expert`` 在运行时搜索的操作语料库（当 supervisor 需要历史研报上下文时）—
+见``scripts/demo_full_research.py`` 中对应的端到端演示问题。
 
-Why this script exists
-----------------------
-Up until now the project's RAG layer was demonstrable but never
-**driven by real data**: ``demo_knowledge_expert.py`` ingested a
-hand-rolled 2-page synthetic PDF. That's fine for proving the
-plumbing; it's not enough for an interview-grade story. With this
-seed script we get:
+为何需要本脚本
+--------------
+此前项目的 RAG 层虽可演示但从未使用真实数据*驱动：``demo_knowledge_expert.py`` 灌入的是手工构造的 2 页合成 PDF，以验证管道连通性。有了本脚本得到：
 
-  * a fixed-name FAISS collection populated from real disclosures
-    (interview demo can reference it without depending on stale
-    timestamps or 网络抖动 mid-call);
-  * a reproducible idempotent path — re-running the script does NOT
-    duplicate already-ingested chunks (we check
-    ``knowledge_list_collections`` and the per-source chunk count
-    before ingesting);
-  * a clean separation between **ingestion** (this script, run once)
-    and **retrieval-augmented Q&A** (the demo + the agent at
-    runtime).
+  * 一个由真实披露文件填充的固定名称 FAISS collection（可直接引用，无需依赖过期的时间戳或调用中途的网络抖动）；
+  * 一条可复现的幂等路径 — 重复运行脚本不会重复灌入已有分块（灌入前会检查 ``knowledge_list_collections`` 和按 source 的分块计数）；
+  * 灌入（本脚本，运行一次）与检索增强问答（演示 + 运行时 Agent）之间的清晰分离。
 
-Why we call the tools in-process (not via MCP-stdio)
-----------------------------------------------------
-``pdf_report_server`` and ``knowledge_server`` both expose their
-tools as plain async functions decorated by ``@mcp.tool()`` (the
-decorator registers them with FastMCP but doesn't wrap them — see
-``knowledge_server.py`` module docstring). Calling them directly
-from this seed script is functionally identical to going through
-the MCP-stdio transport but skips two subprocess spawns + JSON-RPC
-serialisation per call. For a one-shot operator script that runs
-~10 seconds of HTTP I/O + ~20 seconds of ingestion, that's a
-worthwhile shortcut.
+为何以进程内方式调用工具（而非 MCP-stdio）
+------------------------------------------
+``pdf_report_server`` 和 ``knowledge_server`` 都将工具暴露为``@mcp.tool()`` 装饰的普通 async 函数（装饰器向 FastMCP 注册但不做包装 —
+见 ``knowledge_server.py`` 模块文档字符串）。从本脚本直接调用与通过 MCP-stdio 传输功能等价，但省去了每次调用的两次子进程创建 + JSON-RPC 序列化。
+对于一个执行约 10 秒 HTTP I/O +约 20 秒灌入的一次性运维脚本，这是值得的捷径。
 
-Run::
+运行::
 
     .venv/Scripts/python.exe scripts/seed_real_research_reports.py
-    # optional: --tickers 600519,300750  --collection prod_reports
+    # 可选: --tickers 600519,300750  --collection prod_reports
 
-Exit codes:
-    0 → at least one report was ingested or already present.
-    1 → no report could be obtained for any ticker (network down,
-        cninfo schema drift, etc.).
+退出码:
+    0 → 至少一份报告已灌入或已存在。
+    1 → 所有标的均未能获取报告（网络不通、cninfo 接口变更等）。
 """
 
 from __future__ import annotations
@@ -68,24 +44,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-# Force UTF-8 on stdout so Chinese strings don't blow up the Windows
-# code page.
+# 强制 stdout 使用 UTF-8，防止中文字符在 Windows 代码页上报错。
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 
 # ---------------------------------------------------------------------
-# Curated ticker list — AI / semiconductor cross-section
+# 精选标的列表 — AI / 半导体交叉截面
 #
-# Three sub-sectors of the AI value chain so the demo question has
-# meaningful comparisons across "compute / interconnect / memory":
+# AI 价值链的三个子板块，使演示问题能在
+# "算力 / 互联 / 存储" 之间进行有意义的对比：
 #
 #     AI 算力芯片     688256 寒武纪      — 训练 GPU/ASIC, 亏损改善
 #     CPO / 光模块    300308 中际旭创    — AI 数据中心互联, 业绩爆发
 #     存储芯片        603986 兆易创新    — NOR Flash / MCU, 周期复苏
 #
-# Adding more is fine; ingestion runs sequentially so a long list
-# just takes longer (each annual report is ~10 MB → ~20 s ingest
-# warm-cache, dominated by the embedder).
+# 可自由添加更多标的；灌入按顺序执行，列表越长耗时越长
+# （每份年报约 10 MB → 预热后约 20 秒灌入，瓶颈在 embedder）。
 # ---------------------------------------------------------------------
 DEFAULT_TICKERS: dict[str, str] = {
     "688256": "寒武纪",
@@ -95,19 +69,13 @@ DEFAULT_TICKERS: dict[str, str] = {
 
 DEFAULT_COLLECTION = "prod_reports"
 
-# Categories tried in order until we find something. cninfo's "年报"
-# is published once a year (March/April) so on a freshly rolled-over
-# day a ticker may have only quarterly disclosures available — the
-# fallback chain prevents an empty seed.
+# 按顺序尝试的披露类别，直到找到可用的。cninfo 的"年报"每年发布一次（3/4 月），因此在刚翻年的时段可能只有季报可用 — 回退链可防止灌入结果为空。
 PREFERRED_CATEGORIES = ("年报", "一季报", "三季报", "半年报")
 
-# Look-back window: 365 days catches at least one annual report for
-# every ticker, even ones whose fiscal year ends late in the calendar.
+# 回溯窗口：365 天可保证每个标的至少有一份年报，即使其财年在日历年较晚结束。
 LOOKBACK_DAYS = 365
 
-# Per-ticker hard cap. For seeding we want ONE recent annual + ONE
-# quarterly to keep the corpus small and the ingestion fast. The
-# embedder cost is ~20 s per 100-page report.
+# 每个标的的硬性上限。灌入时我们只需一份最近年报 + 一份季报，以保持语料库小而灌入快。embedder 每 100 页报告约耗时 20 秒。
 MAX_REPORTS_PER_TICKER = 1
 
 
@@ -121,12 +89,9 @@ async def _find_recent_report(
     symbol: str,
     end_date: datetime,
 ) -> dict[str, Any] | None:
-    """Try preferred categories in order; return the most recent hit.
+    """按优先级顺序尝试各类别；返回最近的一条记录。
 
-    Returns the announcement dict (carries ``pdf_url``) or ``None``
-    when no category produced a usable record. We pick the FIRST
-    record from ``announcements`` because cninfo orders them
-    descending by ``publish_date``.
+    返回公告 dict（携带 ``pdf_url``）或 ``None``（所有类别均无可用记录）。取 ``announcements`` 的第一条，因为 cninfo 按``publish_date`` 降序排列。
     """
     start_date = (end_date - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d")
     end_str = end_date.strftime("%Y%m%d")
@@ -143,20 +108,20 @@ async def _find_recent_report(
                 limit=10,
             )
         except Exception as exc:  # noqa: BLE001
-            _step(f"    search failed for category={cat}: {exc!r}")
+            _step(f"    category={cat} 搜索失败: {exc!r}")
             continue
         if "error" in resp:
-            _step(f"    search returned error for category={cat}: {resp['error']}")
+            _step(f"    category={cat} 搜索返回错误: {resp['error']}")
             continue
         records = [
             r for r in resp.get("announcements", []) if r.get("pdf_url")
         ]
         if not records:
-            _step(f"    no PDF announcements in category={cat}; trying next.")
+            _step(f"    category={cat} 无 PDF 公告；尝试下一类别。")
             continue
         chosen = records[0]
         _step(
-            f"  picked: {chosen.get('publish_date')} | "
+            f"  已选择: {chosen.get('publish_date')} | "
             f"{chosen.get('title', '')[:60]} | size?"
         )
         return chosen
@@ -169,22 +134,17 @@ async def _ingested_sources_for_collection(
     collection: str,
     knowledge_search,
 ) -> set[str]:
-    """Return the set of ``source`` paths already present in ``collection``.
+    """返回 ``collection`` 中已存在的 ``source`` 路径集合。
 
-    We use a wildcard-y query (a single Chinese char that's almost
-    sure to match SOMETHING in any corpus) and pull a generous
-    ``top_k`` so we can dedup. This is cheap once FAISS is warm.
-    Returns an empty set if the collection doesn't exist yet.
+    使用一个泛匹配查询（几乎能匹配任何语料中内容的单个中文字符），并拉取较大的 ``top_k`` 以便去重。FAISS 预热后开销很小。若 collection 不存在则返回空集。
     """
     listing = await list_collections()
     names = {c["name"] for c in listing.get("collections", [])}
     if collection not in names:
         return set()
-    # ``top_k`` is capped at 20 by knowledge_server's MAX_TOP_K — for
-    # a seed corpus that contains a handful of large PDFs this is
-    # already plenty of distinct ``source`` values to dedup on.
+    # ``top_k`` 受 knowledge_server 的 MAX_TOP_K 限制为 20 — 对于只含少量大 PDF 的灌入语料库，已足够获取不同的 ``source``值用于去重。
     probe = await knowledge_search(
-        query="公司",  # generic on purpose — seeding-time check
+        query="公司",  # 泛匹配，专用于灌入前检查
         collection=collection,
         top_k=20,
     )
@@ -198,38 +158,37 @@ async def _ingested_sources_for_collection(
 
 async def amain(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Seed the prod_reports knowledge-base collection."
+        description="灌入 prod_reports 知识库 collection。"
     )
     parser.add_argument(
         "--tickers",
         type=str,
         default=",".join(DEFAULT_TICKERS),
         help=(
-            "Comma-separated 6-digit A-share tickers. Names for "
-            "logging are looked up in DEFAULT_TICKERS, otherwise "
-            "the ticker is used as the display name."
+            "逗号分隔的 6 位 A 股代码。日志中的名称从 DEFAULT_TICKERS "
+            "查找，否则直接使用代码作为显示名称。"
         ),
     )
     parser.add_argument(
         "--collection",
         type=str,
         default=DEFAULT_COLLECTION,
-        help="Target FAISS collection name.",
+        help="目标 FAISS collection 名称。",
     )
     parser.add_argument(
         "--end-date",
         type=str,
         default="",
         help=(
-            "End of the cninfo search window as YYYYMMDD. Defaults to "
-            "today. Only override for deterministic snapshot tests."
+            "cninfo 搜索窗口的截止日期，格式 YYYYMMDD。默认为今天。"
+            "仅在确定性快照测试时覆盖。"
         ),
     )
     args = parser.parse_args(argv)
 
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
     if not tickers:
-        _step("FAIL: no tickers given.")
+        _step("失败: 未提供标的。")
         return 1
 
     end_date = (
@@ -238,10 +197,10 @@ async def amain(argv: list[str]) -> int:
         else datetime.now()
     )
 
-    # --- imports happen here so the argparse error above is fast ---
-    _step("loading tool modules (this triggers the bge embedder import)")
+    # --- 延迟导入，使上面的 argparse 错误能快速返回 ---
+    _step("正在加载工具模块（会触发 bge embedder 的导入）")
     from research_agent.mcp_servers.knowledge_server import (
-        delete_collection,  # noqa: F401  (exposed for ad-hoc cleanup)
+        delete_collection,  # noqa: F401  （暴露用于临时清理）
         ingest_pdf,
         list_collections,
         search as knowledge_search,
@@ -251,8 +210,8 @@ async def amain(argv: list[str]) -> int:
         search_announcements,
     )
 
-    _step(f"target collection: {args.collection!r}")
-    _step(f"tickers: {tickers}")
+    _step(f"目标 collection: {args.collection!r}")
+    _step(f"标的列表: {tickers}")
 
     already = await _ingested_sources_for_collection(
         list_collections=list_collections,
@@ -260,8 +219,8 @@ async def amain(argv: list[str]) -> int:
         knowledge_search=knowledge_search,
     )
     if already:
-        _step(f"  collection already has {len(already)} distinct sources; "
-              f"existing PDFs will be skipped (idempotent re-run).")
+        _step(f"  collection 已有 {len(already)} 个不同 source；"
+              f"已有 PDF 将被跳过（幂等重跑）。")
 
     seeded = 0
     skipped = 0
@@ -276,13 +235,13 @@ async def amain(argv: list[str]) -> int:
             end_date=end_date,
         )
         if record is None:
-            _step(f"  no recent report found for {sym}; skipping.")
+            _step(f"  未找到 {sym} 的近期报告；跳过。")
             failed.append(sym)
             continue
 
         pdf_url = record.get("pdf_url")
         if not pdf_url:
-            _step(f"  record missing pdf_url; skipping.")
+            _step(f"  记录缺少 pdf_url；跳过。")
             failed.append(sym)
             continue
 
@@ -290,11 +249,11 @@ async def amain(argv: list[str]) -> int:
         try:
             dl = await download_pdf(pdf_url=pdf_url)
         except Exception as exc:  # noqa: BLE001
-            _step(f"  download failed: {exc!r}")
+            _step(f"  下载失败: {exc!r}")
             failed.append(sym)
             continue
         if "error" in dl:
-            _step(f"  download returned error: {dl['error']}")
+            _step(f"  下载返回错误: {dl['error']}")
             failed.append(sym)
             continue
 
@@ -303,13 +262,10 @@ async def amain(argv: list[str]) -> int:
         from_cache = dl.get("from_cache", False)
         _step(f"  -> {local_path} ({size_kb} KB, from_cache={from_cache})")
 
-        # Idempotency: if this PDF's path is already inside the
-        # collection's ``source`` set we skip ingest. Re-ingesting
-        # would APPEND a duplicate copy of every chunk (knowledge_
-        # server's TODO note about content-hash dedup is not yet
-        # done) and bloat the index.
+        # 幂等性：如果该 PDF 的路径已在 collection 的 ``source``集合中，则跳过灌入。重复灌入会追加每个分块的副本（knowledge_server 的 TODO 关于内容哈希去重尚未实现），
+        # 导致索引膨胀。
         if local_path in already:
-            _step("  already ingested in this collection; skipping.")
+            _step("  已在此 collection 中灌入过；跳过。")
             skipped += 1
             continue
 
@@ -320,28 +276,28 @@ async def amain(argv: list[str]) -> int:
                 collection=args.collection,
             )
         except Exception as exc:  # noqa: BLE001
-            _step(f"  ingest crashed: {exc!r}")
+            _step(f"  灌入崩溃: {exc!r}")
             failed.append(sym)
             continue
         if "error" in ing:
-            _step(f"  ingest returned error: {ing['error']}")
+            _step(f"  灌入返回错误: {ing['error']}")
             failed.append(sym)
             continue
 
         added = ing.get("num_chunks_added", 0)
         total = ing.get("total_chunks_in_collection", 0)
-        _step(f"  ingested: +{added} chunks (collection total: {total})")
+        _step(f"  已灌入: +{added} 个分块（collection 总计: {total}）")
         seeded += 1
         already.add(local_path)
 
-    _step("=== summary ===")
-    _step(f"  newly seeded:   {seeded}")
-    _step(f"  already-cached: {skipped}")
-    _step(f"  failed tickers: {failed if failed else '(none)'}")
+    _step("=== 汇总 ===")
+    _step(f"  新灌入:       {seeded}")
+    _step(f"  已缓存跳过:   {skipped}")
+    _step(f"  失败标的:     {failed if failed else '(无)'}")
     if seeded == 0 and skipped == 0:
-        _step("FAIL: nothing reached the index.")
+        _step("失败: 无任何内容进入索引。")
         return 1
-    _step("OK")
+    _step("完成")
     return 0
 
 

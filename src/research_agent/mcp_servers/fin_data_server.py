@@ -1,49 +1,26 @@
-"""MCP Server — Chinese A-share financial data via ``akshare``.
+"""MCP Server — 通过 ``akshare`` 获取中国 A 股金融数据。
 
-This server is the **data plane** of the financial research pipeline.
-It exposes real, free, no-API-key finance endpoints backed by
-``akshare``, which in turn aggregates data from 东方财富 / 新浪财经 /
-巨潮资讯.
+本服务器是金融研究管道的据层。它暴露由 ``akshare`` 支撑的真实、免费、无需 API 密钥的金融端点，
+``akshare`` 进而聚合来自 东方财富 / 新浪财经 / 巨潮资讯 的数据。
 
-Tools exposed
--------------
-1. ``get_stock_basic_info`` — company profile (industry, market cap,
-   IPO date, latest price).
-2. ``get_stock_price_history`` — daily OHLCV with simple summary stats.
-3. ``get_financial_abstract`` — revenue / net income / cash flow /
-   EPS by reporting period.
-4. ``get_financial_indicators`` — ROE / ROA / margins / leverage
-   ratios by reporting period.
-5. ``search_stock_by_name`` — fuzzy-match a company name to A-share
-   tickers (uses a one-shot in-memory cache to avoid pinging the
-   whole-market roster on every invocation).
+提供的工具
+----------
+1. ``get_stock_basic_info`` — 公司概况（行业、市值、上市日期、最新价）。
+2. ``get_stock_price_history`` — 日级 OHLCV 及简单汇总统计。
+3. ``get_financial_abstract`` — 按报告期的营收 / 净利润 / 现金流 / EPS。
+4. ``get_financial_indicators`` — 按报告期的 ROE / ROA / 利润率 / 杠杆比率。
+5. ``search_stock_by_name`` — 模糊匹配公司名称到 A 股代码（使用一次性内存缓存，避免每次调用都请求全市场名单）。
 
-Design notes
-------------
-- ``akshare`` is synchronous and I/O-bound. Every tool wraps it in
-  ``asyncio.to_thread`` so one slow request does not block the MCP
-  stdio event loop for peer requests.
-- ``akshare`` sometimes raises ``KeyError`` / ``AttributeError`` /
-  ``ValueError`` when the upstream HTML / JSON schema drifts, and a
-  bare network failure surfaces as ``ConnectionError`` /
-  ``ProxyError``. We catch ``Exception`` at the tool boundary because
-  a raising MCP tool would crash the subprocess; instead we return a
-  structured ``{"error": "..."}`` payload that the LLM can reason
-  about.
-- **Multi-source resilience**: the two endpoints that sit on
-  ``push2*.eastmoney.com`` (real-time quote + daily K-line) are
-  notoriously flaky — they go behind Windows-registry proxy probes,
-  get throttled, and occasionally 451 from outside China. For those
-  two tools we cascade through alternative providers (雪球, 新浪)
-  so an operator gets a usable answer instead of a ProxyError. Each
-  response carries a ``source`` field so the caller knows which
-  provider actually served it.
-- All stock symbols must be the 6-digit code (``300750`` for
-  宁德时代). We do NOT accept exchange-prefixed forms (``sh300750``).
-  Internally we add/strip the prefix as each upstream requires.
-- Column names are kept in Chinese because ``akshare`` returns them
-  that way and the downstream LLM (DeepSeek / Qwen) reads Chinese
-  fluently. Translating to English would lose information.
+设计说明
+--------
+- ``akshare`` 是同步且 I/O 密集的。每个工具用 ``asyncio.to_thread``包装，确保单个慢请求不会阻塞 MCP stdio 事件循环中的其他请求。
+- ``akshare`` 在上游 HTML / JSON 结构变化时偶尔抛出 ``KeyError`` / ``AttributeError`` / ``ValueError``，网络故障则表现为 ``ConnectionError``
+  / ``ProxyError``。在工具边界捕获 ``Exception``，因为抛出异常的 MCP 工具会导致子进程崩溃；取而代之返回结构化的 ``{"error": "..."}`` 负载，LLM 可据此推理。
+- 多源容灾：位于 ``push2*.eastmoney.com`` 的两个端点（实时报价 +日K线）出了名地不稳定——它们会被 Windows 注册表代理探测阻断、被限流、偶尔从中国境外返回 451。
+  对于这两个工具，级联备选提供方（雪球、新浪），使用户获得可用结果而非 ProxyError。
+  每个响应携带 ``source`` 字段，让调用者知道实际由哪个提供方响应。
+- 所有股票代码必须是 6 位数字（如宁德时代为 ``300750``）。不接受带交易所前缀的形式（``sh300750``）。内部按各上游需求添加/去除前缀。
+- 列名保持中文，因为 ``akshare`` 就是这样返回的，且下游 LLM（DeepSeek / Qwen）能流畅阅读中文。
 """
 
 from __future__ import annotations
@@ -59,37 +36,33 @@ mcp = FastMCP("FinDataAShare")
 
 
 _ALL_STOCKS_CACHE: pd.DataFrame | None = None
-"""Module-level cache for ``ak.stock_info_a_code_name()``.
+"""``ak.stock_info_a_code_name()`` 的模块级缓存。
 
-That call takes ~6 seconds because it scrapes the full A-share
-listing. We only need to pay it once per MCP subprocess lifetime;
-subsequent ``search_stock_by_name`` calls are pure-pandas filters.
+该调用耗时约 6 秒，因为它抓取了完整的 A 股名单。只需在每个 MCP子进程生命周期内支付一次该开销；后续的 ``search_stock_by_name`` 调用是纯 pandas 过滤操作。
 """
 
 
 def _fmt_error(exc: Exception, *, context: str) -> dict[str, Any]:
-    """Canonical error shape — LLM-readable, no stack traces."""
+    """标准错误格式 — LLM 可读，无堆栈跟踪。"""
     return {"error": f"{type(exc).__name__}: {exc}", "context": context}
 
 
 def _exchange_prefix(symbol: str, *, upper: bool = False) -> str:
-    """Return the exchange code — ``sh`` for 6-prefix, ``sz`` otherwise.
+    """返回交易所代码 — 6 开头为 ``sh``，其他为 ``sz``。
 
-    ``akshare`` is inconsistent: 雪球 needs upper case (``SZ300750``),
-    新浪/腾讯 need lower case (``sz300750``), and 东财 uses numeric
-    market codes. We only build string-prefixed forms here.
+    ``akshare`` 不一致：雪球需要大写（``SZ300750``），新浪/腾讯需要小写（``sz300750``），东财使用数字市场代码。此处仅构建字符串前缀形式。
     """
     prefix = "sh" if symbol.startswith("6") else "sz"
     return prefix.upper() if upper else prefix
 
 
 def _prefixed_symbol(symbol: str, *, upper: bool = False) -> str:
-    """Return ``sh300750`` / ``SH300750`` / ``sz300750`` / ``SZ300750``."""
+    """返回 ``sh300750`` / ``SH300750`` / ``sz300750`` / ``SZ300750``。"""
     return f"{_exchange_prefix(symbol, upper=upper)}{symbol}"
 
 
 def _df_to_records(df: pd.DataFrame, *, limit: int | None = None) -> list[dict[str, Any]]:
-    """Convert a DataFrame to a list of JSON-safe dicts."""
+    """将 DataFrame 转换为 JSON 安全的字典列表。"""
     if limit is not None:
         df = df.head(limit)
     records: list[dict[str, Any]] = []
@@ -109,7 +82,7 @@ def _df_to_records(df: pd.DataFrame, *, limit: int | None = None) -> list[dict[s
 
 
 # ---------------------------------------------------------------------
-# Tool 1: Stock basic info (company profile) — multi-source
+# 工具 1: 股票基本信息（公司概况）— 多源
 # ---------------------------------------------------------------------
 def _basic_info_from_eastmoney(symbol: str) -> dict[str, Any]:
     import akshare as ak
@@ -127,27 +100,19 @@ def _basic_info_from_xueqiu(symbol: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_stock_basic_info(symbol: str) -> dict:
-    """Return company profile for an A-share ticker.
+    """返回 A 股代码的公司概况。
 
-    Tries 东方财富 first (行业/市值/流通股 data), falls back to 雪球
-    (which returns a richer 39-field profile with English names,
-    registration info, and business scope) if the primary endpoint
-    is unreachable.
+    优先尝试东方财富（行业/市值/流通股数据），若主端点不可达则回退到雪球（返回更丰富的 39 字段概况，含英文名、注册信息和经营范围）。
 
-    Fields typically include: 最新价, 总股本, 流通股, 总市值, 流通市值,
-    行业, 上市时间, 股票简称, 股票代码 (eastmoney) OR org_name_cn,
-    org_short_name_cn, established_date, main_business, reg_asset,
-    listed_date (xueqiu).
+    典型字段包括：最新价、总股本、流通股、总市值、流通市值、行业、上市时间、股票简称、股票代码（eastmoney）或 org_name_cn、org_short_name_cn、
+    established_date、main_business、reg_asset、listed_date（xueqiu）。
 
     Args:
-        symbol: 6-digit ticker, e.g. ``"300750"`` for 宁德时代. Do NOT
-            include exchange prefixes like ``sh`` or ``sz``.
+        symbol: 6 位代码，如 ``"300750"`` 代表宁德时代。勿包含``sh`` 或 ``sz`` 等交易所前缀。
 
     Returns:
-        Dictionary with ``symbol``, ``info``, and ``source`` — either
-        ``"eastmoney"`` or ``"xueqiu"`` depending on which provider
-        served the request. On total failure (both sources down)
-        returns ``{"error": ...}``.
+        包含 ``symbol``、``info`` 和 ``source`` 的字典 — ``source`` 为``"eastmoney"`` 或 ``"xueqiu"``，取决于哪个提供方响应了请求。
+        若两个源都失败，返回 ``{"error": ...}``。
     """
     errors: list[str] = []
     for label, fn in (
@@ -166,7 +131,7 @@ async def get_stock_basic_info(symbol: str) -> dict:
 
 
 # ---------------------------------------------------------------------
-# Tool 2: Price history with summary stats — multi-source
+# 工具 2: 价格历史及汇总统计 — 多源
 # ---------------------------------------------------------------------
 def _summarize_bars(
     df: pd.DataFrame,
@@ -176,7 +141,7 @@ def _summarize_bars(
     high_col: str,
     low_col: str,
 ) -> dict[str, Any]:
-    """Shared summary-stat builder for different provider schemas."""
+    """不同提供方数据结构的通用汇总统计构建器。"""
     first_close = float(df[close_col].iloc[0])
     last_close = float(df[close_col].iloc[-1])
     pct_change = (last_close - first_close) / first_close * 100 if first_close else 0.0
@@ -235,27 +200,20 @@ async def get_stock_price_history(
     days: int = 30,
     adjust: str = "qfq",
 ) -> dict:
-    """Return daily OHLCV bars for the last ``days`` trading sessions.
+    """返回最近 ``days`` 个交易日的日级 OHLCV K线。
 
-    Tries 东方财富 first (richest schema: 成交量/成交额/振幅/换手率),
-    falls back to 新浪 (simpler schema: date/open/high/low/close/
-    volume/amount). Weekends and market holidays are automatically
-    skipped by both providers — ``days`` is a *calendar* window, so
-    30 calendar days yield ~20 trading sessions.
+    优先尝试东方财富（最丰富的字段：成交量/成交额/振幅/换手率），
+    回退到新浪（较简字段：date/open/high/low/close/volume/amount）。
+    周末和市场假期由两个提供方自动跳过 — ``days`` 是日历窗口，因此 30 个日历日约产生 20 个交易日。
 
     Args:
-        symbol: 6-digit ticker, e.g. ``"300750"``.
-        days: Lookback window in calendar days (default 30, max 365).
-        adjust: Price adjustment mode. ``"qfq"`` = forward-adjusted
-            (recommended for returns analysis), ``"hfq"`` = backward-
-            adjusted, ``""`` = raw prices.
+        symbol: 6 位代码，如 ``"300750"``。
+        days: 回看窗口（日历天数，默认 30，最大 365）。
+        adjust: 复权模式。``"qfq"`` = 前复权（推荐用于收益分析），``"hfq"`` = 后复权，``""`` = 不复权。
 
     Returns:
-        Dictionary with ``symbol``, ``bars`` (list of daily records —
-        keys are Chinese for eastmoney, English for sina), ``summary``
-        with ``{period_start, period_end, sessions, high, low,
-        pct_change}``, and ``source`` indicating which provider
-        answered.
+        包含 ``symbol``、``bars``（日级记录列表 — 东方财富为中文键名， 新浪为英文键名）、
+        ``summary``（含 ``{period_start, period_end, sessions, high, low, pct_change}``）以及 ``source``（指示哪个提供方响应）的字典。
     """
     if days < 1 or days > 365:
         return _fmt_error(
@@ -280,7 +238,7 @@ async def get_stock_price_history(
 
 
 # ---------------------------------------------------------------------
-# Tool 3: Financial abstract (核心三表摘要)
+# 工具 3: 财务摘要（核心三表摘要）
 # ---------------------------------------------------------------------
 _ABSTRACT_KEY_METRICS: tuple[str, ...] = (
     "归母净利润",
@@ -294,32 +252,25 @@ _ABSTRACT_KEY_METRICS: tuple[str, ...] = (
     "基本每股收益",
     "每股净资产",
 )
-"""Whitelist of rows we surface from ``stock_financial_abstract``.
+"""从 ``stock_financial_abstract`` 中呈现的行项白名单。
 
-``akshare`` returns ~50 rows covering every line-item; 90% are noise
-for a research-report use case. We only bubble up the rows an analyst
-would actually cite.
+``akshare`` 返回约 50 行覆盖所有明细项；对于研报用例来说 90% 是噪音。仅呈现分析师会实际引用的行项。
 """
 
 
 @mcp.tool()
 async def get_financial_abstract(symbol: str, last_n_periods: int = 4) -> dict:
-    """Return key financial statement items across recent reporting periods.
+    """返回最近报告期的核心财务报表项目。
 
-    Covers the items analysts cite in research reports: revenue, net
-    income, operating cash flow, EPS, and a few balance-sheet anchors.
-    Each column is one reporting period (quarterly or annual).
+    涵盖分析师在研报中引用的项目：营收、净利润、经营现金流、EPS及若干资产负债表锚定指标。每列为一个报告期（季度或年度）。
 
     Args:
-        symbol: 6-digit ticker.
-        last_n_periods: Number of most-recent reporting periods to
-            include (default 4 ≈ one year of quarterly filings,
-            max 12).
+        symbol: 6 位代码。
+        last_n_periods: 包含的最近报告期数量（默认 4 ≈ 一年的季报，最大 12）。
 
     Returns:
-        Dictionary with ``symbol``, ``periods`` (list of period codes
-        like ``"20241231"``), and ``metrics`` (dict of
-        ``{metric_name: [value_period_1, value_period_2, ...]}``).
+        包含 ``symbol``、``periods``（报告期代码列表，如 ``"20241231"``）
+        和 ``metrics``（字典，形如``{metric_name: [value_period_1, value_period_2, ...]}``）的字典。
     """
     if last_n_periods < 1 or last_n_periods > 12:
         return _fmt_error(
@@ -375,7 +326,7 @@ async def get_financial_abstract(symbol: str, last_n_periods: int = 4) -> dict:
 
 
 # ---------------------------------------------------------------------
-# Tool 4: Financial ratios (ROE/ROA/margins/leverage)
+# 工具 4: 财务比率（ROE/ROA/利润率/杠杆）
 # ---------------------------------------------------------------------
 _RATIO_KEY_METRICS: tuple[str, ...] = (
     "净资产收益率",
@@ -393,18 +344,16 @@ _RATIO_KEY_METRICS: tuple[str, ...] = (
 
 @mcp.tool()
 async def get_financial_indicators(symbol: str, start_year: str = "2023") -> dict:
-    """Return key financial ratios (ROE, ROA, margins, leverage).
+    """返回核心财务比率（ROE、ROA、利润率、杠杆）。
 
     Args:
-        symbol: 6-digit ticker.
-        start_year: 4-digit year string, e.g. ``"2023"``. akshare
-            returns all reporting periods from this year forward.
+        symbol: 6 位代码。
+        start_year: 4 位年份字符串，如 ``"2023"``。akshare 返回从该年起的所有报告期。
 
     Returns:
-        Dictionary with ``symbol``, ``periods`` (list of report dates
-        like ``"2024-09-30"``), and ``ratios`` (dict of
-        ``{ratio_name: [value_period_1, value_period_2, ...]}``).
-        Values may be ``None`` where the upstream source left a hole.
+        包含 ``symbol``、``periods``（报告日期列表，如 ``"2024-09-30"``）
+        和 ``ratios``（字典，形如``{ratio_name: [value_period_1, value_period_2, ...]}``）的字典。
+        上游源留空的位置值为 ``None``。
     """
     if len(start_year) != 4 or not start_year.isdigit():
         return _fmt_error(
@@ -451,24 +400,21 @@ async def get_financial_indicators(symbol: str, start_year: str = "2023") -> dic
 
 
 # ---------------------------------------------------------------------
-# Tool 5: Fuzzy search stock by company name
+# 工具 5: 按公司名称模糊搜索股票
 # ---------------------------------------------------------------------
 @mcp.tool()
 async def search_stock_by_name(keyword: str, limit: int = 10) -> dict:
-    """Fuzzy-match a company name to A-share tickers.
+    """模糊匹配公司名称到 A 股代码。
 
-    The first call warms an in-memory cache of the whole A-share
-    roster (~5k tickers, ~6s one-shot cost). Subsequent calls are
-    sub-millisecond pandas filters.
+    首次调用会预热一个涵盖全部 A 股名单的内存缓存（约 5k 个代码，一次性耗时约 6 秒）。后续调用为亚毫秒级的 pandas 过滤。
 
     Args:
-        keyword: Partial company name, e.g. ``"宁德"`` or ``"平安"``.
-        limit: Max matches to return (default 10, cap 50).
+        keyword: 部分公司名称，如 ``"宁德"`` 或 ``"平安"``。
+        limit: 最大返回匹配数（默认 10，上限 50）。
 
     Returns:
-        Dictionary with ``keyword`` and ``matches`` (list of
-        ``{"code": "300750", "name": "宁德时代"}``), or
-        ``{"error": ...}`` on failure.
+        包含 ``keyword`` 和 ``matches``（列表，形如``{"code": "300750", "name": "宁德时代"}``）的字典，
+        或失败时返回 ``{"error": ...}``。
     """
     if not keyword.strip():
         return _fmt_error(

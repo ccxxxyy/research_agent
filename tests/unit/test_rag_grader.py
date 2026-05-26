@@ -1,4 +1,4 @@
-"""Unit tests for rag.grader — RetrievalGrader."""
+"""rag.grader 单元测试 — RetrievalGrader。"""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ class TestRetrievalGrader:
         assert strict.grade(top_score=0.50, mean_score=0.40, unique_sources=2) == "low"
 
     def test_grade_consistency_with_original_function(self):
-        """Verify the same logic that knowledge_server._classify_quality used."""
+        """验证与 knowledge_server._classify_quality 相同的评分逻辑。"""
         g = RetrievalGrader(high_threshold=0.65, medium_threshold=0.40)
         assert g.grade(0.65, 0.5, 1) == "high"
         assert g.grade(0.64, 0.5, 1) == "medium"

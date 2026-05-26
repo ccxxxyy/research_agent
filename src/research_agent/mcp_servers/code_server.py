@@ -1,4 +1,4 @@
-"""MCP Server — Sandboxed Python code execution for data analysis."""
+"""MCP Server — 用于数据分析的沙箱 Python 代码执行。"""
 
 from __future__ import annotations
 
@@ -14,17 +14,17 @@ mcp = FastMCP("CodeExecutor")
 
 @mcp.tool()
 async def execute_python(code: str, timeout_seconds: int = 30) -> dict:
-    """Execute Python code in a sandboxed environment.
+    """在沙箱环境中执行 Python 代码。
 
-    Useful for numerical analysis, data processing, and calculations.
-    Common libraries available: math, statistics, json, collections, itertools.
+    适用于数值分析、数据处理和计算。
+    可用常用库：math、statistics、json、collections、itertools。
 
     Args:
-        code: Python code to execute.
-        timeout_seconds: Maximum execution time in seconds.
+        code: 要执行的 Python 代码。
+        timeout_seconds: 最大执行时间（秒）。
 
     Returns:
-        Dictionary with stdout output, return value, and any errors.
+        包含标准输出、返回值和错误信息的字典。
     """
     stdout_capture = io.StringIO()
     result: dict[str, Any] = {
@@ -35,7 +35,7 @@ async def execute_python(code: str, timeout_seconds: int = 30) -> dict:
 
     safe_globals: dict[str, Any] = {
         "__builtins__": {
-            # --- Pure functions / data constructors ---
+            # --- 纯函数/数据构造函数 ---
             "print": print,
             "range": range,
             "len": len,
@@ -65,11 +65,9 @@ async def execute_python(code: str, timeout_seconds: int = 30) -> dict:
             "isinstance": isinstance,
             "repr": repr,
             "hash": hash,
-            # --- Exception hierarchy ---
-            # Without these, *any* ``raise ValueError(...)`` in user code
-            # fails with NameError before the real error even surfaces,
-            # which is a trap for analyst scripts that routinely do
-            # ``if df.empty: raise ValueError('no data')``.
+            # --- 异常层次结构 ---
+            # 没有这些，用户代码中任何 ``raise ValueError(...)`` 都会在真正的错误浮出之前抛出 NameError，
+            # 沙箱环境中 __builtins__ 是自定义的白名单。如果白名单里不包含 ValueError 这个名字，那么当 LLM 生成的代码写了 raise ValueError("no data") 时，Python 不会报 ValueError: no data，而是会报 NameError: name 'ValueError' is not defined——因为沙箱里根本没定义 ValueError 这个词。这对经常写``if df.empty: raise ValueError('no data')`` 的分析脚本是个陷阱。
             "Exception": Exception,
             "BaseException": BaseException,
             "ValueError": ValueError,
@@ -81,7 +79,7 @@ async def execute_python(code: str, timeout_seconds: int = 30) -> dict:
             "ArithmeticError": ArithmeticError,
             "RuntimeError": RuntimeError,
             "StopIteration": StopIteration,
-            # --- Constants ---
+            # --- 常数 ---
             "True": True,
             "False": False,
             "None": None,

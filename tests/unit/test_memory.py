@@ -1,4 +1,4 @@
-"""Tests for long-term memory management."""
+"""长期记忆管理的测试。"""
 
 import pytest
 

@@ -1,9 +1,7 @@
-"""Token usage tracking per agent and model tier.
+"""按 Agent 和模型层级追踪 Token 用量。
 
-Provides :class:`UsageTracker` for accumulating token counts and
-estimated costs, plus :class:`UsageCallbackHandler` — a LangChain
-callback that feeds every ``on_llm_end`` event into the tracker
-automatically.
+提供 :class:`UsageTracker` 用于累计 Token 数与估算费用，
+以及 :class:`UsageCallbackHandler` — 一个 LangChain 回调，自动将每个 ``on_llm_end`` 事件喂入追踪器。
 """
 
 from __future__ import annotations
@@ -24,28 +22,23 @@ class UsageRecord:
     completion_tokens: int = 0
     total_tokens: int = 0
     call_count: int = 0
-    total_cost_usd: float = 0.0
+    total_cost_cny: float = 0.0
 
 
 MODEL_PRICING: dict[str, tuple[float, float]] = {
-    # (input_per_1M_tokens, output_per_1M_tokens) in USD
-    # --- OpenAI ---
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
+    # (每百万输入 Token, 每百万输出 Token) 单位：人民币（元）
     # --- DeepSeek ---
-    "deepseek-chat": (0.07, 0.27),
-    "deepseek-reasoner": (0.55, 2.19),
-    "deepseek-v4-pro": (0.55, 2.19),
+    "deepseek-v4-pro": (12.00, 24.00),
+    "deepseek-v4-flash": (1.00, 2.00),
     # --- Qwen (DashScope) ---
-    "qwen3-max-2026-01-23": (0.16, 0.64),
-    "qwen3-max": (0.16, 0.64),
-    "qwen3.6-plus": (0.08, 0.32),
-    "qwen-plus": (0.08, 0.32),
+    "qwen3-max": (2.50, 10.00),
+    "qwen3.6-plus": (2.00, 12.00),
+    "qwen-plus": (0.80, 2.00),
 }
 
 
 class UsageTracker:
-    """Thread-safe token usage tracker with cost estimation."""
+    """线程安全的 Token 用量追踪器，附带费用估算。"""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -72,7 +65,7 @@ class UsageTracker:
                 rec.completion_tokens += completion_tokens
                 rec.total_tokens += total
                 rec.call_count += 1
-                rec.total_cost_usd += cost
+                rec.total_cost_cny += cost
 
     @staticmethod
     def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -87,7 +80,7 @@ class UsageTracker:
             return {
                 "by_agent": {k: _record_to_dict(v) for k, v in self._by_agent.items()},
                 "by_model": {k: _record_to_dict(v) for k, v in self._by_model.items()},
-                "total_cost_usd": sum(r.total_cost_usd for r in self._by_model.values()),
+                "total_cost_cny": sum(r.total_cost_cny for r in self._by_model.values()),
             }
 
     def reset(self) -> None:
@@ -97,31 +90,23 @@ class UsageTracker:
 
 
 class UsageCallbackHandler(BaseCallbackHandler):
-    """LangChain callback that pipes ``on_llm_end`` token usage into a :class:`UsageTracker`.
+    """将 ``on_llm_end`` Token 用量导入 :class:`UsageTracker` 的 LangChain 回调。
 
-    Attach to a ``ChatOpenAI`` instance via its ``callbacks`` kwarg::
+    通过 ``callbacks`` 关键字参数附加到 ``ChatOpenAI`` 实例::
 
         handler = UsageCallbackHandler(tracker, tier_label="heavy")
         llm = ChatOpenAI(..., callbacks=[handler])
 
-    The handler extracts ``token_usage`` from ``LLMResult.llm_output``
-    (the dict OpenAI-compatible providers populate) and records it
-    under ``(tier_label, model_name)``.
+    该 handler 从 ``LLMResult.llm_output``（OpenAI 兼容提供商填充的字典）中提取 ``token_usage``，并记录在 ``(tier_label, model_name)`` 下。
 
-    Performance note
-    ----------------
-    The recording path is fast and non-blocking (a single
-    ``threading.Lock`` acquire + a dict update). We set
-    ``run_inline = True`` so LangChain executes us **directly on the
-    event loop** when the wrapped LLM is invoked via ``ainvoke`` /
-    ``astream`` — instead of paying the default ``run_in_executor``
-    round-trip for every LLM call. For sync ``invoke`` callers nothing
-    changes.
+    性能说明
+    --------
+    记录路径快速且无阻塞（单次 ``threading.Lock`` 获取 + 字典更新）。
+    设置 ``run_inline = True``，这样当被包装的 LLM 通过 ``ainvoke`` /``astream`` 调用时，LangChain 会直接在事件循环上执行，
+    而非为每次 LLM 调用支付默认的 ``run_in_executor`` 往返开销。对同步 ``invoke`` 调用者无影响。
     """
 
-    # Run synchronously in the async dispatch path. Safe because the
-    # body is non-blocking (lock + dict update + structured log). See
-    # ``langchain_core.callbacks.base.BaseCallbackHandler.run_inline``.
+    # 在异步分发路径中同步执行。安全因为函数体是非阻塞的（锁 + 字典更新 +结构化日志）。见 ``langchain_core.callbacks.base.BaseCallbackHandler.run_inline``。
     run_inline: bool = True
 
     def __init__(self, tracker: UsageTracker, *, tier_label: str = "") -> None:
@@ -166,5 +151,5 @@ def _record_to_dict(rec: UsageRecord) -> dict:
         "completion_tokens": rec.completion_tokens,
         "total_tokens": rec.total_tokens,
         "call_count": rec.call_count,
-        "total_cost_usd": round(rec.total_cost_usd, 6),
+        "total_cost_cny": round(rec.total_cost_cny, 6),
     }

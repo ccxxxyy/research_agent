@@ -1,4 +1,4 @@
-"""Supervisor multi-agent endpoints — Phase-3 demo + Phase-4.5 product path."""
+"""主管多智能体端点 —— FastAPI 的 HTTP 路由文件，负责接收前端请求然后调用 graph 包里的图来处理。是 Web API 层，把 HTTP 请求转换成对图的调用。它和 graph 包下的 supervisor 是"调用者"和"被调用者"的关系。"""
 
 from __future__ import annotations
 
@@ -36,12 +36,9 @@ def _graph_config(
     thread_id: str,
     recursion_limit: int | None,
 ) -> dict:
-    """Build a LangGraph config dict with a safe recursion limit.
+    """构建 LangGraph 配置字典，设置安全的递归上限。
 
-    When the caller does not specify a limit, falls back to
-    ``Settings.default_recursion_limit`` (default 50) instead of
-    LangGraph's built-in 25, which is too low for the 6-specialist
-    research supervisor + optional reflection loop.
+    当调用方未指定上限时，回退到 ``Settings.default_recursion_limit``（默认 50），而非 LangGraph 内置的 25 —— 后者对 6 个专家的研究主管 + 可选反思循环而言过低。
     """
     cfg: dict = {"configurable": {"thread_id": thread_id}}
     if recursion_limit is not None:
@@ -54,12 +51,12 @@ router = APIRouter(prefix="/api/supervisor", tags=["supervisor"])
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers
+# 共享辅助函数
 # ---------------------------------------------------------------------------
 
 
 def _final_assistant_text(messages: list) -> str:
-    """Return the last non-tool-call assistant message content."""
+    """返回最后一条不含工具调用的助手消息内容。"""
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
             tc = getattr(msg, "tool_calls", None) or []
@@ -69,15 +66,12 @@ def _final_assistant_text(messages: list) -> str:
 
 
 def _specialists_reached(messages: list) -> list[str]:
-    """Extract distinct specialists the supervisor routed to.
+    """提取主管路由到的去重专家列表。
 
-    Uses the ``transfer_to_<name>`` tool-call convention enforced by
-    ``langgraph_supervisor``. ``transfer_to_supervisor`` (back-hand-off)
-    is intentionally stripped so the caller only sees what actually
-    did work.
+    使用 ``langgraph_supervisor`` 强制的 ``transfer_to_<name>`` 工具调用约定。
+    ``transfer_to_supervisor``（回交）被有意剥离，调用方仅看到实际执行工作的专家。
 
-    Order is preserved by first-seen; callers that want a stable set
-    can just ``set(...)`` the result.
+    保持首次出现顺序；需要稳定集合的调用方可直接 ``set(...)``。
     """
     seen: list[str] = []
     for m in messages:
@@ -104,13 +98,12 @@ async def _build_user_context_messages(
     user_id: str,
     query: str,
 ) -> list[BaseMessage]:
-    """Build the graph input message list with optional long-term context.
+    """构建包含可选长期上下文的图输入消息列表。
 
-    Shared by both the synchronous and SSE research routes so the LLM
-    sees exactly the same preamble regardless of transport.
+    同步与 SSE 研究路由共用此函数，确保 LLM 无论传输方式如何都看到完全相同的前导内容。
 
-    Returns ``[SystemMessage, HumanMessage]`` when context exists,
-    or ``[HumanMessage]`` for anonymous / empty-context users.
+    有上下文时返回 ``[SystemMessage, HumanMessage]``，
+    匿名 / 无上下文用户返回 ``[HumanMessage]``。
     """
     messages: list[BaseMessage] = []
     if user_id != "anonymous":
@@ -137,7 +130,7 @@ async def _build_user_context_messages(
 
 
 # ---------------------------------------------------------------------------
-# Phase-3 minimal supervisor — kept for the handoff teaching demo
+#最小主管 —— 为交接教学演示保留
 # ---------------------------------------------------------------------------
 
 
@@ -146,12 +139,11 @@ async def supervisor_chat(
     request: SupervisorChatRequest,
     graph: SupervisorGraphDep,
 ) -> SupervisorChatResponse:
-    """Route a user message through the minimal supervisor + specialists graph.
+    """将用户消息路由到最小主管 + 专家图。
 
-    The supervisor (``langgraph_supervisor.create_supervisor``) decides
-    which single-tool specialist — ``math_expert``, ``time_expert``, or
-    ``text_analyst`` — should handle each subtask, then synthesises the
-    final user-visible answer.
+    主管（``langgraph_supervisor.create_supervisor``）决定由哪个单工具
+    专家 —— ``math_expert``、``time_expert`` 或 ``text_analyst`` ——
+    处理每个子任务，然后合成最终面向用户的回答。
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     config = _graph_config(thread_id, request.recursion_limit)
@@ -173,7 +165,7 @@ async def supervisor_chat(
 
 
 # ---------------------------------------------------------------------------
-# Phase-4.5 research supervisor — data / report / coder team
+# 研究主管 —— 数据 / 报告 / 编码团队
 # ---------------------------------------------------------------------------
 
 
@@ -183,15 +175,12 @@ async def supervisor_research(
     graph: ResearchSupervisorGraphDep,
     memory: MemoryDep,
 ) -> ResearchSupervisorResponse:
-    """Invoke the financial-research supervisor synchronously.
+    """同步调用金融研究主管。
 
-    Memory lifecycle:
-      1. Load user's long-term context (preferences + recent research
-         history) and inject as a system-message preamble.
-      2. Execute the research graph (short-term state managed by
-         the checkpointer via thread_id).
-      3. Save the completed research result to long-term memory
-         for cross-session retrieval.
+    记忆生命周期：
+      1. 加载用户的长期上下文（偏好 + 近期研究历史）并作为系统消息前导注入。
+      2. 执行研究图（短期状态由检查点器通过 thread_id 管理）。
+      3. 将完成的研究结果保存到长期记忆，以支持跨会话检索。
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
@@ -201,7 +190,7 @@ async def supervisor_research(
         "Research-supervisor invoke: user={}, thread={}", user_id, thread_id
     )
 
-    # --- Long-term memory: load user context ---
+    # --- 长期记忆：加载用户上下文 ---
     messages_input = await _build_user_context_messages(
         memory, user_id, request.query,
     )
@@ -213,7 +202,7 @@ async def supervisor_research(
     messages = result.get("messages", [])
     reply = _final_assistant_text(messages)
 
-    # --- Long-term memory: save research result ---
+    # --- 长期记忆：保存研究结果 ---
     if user_id != "anonymous" and reply:
         try:
             await memory.save_research_result(
@@ -234,33 +223,28 @@ async def supervisor_research(
 
 
 def _sse_heartbeat_interval_seconds() -> float:
-    """SSE idle interval before emitting a heartbeat (0 disables).
+    """发送心跳前的 SSE 空闲间隔（0 表示禁用）。
 
-    Separated from :func:`~research_agent.config.get_settings` reads
-    so unit tests can ``monkeypatch`` this helper without flushing the
-    global settings LRU cache.
+    从 :func:`~research_agent.config.get_settings` 读取中分离出来，
+    以便单元测试可以 ``monkeypatch`` 此辅助函数而无需刷新全局配置的LRU 缓存。
     """
     return float(get_settings().sse_research_heartbeat_seconds)
 
 
 def _format_sse(event: ResearchSupervisorSSEEvent) -> str:
-    """Render one SSE event in the canonical ``data: ...\n\n`` shape."""
+    """将一个 SSE 事件渲染为规范的 ``data: ...\\n\\n`` 格式。"""
     return f"data: {event.model_dump_json()}\n\n"
 
 
 def _extract_update_snippet(node_update: dict) -> tuple[str, str]:
-    """Pick an informative ``(last_tool_call_name, text_snippet)`` pair
-    from a ``stream_mode='updates'`` payload.
+    """从 ``stream_mode='updates'`` 的载荷中提取有用的``(last_tool_call_name, text_snippet)`` 对。
 
-    ``langgraph_supervisor`` emits updates shaped like::
+    ``langgraph_supervisor`` 发出的更新形如::
 
         {"supervisor": {"messages": [AIMessage(tool_calls=[...])]}}
         {"data_expert": {"messages": [AIMessage(content="...")]}}
 
-    We pull the newest message from the ``messages`` key and classify
-    it. An empty snippet means the node produced nothing interesting
-    (e.g. an internal tool-response ToolMessage we choose not to
-    stream).
+    从 ``messages`` 键中取出最新消息并分类。空 snippet 表示该节点未产生有意义的输出（如选择不流式传输的内部工具响应 ToolMessage）。
     """
     msgs = node_update.get("messages") or []
     if not msgs:
@@ -292,18 +276,15 @@ _KNOWN_SPECIALISTS = frozenset({
 
 
 def _namespace_specialist(namespace: tuple) -> str | None:
-    """Extract specialist name from a subgraph namespace tuple.
+    """从子图命名空间元组中提取专家名称。
 
-    ``subgraphs=True`` yields ``(namespace, chunk)`` pairs where
-    ``namespace`` is a tuple of strings tracing the nesting path:
+    ``subgraphs=True`` 产出 ``(namespace, chunk)`` 对，其中 ``namespace`` 是一个追踪嵌套路径的字符串元组：
 
-    * ``()`` — root / parent graph.
-    * ``("supervisor",)`` — inside the wrapped supervisor node
-      (when reflection or HITL wraps the supervisor).
-    * ``("supervisor", "data_expert")`` or ``("data_expert",)`` —
-      inside a specialist subgraph.
+    * ``()`` —— 根 / 父图。
+    * ``("supervisor",)`` —— 在被包装的主管节点内（当反思或 HITL 包装了主管时）。
+    * ``("supervisor", "data_expert")`` 或 ``("data_expert",)`` ——在专家子图内。
 
-    Returns the specialist name if found, ``None`` otherwise.
+    找到时返回专家名称，否则返回 ``None``。
     """
     if not namespace:
         return None
@@ -320,12 +301,9 @@ def _emit_specialist_internal(
     node_update: dict,
     frames: "asyncio.Queue[str | None]",
 ) -> None:
-    """Push SSE frames for a specialist's internal steps.
+    """为专家的内部步骤推送 SSE 帧。
 
-    Only tool invocations are surfaced (``TOOL_CALL`` phase) to
-    keep the stream concise.  Raw ``ToolMessage`` results are
-    skipped — they are often verbose JSON payloads that add noise
-    without value for the end-user.
+    仅展示工具调用（``TOOL_CALL`` 阶段）以保持流的简洁。原始``ToolMessage`` 结果被跳过 —— 它们通常是冗长的 JSON 载荷，
     """
     msgs = node_update.get("messages") or []
     if not msgs:
@@ -376,11 +354,9 @@ async def _persist_stream_research_to_memory(
     graph_input_query: str,
     thread_id: str,
 ) -> None:
-    """Persist like ``POST …/research`` when the streamed graph exits cleanly.
+    """当流式图正常退出时，执行与 ``POST …/research`` 相同的持久化。
 
-    Only saves when LangGraph finishes ``astream`` without raising --- same
-    success notion as treating the synchronous route as committed. Keeps the
-    last plain synthesis from supervisor or reflection as the summary.
+    仅在 LangGraph 的 ``astream`` 未抛异常时保存 —— 与同步路由视为已提交的成功定义一致。保留主管或反思的最后一条纯文本合成作为摘要。
     """
     if memory is None or not persist_user_id or persist_user_id == "anonymous":
         return
@@ -421,35 +397,23 @@ async def _research_event_stream(
     persist_original_query: str | None = None,
     available_specialists: list[str] | None = None,
 ) -> AsyncIterator[str]:
-    """Async generator producing SSE frames for one research invocation.
+    """为单次研究调用生成 SSE 帧的异步生成器。
 
     Parameters
     ----------
     messages:
-        Pre-built input list from :func:`_build_user_context_messages`
-        (``[SystemMessage?, HumanMessage]``). Using the same builder as
-        the synchronous route guarantees identical LLM preamble.
+        由 :func:`_build_user_context_messages` 预构建的输入列表（``[SystemMessage?, HumanMessage]``）。使用与同步路由相同的构建器以保证 LLM 前导内容一致。
 
-    Phases emitted (in rough order):
-      * ``handoff``   — one per ``transfer_to_<specialist>`` tool call.
-      * ``update``    — one per non-empty assistant message update,
-                        plus one synthetic opening frame ``stream opened``
-                        whose ``metadata`` includes ``thread_id`` and
-                        ``available_specialists`` (names compiled at
-                        startup; empty if none).
-      * ``final``     — the first plain supervisor AIMessage whose last
-                       message carries no outbound tool-call.
-      * ``error``     — if the graph raises.
-      * ``heartbeat`` — idle keep-alive when graph output pauses; spacing
-                        comes from ``sse_research_heartbeat_seconds`` (env
-                        ``SSE_RESEARCH_HEARTBEAT_SECONDS``, default ``15``;
-                        ``0`` disables).
-      * ``done``      — always last.
+    发出的阶段（大致顺序）：
+      * ``handoff``   —— 每次 ``transfer_to_<specialist>`` 工具调用各一条。
+      * ``update``    —— 每条非空助手消息更新各一条，外加一条合成的开启帧 ``stream opened``，其 ``metadata`` 含 ``thread_id`` 和 ``available_specialists`` （启动时编译的名称列表，无则为空）。
+      * ``final``     —— 主管发出的首条不含出站工具调用的纯文本 AIMessage。
+      * ``error``     —— 图抛出异常时发出。
+      * ``heartbeat`` —— 图输出暂停时的空闲保活帧；间隔由``sse_research_heartbeat_seconds``（环境变量``SSE_RESEARCH_HEARTBEAT_SECONDS``，默认 ``15``；``0`` 禁用）控制。
+      * ``done``      —— 始终为最后一条。
 
-    Long-term memory: mirrors ``supervisor_research``. When ``astream``
-    completes without exceptions, the last supervisor / reflection plain
-    reply is written via :meth:`MemoryManager.save_research_result` using
-    ``persist_original_query`` (never the preamble-inflated text).
+    长期记忆：与 ``supervisor_research`` 镜像。当 ``astream`` 无异常完成时，通过 :meth:`MemoryManager.save_research_result` 将主管 /反思的最后一条纯文本回复写入，
+    使用 ``persist_original_query``（而非经前导膨胀的文本）。
     """
     heartbeat_interval = _sse_heartbeat_interval_seconds()
 
@@ -485,8 +449,7 @@ async def _research_event_stream(
                     stream_mode="updates",
                     subgraphs=True,
                 ):
-                    # With subgraphs=True each event is
-                    # (namespace_tuple, chunk_dict).
+                    # subgraphs=True 时每个事件为 (namespace_tuple, chunk_dict)。
                     if isinstance(event, tuple) and len(event) == 2:
                         namespace, chunk = event
                     elif isinstance(event, dict):
@@ -502,7 +465,7 @@ async def _research_event_stream(
                         if not isinstance(node_update, dict):
                             continue
 
-                        # --- Specialist internal events ---
+                        # --- 专家内部事件 ---
                         if specialist_ns:
                             _emit_specialist_internal(
                                 specialist_ns,
@@ -573,7 +536,7 @@ async def _research_event_stream(
                         )
                 outcome["graph_astream_ok"] = True
 
-                # --- HITL: detect graph interrupted for human review ---
+                # --- HITL：检测图是否因人工审核而中断 ---
                 try:
                     _state = await graph.aget_state(cfg)
                     if _state and getattr(_state, "next", None):
@@ -657,10 +620,7 @@ async def _research_event_stream(
             (str(m.content) for m in messages if isinstance(m, HumanMessage)),
             "",
         )
-        # Shield the memory write from cancellation: if the client
-        # disconnects mid-stream, Uvicorn cancels the handler task.
-        # Without shield() the awaited coroutine would be cancelled
-        # and the research result would be silently lost.
+        # 将记忆写入操作从取消中屏蔽：如果客户端在流传输中途断开，Uvicorn 会取消处理器任务。若不使用 shield()，被等待的协程将被取消，研究结果会静默丢失。
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.shield(
                 _persist_stream_research_to_memory(
@@ -684,25 +644,16 @@ async def supervisor_research_stream(
     graph: ResearchSupervisorGraphDep,
     memory: MemoryDep,
 ) -> StreamingResponse:
-    """Stream the research-supervisor workflow via SSE.
+    """通过 SSE 流式传输研究主管工作流。
 
-    Response is ``text/event-stream``; each frame carries a
-    :class:`ResearchSupervisorSSEEvent`. The stream terminates with
-    a single ``phase=done`` frame (preceded by ``phase=error`` if
-    the graph raised). While the LangGraph backend is idle (no deltas
-    for ``sse_research_heartbeat_seconds``, default **15**, set to
-    ``0`` to disable), the server emits ``phase=heartbeat`` frames so
-    reverse proxies retain the SSE connection. The ``X-Thread-ID``
-    response header carries the resolved thread id so that clients can
-    reuse it in a follow-up call without parsing the first event.
-    The first SSE frame lists ``available_specialists`` when MCP
-    tooling degraded at startup so UIs can show reduced capability.
+    响应类型为 ``text/event-stream``；每帧携带一个:class:`ResearchSupervisorSSEEvent`。流以单条 ``phase=done`` 帧终止（若图抛出异常则在其之前发出 ``phase=error``）。
+    当 LangGraph 后端空闲（在 ``sse_research_heartbeat_seconds`` 秒内无增量，默认 **15**，设为 ``0`` 可禁用）时，
+    服务器发出 ``phase=heartbeat`` 帧以保持反向代理的 SSE 连接。
+    ``X-Thread-ID`` 响应头携带解析后的 thread id，客户端可复用它进行后续调用而无需解析首个事件。
+    首条 SSE帧列出 ``available_specialists``， 当 MCP 工具在启动时降级时 UI 可据此展示缩减的能力。
 
-    Long-term memory: user context preamble is built by
-    :func:`_build_user_context_messages` — identical to the synchronous
-    route. Completed streams also call ``MemoryManager.save_research_result``
-    automatically (unless ``user_id`` is ``anonymous``), using the user's
-    original ``query`` and the last supervisor / reflection plain reply.
+    长期记忆：用户上下文前导由 :func:`_build_user_context_messages`构建 —— 与同步路由一致。完成的流也会自动调用
+    ``MemoryManager.save_research_result``（``user_id`` 为 ``anonymous`` 时除外），使用用户原始 ``query`` 和主管 / 反思的最后一条纯文本回复。
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
@@ -739,31 +690,25 @@ async def supervisor_research_stream(
 
 
 # ---------------------------------------------------------------------------
-# HITL — approve / resume a paused research thread
+# HITL —— 审批 / 恢复已暂停的研究线程
 # ---------------------------------------------------------------------------
 
 
 async def _verify_thread_interrupted(
     graph, thread_id: str
 ) -> None:
-    """Raise the correct HTTP error if the thread is not awaiting review.
-
-    Status code matrix:
-
-    * ``404`` — checkpointer has *no record* of ``thread_id``
-      (``aget_state`` returns ``None`` or a state with empty
-      ``values`` and empty ``next``). The thread never existed.
-    * ``409`` — the thread exists but is *not paused for review*
-      (``state.next`` is empty). The graph has already terminated.
-    * ``500`` — the checkpointer itself errored out (DB
-      unreachable, schema mismatch, etc.). Caller can retry.
+    """若线程未处于待审核状态，则抛出正确的 HTTP 错误。
+    状态码矩阵：
+    * ``404`` —— 检查点器无 ``thread_id`` 记录（``aget_state`` 返回 ``None`` 或 ``values`` 和 ``next`` 均为空的状态）。线程从未存在。
+    * ``409`` —— 线程存在但 *未暂停待审核*（``state.next`` 为空）。图已终止。
+    * ``500`` —— 检查点器自身出错（数据库不可达、schema 不匹配等）。调用方可重试。
     """
     cfg = _graph_config(thread_id, None)
     try:
         state = await graph.aget_state(cfg)
     except Exception as exc:
-        # Underlying checkpointer / DB failure — distinct from a
-        # missing thread, so surface as a true 500.
+        # 底层检查点器 / 数据库故障 —— 与缺失线程不同，
+        # 因此作为真正的 500 返回。
         logger.exception(
             "HITL: checkpointer failed reading thread state: {}", thread_id
         )
@@ -781,8 +726,8 @@ async def _verify_thread_interrupted(
     state_next = getattr(state, "next", None)
     state_values = getattr(state, "values", None) or {}
 
-    # An "empty" state (no values, no next) means the checkpointer
-    # never saw this thread_id — equivalent to "not found".
+    # "空"状态（无 values、无 next）意味着检查点器从未见过此
+    # thread_id —— 等同于"未找到"。
     if not state_next and not state_values:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -790,7 +735,7 @@ async def _verify_thread_interrupted(
         )
 
     if not state_next:
-        # Thread is real but already terminated.
+        # 线程存在但已终止。
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -809,16 +754,11 @@ async def supervisor_research_approve(
     request: ApproveRequest,
     graph: ResearchSupervisorGraphDep,
 ) -> ResearchSupervisorResponse:
-    """Approve a HITL-paused research draft and resume the graph.
+    """审批 HITL 暂停的研究草稿并恢复图执行。
 
-    The ``human_review`` node receives ``{"action": "approve", ...}``
-    via ``Command(resume=...)``, passes through without injecting
-    feedback, and the graph continues to reflection (if enabled) or
-    terminates.
+    ``human_review`` 节点通过 ``Command(resume=...)`` 收到``{"action": "approve", ...}``，直接通过而不注入反馈，图继续进入反思（若启用）或终止。
 
-    If ``feedback`` is non-empty, it is still forwarded as an approve
-    action but the downstream reflection critic / writer will see the
-    reviewer's notes in the message stream.
+    若 ``feedback`` 非空，仍作为审批动作转发，但下游反思批评者 /撰写者将在消息流中看到审核者的备注。
     """
     await _verify_thread_interrupted(graph, thread_id)
 
@@ -849,12 +789,11 @@ async def supervisor_research_resume(
     request: ResumeRequest,
     graph: ResearchSupervisorGraphDep,
 ) -> ResearchSupervisorResponse:
-    """Resume a HITL-paused research with revision feedback.
+    """带修订反馈恢复 HITL 暂停的研究。
 
-    The ``human_review`` node receives ``{"action": "revise", ...}``
-    via ``Command(resume=...)``.  When ``feedback`` is non-empty, the
-    node injects it as a ``HumanMessage`` so the reflection loop (or
-    a downstream rewrite step) can address the reviewer's concerns.
+    ``human_review`` 节点通过 ``Command(resume=...)`` 收到 ``{"action": "revise", ...}``。当 ``feedback`` 非空时，
+    节点将其作为 ``HumanMessage`` 注入，使反思循环（或下游重写步骤）能够处理审核者的意见。
+
     """
     await _verify_thread_interrupted(graph, thread_id)
 

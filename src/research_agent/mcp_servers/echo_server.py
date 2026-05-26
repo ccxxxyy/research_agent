@@ -1,11 +1,11 @@
-"""Minimal MCP server (stdio) for Phase-3 MCP integration demos.
+"""最小化 MCP Server（stdio），用于 MCP 集成演示。
 
-Run directly:
+直接运行：
     uv run python -m research_agent.mcp_servers.echo_server
 
-Or as a subprocess target for :class:`langchain_mcp_adapters.client.MultiServerMCPClient`.
+    或作为 :class:`langchain_mcp_adapters.client.MultiServerMCPClient` 的子进程目标。
 
-This server intentionally avoids network calls so demos work offline.
+本服务器刻意不进行网络调用，以确保演示可离线运行。
 """
 
 from __future__ import annotations
@@ -17,20 +17,20 @@ mcp = FastMCP("Echo")
 
 @mcp.tool()
 def echo_upper(text: str) -> str:
-    """Return ``text`` converted to upper case.
+    """返回将 ``text`` 转换为大写后的结果。
 
     Args:
-        text: Arbitrary string to echo.
+        text: 任意待回显的字符串。
     """
     return text.upper()
 
 
 @mcp.tool()
 def echo_length(text: str) -> int:
-    """Return the character length of ``text`` (not word count).
+    """返回 ``text`` 的字符长度（非单词数）。
 
     Args:
-        text: Input string.
+        text: 输入字符串。
     """
     return len(text)
 

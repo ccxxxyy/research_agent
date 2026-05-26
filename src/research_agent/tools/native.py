@@ -1,8 +1,8 @@
-"""Built-in native tools demonstrating LangChain's Function Calling.
+"""内置原生工具，演示 LangChain 的 Function Calling。
 
-Each tool is decorated with ``@tool`` and uses type hints + docstrings
-for automatic schema generation. The LLM reads these schemas to decide
-when and how to invoke each tool.
+每个工具使用 ``@tool`` 装饰器，并通过类型提示 + 文档字符串自动生成 Schema。LLM 读取这些 Schema 来决定何时以及如何调用每个工具。
+
+3 个简单内置工具：calculate、get_current_time、get_word_count
 """
 
 from __future__ import annotations
@@ -16,17 +16,15 @@ from loguru import logger
 
 @tool
 def get_current_time(timezone_name: str = "Asia/Shanghai") -> str:
-    """Return the current date and time for a given IANA timezone.
+    """返回指定 IANA 时区的当前日期和时间。
 
-    Use this tool when the user asks about the current time, today's date,
-    or needs time-aware reasoning.
+    当用户询问当前时间、今天的日期或需要时间感知推理时使用此工具。
 
     Args:
-        timezone_name: IANA timezone name, e.g. "Asia/Shanghai", "UTC",
-            "America/New_York". Defaults to "Asia/Shanghai".
+        timezone_name: IANA 时区名称，例如 "Asia/Shanghai"、"UTC"、 "America/New_York"。默认为 "Asia/Shanghai"。
 
     Returns:
-        ISO-8601 formatted timestamp string.
+        ISO-8601 格式的时间戳字符串。
     """
     logger.debug("Tool call: get_current_time(timezone={})", timezone_name)
     try:
@@ -39,16 +37,15 @@ def get_current_time(timezone_name: str = "Asia/Shanghai") -> str:
 
 @tool
 def calculate(expression: str) -> str:
-    """Evaluate a simple arithmetic expression and return the numeric result.
+    """计算简单算术表达式并返回数值结果。
 
-    Supports +, -, *, /, //, %, **, parentheses, and standard math functions.
-    Do NOT pass arbitrary Python code — only mathematical expressions.
+    支持 +、-、*、/、//、%、**、括号以及标准数学函数。请勿传入任意 Python 代码——仅接受数学表达式。
 
     Args:
-        expression: Mathematical expression, e.g. "2 + 3 * 4" or "(100 - 5) / 19".
+        expression: 数学表达式，例如 "2 + 3 * 4" 或 "(100 - 5) / 19"。
 
     Returns:
-        String representation of the numerical result, or an error message.
+        数值结果的字符串表示，或错误消息。
     """
     logger.debug("Tool call: calculate(expression={!r})", expression)
 
@@ -74,17 +71,17 @@ def calculate(expression: str) -> str:
 
 @tool
 def get_word_count(text: str) -> int:
-    """Count the number of whitespace-separated words in the given text.
+    """统计给定文本中以空白字符分隔的单词数量。
 
     Args:
-        text: The input text to analyze.
+        text: 待分析的输入文本。
 
     Returns:
-        Integer word count.
+        整数形式的单词数。
     """
     logger.debug("Tool call: get_word_count(text_len={})", len(text))
     return len(text.split())
 
 
 DEFAULT_TOOLS = [get_current_time, calculate, get_word_count]
-"""The default toolset exposed to single-agent smoke tests."""
+"""暴露给单 Agent 冒烟测试的默认工具集。"""

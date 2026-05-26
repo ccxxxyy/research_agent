@@ -1,14 +1,13 @@
-"""LLM-based query rewriter for corrective RAG loops.
+"""基于 LLM 的查询重写器，用于 corrective RAG 循环。
 
-In the production pipeline, query rewriting is driven by the
-``knowledge_expert`` agent's system prompt: when ``knowledge_search``
-returns ``quality == "low"``, the agent rewrites the query and retries
-(up to 3 attempts).  This class encapsulates that same pattern as an
-**independently callable component** so it can be unit-tested, used
-outside the agent loop, and pointed at during interviews when asked
-"where is your Corrective RAG code?"
+查询重写由 ``knowledge_expert`` Agent 的系统提示词驱动：
+当 ``knowledge_search`` 返回 ``quality == "low"`` 时，Agent 重写查询并重试（最多 3 次）。
+本类将同一模式封装为可独立调用的组件，以便进行单元测试、
+"同一模式"指：knowledge_expert 的提示词里已经描述了的改写行为。knowledge_expert 的系统提示词告诉它："如果 quality == 'low'，用更具体的关键词改写查询，再调一次 knowledge_search"这个改写行为是 knowledge_expert（一个 LLM agent）自己做的——它看到 quality='low' 后，自己想一个新的搜索词。QueryRewriter 类把同样的逻辑（改写查询）封装成一个独立的、可直接调用的组件。
 
-Typical usage::
+在 Agent 循环外使用，"Corrective RAG 代码"时可以直接指向。
+
+典型用法::
 
     rewriter = QueryRewriter(model=model_router.get_model(ModelTier.LIGHT))
     better_query = await rewriter.rewrite(
@@ -26,34 +25,29 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
 _SYSTEM_PROMPT = """\
-You are a search-query rewriter inside a Corrective RAG pipeline.
+你是纠正式 RAG 流水线中的搜索查询重写器。
 
-Your input is:
-  1. The original user query that produced low-quality retrieval hits.
-  2. (Optional) context describing what went wrong.
+你的输入是：
+  1. 产生了低质量检索结果的原始用户查询。
+  2. （可选）描述出了什么问题的上下文。
 
-Your job: produce a SINGLE improved query that is more specific,
-uses more precise terminology, and is likely to surface relevant
-chunks from a Chinese-English financial knowledge base.
+你的任务：生成一个更具体、使用更精确术语的改进查询，使其更可能从中英文金融知识库中检索到相关分块。
 
-Rules:
-  - Output ONLY the rewritten query text, no explanation.
-  - Preserve the language of the original query.
-  - If the original query is vague, add likely domain keywords
-    (e.g. "ROE", "毛利率", "年报", "ESG", specific company names).
-  - Do NOT invent facts or change the user's intent.
+规则：
+  - 仅输出重写后的查询文本，不加任何解释。
+  - 保持原始查询的语言（中文查询用中文重写，英文查询用英文重写）。
+  - 如果原始查询含糊，添加可能的领域关键词（如 "ROE"、"毛利率"、"年报"、"ESG"、具体公司名称）。
+  - 不得编造事实或改变用户的意图。
 """
 
 
 class QueryRewriter:
-    """Rewrite a search query to improve retrieval quality.
+    """重写搜索查询以提升检索质量。
 
     Parameters
     ----------
     model:
-        Any LangChain-compatible chat model (``BaseChatModel``).
-        Typically a LIGHT-tier model since rewriting is a simple
-        classification/generation task.
+        任何 LangChain 兼容的聊天模型（``BaseChatModel``）。通常使用 LIGHT 级别模型，因为重写是一个简单的分类/生成任务。
     """
 
     def __init__(self, model: Any) -> None:
@@ -64,11 +58,9 @@ class QueryRewriter:
         original_query: str,
         context: str = "",
     ) -> str:
-        """Return a rewritten query string.
+        """返回重写后的查询字符串。
 
-        Falls back to ``original_query`` if the LLM call fails or
-        returns empty — the corrective loop should never crash
-        because the rewriter hiccuped.
+        若 LLM 调用失败或返回空值，回退到 ``original_query`` —纠正循环不应因重写器故障而崩溃。
         """
         user_content = f"Original query: {original_query}"
         if context:

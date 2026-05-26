@@ -1,137 +1,93 @@
-"""Knowledge-base RAG — tool definitions + (deprecated) MCP-stdio surface.
+"""知识库 RAG — 工具定义 +（已弃用的）MCP-stdio 接口。
 
-This is the **knowledge plane** of the financial-research agent.
-Where ``pdf_report_server`` deals with PUBLIC disclosure PDFs (巨潮资讯)
-and ``fin_data_server`` deals with PUBLIC market data (akshare), this
-module lets a user upload **their own** PDF library (ESG reports,
-broker research notes, internal memos, prospectuses) and ask
-free-form questions over it.
+这是金融研究 Agent 的 知识层。
+``pdf_report_server`` 处理公开披露PDF（巨潮资讯），``fin_data_server`` 处理公开市场数据（akshare），
+而本模块允许用户上传自有 PDF 库（ESG 报告、券商研报、内部备忘录、招股说明书）并对其进行自由提问。
 
-Runtime model: in-process tools, NOT MCP subprocess
+运行时模型：进程内工具，非 MCP 子进程
 ---------------------------------------------------
-Historically this module was launched as an MCP-stdio subprocess so the
-parent ``MultiServerMCPClient`` could discover the tools through the
-same protocol as ``code_server`` / ``fin_data_server`` /
-``pdf_report_server``. That path is **no longer the production path**:
+历史上本模块作为 MCP-stdio 子进程启动，以便父进程 ``MultiServerMCPClient``通过与 ``code_server`` / ``fin_data_server`` / ``pdf_report_server``
+相同的协议发现工具。该路径不再是生产路径：
 
-* On Windows + Python 3.13, fastmcp's stdio JSON-RPC writer interacts
-  badly with the heavy import chain pulled in by ``sentence-
-  transformers`` / ``torch`` / ``faiss-cpu``. After ``ingest_pdf``
-  finished its work the JSON-RPC response would never reach the parent
-  (silent stdout-pipe stall). We diagnosed it down to "in-process
-  works in 35-40s, MCP subprocess hangs forever even with FAISS,
-  even with the stdout firewall disabled".
-* The protocol value (cross-language / cross-process) is not actually
-  exercised by this project — all four agents and the supervisor live
-  in one Python process.
+* 在 Windows + Python 3.13 上，fastmcp 的 stdio JSON-RPC 写入器与
+  ``sentence-transformers`` / ``torch`` / ``faiss-cpu`` 引入的重度 import 链交互异常。
+  ``ingest_pdf`` 完成工作后 JSON-RPC 响应始终无法到达父进程（静默 stdout 管道停滞）。
+  诊断结论："进程内 35-40 秒可用，MCP 子进程即使配合 FAISS 且禁用 stdout 防火墙也永久挂起"。
+* 跨语言/跨进程的协议价值本项目并未实际使用 — 四个 Agent 和 supervisor全部运行在同一个 Python 进程中。
 
-The four ``@mcp.tool`` decorated coroutines below are therefore kept
-as the **canonical contract** for the knowledge-base capability (their
-docstrings, validation rules and return shapes are authoritative), but
-``research_agent.tools.knowledge_tools`` re-exports them as plain
-``langchain_core.tools.tool``-decorated functions for in-process
-consumption by ``knowledge_expert``. The ``@mcp.tool()`` decorator
-registers the function with the FastMCP instance but otherwise leaves
-it unchanged (we verified ``type(ingest_pdf) is types.FunctionType``),
-so calling them directly is safe.
+因此下方四个 ``@mcp.tool`` 装饰的协程被保留为知识库能力的规范契约（其文档字符串、校验规则和返回形状具有权威性），
+但``research_agent.tools.knowledge_tools`` 将它们重新导出为普通``langchain_core.tools.tool`` 装饰函数，供 ``knowledge_expert`` 进程内消费。
+``@mcp.tool()`` 装饰器将函数注册到 FastMCP 实例但不改变函数本身（已验证 ``type(ingest_pdf) is types.FunctionType``），因此直接调用安全。
 
-If a future workstream needs cross-process delivery (e.g. wiring this
-into a Rust agent) the MCP-stdio launch path can be brought back; the
-business logic doesn't change.
+如果需要跨进程交付（如将其接入 Rust Agent），可恢复 MCP-stdio 启动路径；。
 
-Why a *separate* server (vs. extending ``pdf_report_server``)?
+为何单独服务器（而非扩展 ``pdf_report_server``）（无状态/有状态）？
 -------------------------------------------------------------
-``pdf_report_server`` is stateless: it derives a PDF URL from cninfo
-search, downloads, parses bounded page ranges, and returns text. There
-is no notion of an *index* — the LLM does the looking.
+``pdf_report_server`` 是无状态的：从 cninfo 搜索派生 PDF URL，下载，解析有限页范围，返回文本。没有 索引 概念 — LLM 负责查找。
 
-The knowledge server is stateful: PDFs are chunked, embedded, and
-indexed once into a persistent FAISS collection; subsequent searches
-hit a hybrid (vector + BM25) retriever that the LLM never sees the
-raw PDF for. Different lifecycle, different persistence, different
-storage-cost profile — they belong in different processes.
+知识库服务器是有状态的：PDF 被分块、嵌入并一次性索引到持久化 FAISS 集合；
+后续搜索命中混合（向量 + BM25）检索器，LLM 从不直接看原始 PDF。
+不同的生命周期、不同的持久化方式、不同的存储成本特征 — 它们应属于不同进程。
 
-Tools exposed
+暴露的4个工具(搜索、导入 PDF、列出集合、删除集合)
 -------------
-1. ``knowledge_ingest_pdf`` — load → chunk → embed → write to FAISS.
-   Returns ``(collection, num_chunks_added, total_chunks_in_collection)``.
-2. ``knowledge_search`` — hybrid retrieval (RRF over vector + BM25),
-   each hit annotated with ``source`` / ``page`` / ``vector_score``
-   / ``bm25_rank`` / ``rrf_rank``. The response also surfaces
-   **corrective-RAG signals** (``top_score``, ``mean_score``,
-   ``unique_sources``, ``quality``) so the calling agent can decide
-   whether to rewrite the query and retry.
-3. ``knowledge_list_collections`` — enumerate collections currently in
-   the persistent store with chunk counts.
-4. ``knowledge_delete_collection`` — housekeeping; idempotent.
+1. ``knowledge_ingest_pdf`` — 加载 → 分块 → 嵌入 → 写入 FAISS。返回 ``(collection, num_chunks_added, total_chunks_in_collection)``。
+2. ``knowledge_search`` — 混合检索（向量 + BM25 上的 RRF），每个命中标注 ``source`` / ``page`` / ``vector_score`` / ``bm25_rank`` / ``rrf_rank``。
+   响应还提供纠正式 RAG 信号 （``top_score``、``mean_score``、``unique_sources``、``quality``）以便调用 Agent 决定是否重写查询并重试。
+3. ``knowledge_list_collections`` — 枚举持久化存储中当前集合及分块数。
+4. ``knowledge_delete_collection`` — 清理；幂等操作。
 
-Why the corrective loop lives in the AGENT, not the tool
+纠正循环为何在 AGENT 中而非工具中（纠正式 RAG 循环的设计决策）
 --------------------------------------------------------
-Putting the rewrite/retry loop inside the tool would either:
-  (a) require an LLM rewriter inside this subprocess, doubling the
-      credentials / network surface area, or
-  (b) hard-code rule-based rewrites, which is uninspiring.
+在工具内部放置重写/重试循环会导致：
+  (a) 需要在此子进程中内置 LLM 重写器，使凭据/网络攻击面翻倍，或
+  (b) 硬编码基于规则的重写，缺乏灵活性。
 
-Instead the tool returns rich quality signals and the
-``knowledge_expert`` system prompt teaches the agent: "if
-``top_score < 0.4`` or ``quality == 'low'``, REWRITE the query with
-more specific keywords and call ``knowledge_search`` again, up to 3
-attempts". This makes the corrective loop visible in the LangGraph
-trace as repeat ``AIMessage → ToolMessage`` cycles inside the
-knowledge_expert subgraph — the canonical Corrective-RAG story.
+取而代之的是，工具返回丰富的质量信号，``knowledge_expert`` 系统提示教导 Agent：
+"如果 ``top_score < 0.4`` 或 ``quality == 'low'``，用更具体的关键词 REWRITE 查询并再次调用 ``knowledge_search``，最多 3 次尝试"。
+这使纠正循环在 LangGraph 跟踪中以 knowledge_expert 子图内重复的``AIMessage → ToolMessage`` 周期可见 — 规范的 Corrective-RAG 模式。
 
-Storage layout
+存储布局
 --------------
-``./data/knowledge_db/<collection_name>/`` holds one persisted
-FAISS index per collection. Each subfolder contains the standard
-LangChain FAISS pair: ``index.faiss`` (binary index) plus
-``index.pkl`` (docstore + ``faiss_id -> doc_id`` mapping). Listing
-collections is therefore as simple as enumerating subdirectories
-of the base path. BM25 is rebuilt in-memory from the persisted
-FAISS docstore on first search after process start (or after an
-ingestion that mutated the collection), amortising the cost across
-the rest of the session.
+research_agent/data/knowledge_db\
+├── my_esg_reports/           ← 一个"集合"（你上传的 ESG 报告）
+│   ├── index.faiss           ← 向量索引文件（二进制，存向量）
+│   └── index.pkl             ← 文档存储（pickle 格式，存原文+元数据）
+├── annual_reports/           ← 另一个集合（你上传的年报）
+│   ├── index.faiss
+│   └── index.pkl
+└── （每上传一类 PDF 就多一个文件夹）
 
-Why FAISS, not Chroma?
+``./data/knowledge_db/<collection_name>/`` 每个集合持有一个持久化 FAISS 索引。
+每个子文件夹包含标准 LangChain FAISS 文件对：``index.faiss``（二进制索引）加 ``index.pkl``（docstore +``faiss_id -> doc_id`` 映射）。
+因此列出集合只需枚举基路径的子目录（./data/knowledge_db/每个集合一个目录）。
+BM25 在进程启动后首次搜索时（或集合被导入修改后）从持久化 FAISS docstore 在内存中重建，将开销分摊到会话的其余部分。
+
+为何用 FAISS 而非 Chroma（Chroma 破坏 stdio 管道）？
 ~~~~~~~~~~~~~~~~~~~~~~
-We tried Chroma first. On Windows, ``chromadb``'s import chain
-spawns posthog-telemetry daemon threads that emit ``print()`` calls
-which corrupted the MCP-stdio JSON-RPC channel. FAISS is pure C++ +
-Python bindings, has no telemetry, no background threads, and a
-simpler persistence model (one ``index.faiss`` + ``index.pkl`` per
-collection directory) — a better engineering fit at this scale.
-Even after the Chroma → FAISS migration the stdio path remained
-unstable on Windows, which prompted the move to in-process delivery
-documented above.
+先尝试了 Chroma。在 Windows 上，``chromadb`` 的 import 链会生成 posthog 遥测守护线程，这些线程发出 ``print()`` 调用，破坏了 MCP-stdioJSON-RPC 通道。
+FAISS 是纯 C++ + Python 绑定，无遥测、无后台线程，且持久化模型更简单（每个集合目录一个 ``index.faiss`` + ``index.pkl``）,在此规模下更合适。
+即使 Chroma → FAISS 迁移后，stdio 路径在 Windows上仍不稳定，促使转向上文记录的进程内交付方式。
 
-Embedding model
+嵌入模型
 ---------------
-Local HuggingFace ``BAAI/bge-small-zh-v1.5`` — bilingual (Chinese +
-English), small (~100MB), free, no API key. First call downloads the
-weights (warm caches under ``~/.cache/huggingface``); subsequent
-process spawns are instant.
+本地 HuggingFace ``BAAI/bge-small-zh-v1.5`` — 双语（中英），体积小（约 100MB），免费，无需 API 密钥。首次调用下载权重（缓存于 ``~/.cache/huggingface``）；
+后续进程启动即时可用。
 """
 
 from __future__ import annotations
 
 # ---------------------------------------------------------------------
-# Quiet-by-default environment for chatty ML libraries.
+# 默认静默环境，用于抑制 ML 库的噪声输出。
 #
-# Even though the production runtime is now in-process (``research_
-# agent.tools.knowledge_tools``), we still set these env vars at module
-# import time:
+# 尽管生产运行时已改为进程内（``research_agent.tools.knowledge_tools``），仍在模块导入时设置这些环境变量：
 #
-#   * ``transformers`` / ``tqdm`` / ``huggingface_hub`` would otherwise
-#     spam progress bars and a "BertModel LOAD REPORT" banner into the
-#     parent process's stdout, which is awkward when the parent is a
-#     FastAPI worker (they end up in the request-log stream).
-#   * ``TOKENIZERS_PARALLELISM=false`` silences the well-known fork-
-#     warning when sentence-transformers boots inside an asyncio
-#     worker thread.
-#   * ``HF_HUB_DISABLE_TELEMETRY=1`` is just good hygiene.
+#   * ``transformers`` / ``tqdm`` / ``huggingface_hub`` 否则会向父进程的 stdout 输出进度条和 "BertModel LOAD REPORT" 横幅，
+#   当父进程为 FastAPI worker 时很不合适（它们会混入请求日志流）。
+#   * ``TOKENIZERS_PARALLELISM=false`` 静默 sentence-transformers 在 asyncio worker 线程中启动时的已知 fork 警告。
+#   * ``HF_HUB_DISABLE_TELEMETRY=1`` 只是良好的卫生习惯。
 #
-# These ``setdefault`` calls never override an explicit value the
-# operator has set in their shell.
+# 这些 ``setdefault`` 调用永远不会覆盖运维人员在 shell 中显式设置的值。
 # ---------------------------------------------------------------------
 import os as _os
 
@@ -150,13 +106,8 @@ from typing import Any  # noqa: E402
 from fastmcp import FastMCP  # noqa: E402
 from loguru import logger  # noqa: E402
 
-# Eagerly import the heavy dependencies (langchain text-splitter +
-# FAISS wrapper) at module load time rather than on first tool call.
-# On the in-process path this just front-loads the ~9 s of langchain-
-# core imports onto worker startup so the FIRST ``ingest_pdf`` request
-# isn't unfairly slow. On the (legacy) MCP-stdio path it also dodged
-# a Python-3.13 + anyio import-lock deadlock, but that path is no
-# longer the production runtime — see the module docstring.
+# 在模块加载时预先导入重量级依赖（langchain text-splitter + FAISS 包装器），
+# 而非在首次工具调用时。在进程内路径上，这只是将约 9 秒的 langchain-core导入前置到 worker 启动，使第一个 ``ingest_pdf`` 请求不会异常缓慢。
 from langchain_community.vectorstores import FAISS as _PrewarmedFAISS  # noqa: E402, F401
 from langchain_text_splitters import (  # noqa: E402, F401
     RecursiveCharacterTextSplitter as _PrewarmedSplitter,
@@ -165,105 +116,85 @@ from langchain_text_splitters import (  # noqa: E402, F401
 mcp = FastMCP("KnowledgeBase")
 
 # ---------------------------------------------------------------------
-# Configuration
+# 配置
 # ---------------------------------------------------------------------
 DEFAULT_DB_DIR = Path("./data/knowledge_db").resolve()
-"""Persistent knowledge-base root directory.
+"""持久化知识库根目录。
 
-One subdirectory per collection is created on first ingest. Each
-subdirectory contains a single LangChain-FAISS index pair
-(``index.faiss`` + ``index.pkl``). Module-level so tests can
-monkey-patch and so subprocesses inherit the same path regardless
-of the spawning process's CWD.
+首次导入时为每个集合创建一个子目录。每个子目录包含一个 LangChain-FAISS 索引对（``index.faiss`` + ``index.pkl``）。
+模块级以便测试可 monkey-patch，且子进程无论启动进程的 CWD 如何都继承相同路径。
 """
 
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
-"""Default embedding model. Local, free, bilingual."""
+"""默认嵌入模型。本地、免费、双语。"""
 
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 120
 
 MAX_INGEST_BYTES = 50 * 1024 * 1024  # 50 MB safety bound for a single PDF
 MAX_TOP_K = 20
-"""Hard cap on ``top_k`` per search call to prevent the LLM from
-asking for ``top_k=10000`` on a 100k-chunk collection — that would
-return enough text to blow the LLM's context window.
+"""每次搜索调用 ``top_k`` 的硬上限，防止 LLM 在 10 万分块的集合上请求 ``top_k=10000`` — 那将返回足以撑爆 LLM 上下文窗口的文本量。
 """
 
-# Quality classifier thresholds. Calibrated for normalised cosine
-# similarity from BAAI/bge-small-zh-v1.5; adjust if you swap models.
+# 质量分类器阈值。针对 BAAI/bge-small-zh-v1.5 的归一化余弦相似度校准；
+# 更换模型时需调整。
 QUALITY_HIGH_THRESHOLD = 0.65
 QUALITY_MEDIUM_THRESHOLD = 0.40
 
 RERANK_OVERFETCH_MULTIPLIER = 3
-"""How many extra candidates to draw from RRF before reranking.
+"""重排序前从 RRF 多取的额外候选数量倍数。
 
-The cross-encoder is most useful when it has slack to re-order:
-asking the bi-encoder + BM25 for ``top_k * 3`` candidates and
-trimming after rerank typically promotes 1-2 items per query that
-RRF alone would have buried. We cap at a small multiplier to keep
-the per-call latency bounded — see :class:`CrossEncoderReranker`'s
-own ``max_pairs`` guard for the second layer of protection.
+cross-encoder 在有余量重排序时最有用：向 bi-encoder + BM25 请求``top_k * 3`` 个候选并在重排序后裁剪，通常每次查询可提升 1-2 个仅靠 RRF 会被埋没的结果。
+使用较小倍数以控制每次调用延迟 ——见 :class:`CrossEncoderReranker` 自身的 ``max_pairs`` 保护作为第二层防护。
 """
 
 
 def _reranker_enabled() -> bool:
-    """Read the ``KNOWLEDGE_RERANKER_ENABLED`` env var at call time.
+    """在调用时读取 ``KNOWLEDGE_RERANKER_ENABLED`` 环境变量。
 
-    Read fresh on every call (not cached at import) so unit tests
-    can monkeypatch ``os.environ`` to flip the switch between
-    cases without re-importing the module.
+    每次调用重新读取（不在 import 时缓存），以便单测可通过 monkeypatch ``os.environ`` 在不同用例间切换开关而无需重新导入模块。
     """
     raw = _os.environ.get("KNOWLEDGE_RERANKER_ENABLED", "1").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
-# Lazy singleton: built on first ``_maybe_rerank`` call. Keeping the
-# import deferred means a process that never asks for reranking
-# (smoke tests, tooling) doesn't pay the ~1 s sentence_transformers
-# import cost on module load.
+# 延迟单例：在首次 ``_maybe_rerank`` 调用时构建。
+# 保持 import 延迟意味着从不请求重排序的进程（冒烟测试、工具）不必在模块加载时支付约 1 秒的 sentence_transformers import 开销。
 _RERANKER: Any | None = None
 
 # ---------------------------------------------------------------------
-# Lazy module-level caches
+# 延迟模块级缓存
 #
-# All three are kept ALIVE for the lifetime of the MCP subprocess.
-# They are expensive to build (model load = ~3s; FAISS load + BM25
-# rebuild = O(corpus size)) and cheap to reuse.
+# 三个缓存在 MCP 子进程的整个生命周期内保持存活。
+# 构建代价高（模型加载约 3 秒；FAISS 加载 + BM25 重建 = O(语料库大小)）而复用代价低。
 # ---------------------------------------------------------------------
 _EMBEDDER: Any | None = None
-"""HuggingFaceEmbeddings singleton. ``None`` until first use."""
+"""HuggingFaceEmbeddings 单例。首次使用前为 ``None``。"""
 
 _FAISS_STORES: dict[str, Any] = {}
-"""``collection_name -> langchain_community.vectorstores.FAISS`` cache.
+"""``collection_name -> langchain_community.vectorstores.FAISS`` 缓存。
 
-We hold one warmed FAISS in memory per collection so back-to-back
-searches don't re-read the index file. The cache is dropped /
-re-loaded after every successful ingest (FAISS is not designed for
-concurrent in-place mutation).
+每个集合在内存中保持一个预热的 FAISS，以便连续搜索不必重新读取索引文件。
+每次成功导入后缓存会被清除/重新加载（FAISS 不支持并发原地修改）。
 """
 
-_BM25_CACHE: dict[str, "_BM25Index"] = {}
-"""``collection_name -> in-memory BM25 index`` cache.
+_BM25_CACHE: dict[str, Any] = {}
+"""``collection_name -> 内存 BM25 索引`` 缓存。
 
-Invalidated by ``_invalidate_bm25(collection)`` after each ingest.
+每次导入后通过 ``_invalidate_bm25(collection)`` 使其失效。
 """
 
 
 def _fmt_error(exc: Exception, *, context: str) -> dict[str, Any]:
-    """Canonical error shape — raising would kill the MCP subprocess."""
+    """标准错误格式 — 抛出异常会终止 MCP 子进程。"""
     return {"error": f"{type(exc).__name__}: {exc}", "context": context}
 
 
 def _validate_collection_name(name: str) -> None:
-    """Validate a collection name.
+    """校验集合名称。
 
-    Each collection becomes a directory name on disk so we restrict
-    to ``[a-zA-Z0-9._-]`` (kept in line with the Chroma rules our
-    earlier iteration used so collection names from existing test
-    fixtures continue to work) and 3–63 chars. We additionally
-    forbid leading dots and ``..`` to prevent path-traversal
-    surprises.
+    每个集合对应磁盘上的一个目录名，因此限制为 ``[a-zA-Z0-9._-]``（与早期迭代使用的 Chroma 规则一致，以便现有测试夹具中的集合名继续可用）且长度 3–63 字符。
+    额外禁止前导点和 ``..`` 以防止路径 遍历风险。
     """
     if not (3 <= len(name) <= 63):
         raise ValueError(f"collection name length must be 3..63, got {len(name)}")
@@ -277,22 +208,16 @@ def _validate_collection_name(name: str) -> None:
 
 
 # ---------------------------------------------------------------------
-# Embedder & FAISS helpers (lazy)
+# 嵌入器 & FAISS 辅助函数（延迟加载）
 # ---------------------------------------------------------------------
 def _get_embedder() -> Any:
-    """Return the singleton embedder, building it on first call.
+    """返回单例嵌入器，首次调用时构建。
 
-    Imports are deferred so module load is fast even if
-    sentence-transformers needs to download model weights — the
-    ~3 s cost is paid on the first ``knowledge_ingest_pdf`` /
-    ``knowledge_search``, not on import.
+    import 是延迟的，即使 sentence-transformers 需要下载模型权重，模块加载也很快 —
+     约 3 秒的开销在首次 ``knowledge_ingest_pdf`` / ``knowledge_search`` 时支付，而非在 import 时。
 
-    Stdout safety: chatty ML libraries (``transformers``, ``tqdm``,
-    ``huggingface_hub``) are quieted via env vars set at module
-    import time (see the env-var block at the top of this file), so
-    we do not need an inline ``redirect_stdout`` wrapper even
-    though ``transformers`` historically prints a "BertModel LOAD
-    REPORT" banner during weight loading.
+    标准输出安全：聊天式 ML 库（``transformers``、``tqdm``、 ``huggingface_hub``）已通过模块导入时设置的环境变量静默（见本文件顶部的 env-var 块），
+    因此不需要内联 ``redirect_stdout``包装器，即使 ``transformers`` 历史上在权重加载期间会打印"BertModel LOAD REPORT" 横幅。
     """
     global _EMBEDDER
     if _EMBEDDER is None:
@@ -308,44 +233,32 @@ def _get_embedder() -> Any:
 
 
 def _collection_dir(collection: str, *, db_dir: Path | None = None) -> Path:
-    """Return the persistence path for ``collection``.
+    """返回 ``collection`` 的持久化路径。
 
-    Resolving the path through this single helper means the rest of
-    the module never has to spell out the convention
-    (``DEFAULT_DB_DIR / collection``). Tests can monkey-patch
-    ``DEFAULT_DB_DIR`` and this function picks it up automatically.
+    通过这一辅助函数统一解析路径，模块其余部分无需拼写约定 （``DEFAULT_DB_DIR / collection``）。
+    测试可 monkey-patch``DEFAULT_DB_DIR``，此函数会自动使用。
     """
     base = db_dir or DEFAULT_DB_DIR
     return base / collection
 
 
 def _faiss_index_exists(collection: str, *, db_dir: Path | None = None) -> bool:
-    """True iff a saved FAISS pair exists on disk for ``collection``.
+    """当且仅当 ``collection`` 的已保存 FAISS 文件对存在于磁盘时返回 True。
 
-    LangChain's ``FAISS.save_local(path)`` always writes BOTH
-    ``index.faiss`` and ``index.pkl``; the absence of either is a
-    half-written / corrupted state and we treat the collection as
-    not present in that case (rather than half-load it and fail
-    obscurely later).
+    LangChain 的 ``FAISS.save_local(path)`` 始终同时写入``index.faiss`` 和 ``index.pkl``；任一缺失都表示写入不完整/损坏，
+    此时将该集合视为不存在（而非半加载后以模糊方式失败）。
     """
     cdir = _collection_dir(collection, db_dir=db_dir)
     return (cdir / "index.faiss").exists() and (cdir / "index.pkl").exists()
 
 
 def _load_faiss_store(collection: str, *, db_dir: Path | None = None) -> Any | None:
-    """Load (and cache) the FAISS store for ``collection``, or None.
+    """加载（并缓存）``collection`` 的 FAISS 存储，未导入过则返回 None。
 
-    Returns ``None`` (instead of raising) when the collection has
-    never been ingested. Callers must handle this — the search tool
-    converts it into a ``quality='low'`` empty response, the ingest
-    tool treats it as the "create" branch.
+    从未导入过的集合返回 ``None``（而非抛异常）。调用者须处理此情况 ——搜索工具将其转为 ``quality='low'`` 的空响应，导入工具将其视为 "创建"分支。
 
-    ``allow_dangerous_deserialization=True`` is required because
-    LangChain's FAISS sidecar is a ``pickle`` file. The repo only
-    loads files we wrote ourselves under ``DEFAULT_DB_DIR``, never
-    untrusted blobs from the internet, so the audit risk here is
-    bounded to "an attacker who can already write into our data
-    directory" — at which point pickle is the least of our worries.
+    ``allow_dangerous_deserialization=True`` 是必需的，因为 LangChain 的 FAISS 附属文件是 ``pickle`` 格式。
+    本仓库只加载自己写入``DEFAULT_DB_DIR`` 的文件，从不加载来自互联网的不可信数据，因此 审计风险范围仅限于"已能写入数据目录的攻击者" —— 到那时候 pickle 已是最不值得担心的。
     """
     cached = _FAISS_STORES.get(collection)
     if cached is not None:
@@ -366,12 +279,10 @@ def _load_faiss_store(collection: str, *, db_dir: Path | None = None) -> Any | N
 
 
 def _save_faiss_store(collection: str, store: Any, *, db_dir: Path | None = None) -> None:
-    """Persist ``store`` and refresh the in-memory cache atomically.
+    """持久化 ``store`` 并原子刷新内存缓存。
 
-    We always update ``_FAISS_STORES[collection]`` AFTER a successful
-    ``save_local`` so a write failure (e.g. disk full) leaves the
-    in-memory cache pointing at the previous on-disk state — never
-    a phantom store that exists in memory but not on disk.
+    始终在 ``save_local`` 成功后才更新 ``_FAISS_STORES[collection]``，
+    因此写入失败（如磁盘已满）时内存缓存仍指向磁盘上的先前状态 ——绝不会出现仅存在于内存中而磁盘上没有的幽灵存储。
     """
     cdir = _collection_dir(collection, db_dir=db_dir)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -380,34 +291,25 @@ def _save_faiss_store(collection: str, store: Any, *, db_dir: Path | None = None
 
 
 def _invalidate_bm25(collection: str) -> None:
-    """Drop the BM25 cache for ``collection``; next search rebuilds it."""
+    """清除 ``collection`` 的 BM25 缓存；下次搜索时重建。"""
     _BM25_CACHE.pop(collection, None)
 
 
 # ---------------------------------------------------------------------
-# BM25 index — delegated to rag.retriever.BM25Index
+# BM25 索引 — 委托给 rag.retriever.BM25Index
 # ---------------------------------------------------------------------
 from research_agent.rag.retriever import BM25Index as _BM25Index  # noqa: E402
 
 
 def _build_bm25_for_collection(collection: str) -> _BM25Index:
-    """Materialise BM25 from all docs currently in the FAISS docstore.
+    """从 FAISS docstore 中当前所有文档构建 BM25。
 
-    LangChain's FAISS keeps the document objects in
-    ``store.docstore._dict`` and a ``faiss_id -> doc_id`` mapping
-    in ``store.index_to_docstore_id``. Walking the values of the
-    docstore yields docs in deterministic insertion order, which
-    is enough for BM25 (the BM25 indexing does not need to align
-    with FAISS's internal numbering). For typical user libraries
-    (10s–1000s of chunks) this is fast (<200 ms). For very large
-    collections we would page; left as a TODO since the agent will
-    rarely chew through >10k chunks of personal PDFs.
+    LangChain 的 FAISS 将文档对象保存在 ``store.docstore._dict`` 中，
+    ``faiss_id -> doc_id`` 映射在 ``store.index_to_docstore_id`` 中。
+    遍历 docstore 的值以确定性插入顺序产出文档，这对 BM25 已足够（BM25 索引不需要与 FAISS 的内部编号对齐）。
+    对于典型用户库（10–1000 个分块）速度很快（<200 ms）。对于非常大的集合需要分页，留作 TODO，因为 Agent 很少会处理 >10k 个个人 PDF 分块。
 
-    Returns an empty index when the collection has not been
-    ingested yet — callers must therefore tolerate ``search`` /
-    ``BM25Index.search`` returning no hits (the search tool already
-    does — it short-circuits to a ``quality='low'`` response when
-    the FAISS store is missing).
+    集合未导入时返回空索引 — 调用者须容忍 ``search`` /``BM25Index.search`` 返回零结果（搜索工具已处理 — FAISS 存储缺失时直接返回 ``quality='low'`` 响应）。
     """
     store = _load_faiss_store(collection)
     docs: list[dict[str, Any]] = []
@@ -428,7 +330,7 @@ def _build_bm25_for_collection(collection: str) -> _BM25Index:
 
 
 def _get_bm25(collection: str) -> _BM25Index:
-    """Cached BM25 fetch; rebuilds lazily on cache miss / invalidation."""
+    """带缓存的 BM25 获取；缓存未命中/失效时延迟重建。"""
     bm25 = _BM25_CACHE.get(collection)
     if bm25 is None:
         bm25 = _build_bm25_for_collection(collection)
@@ -437,14 +339,12 @@ def _get_bm25(collection: str) -> _BM25Index:
 
 
 # ---------------------------------------------------------------------
-# PDF loading + chunking
+# PDF loading + chunking 加载+分块处理
 # ---------------------------------------------------------------------
 def _load_pdf_pages(local_path: Path) -> list[dict[str, Any]]:
-    """Return per-page records ``[{page, text}]`` extracted with pypdf.
+    """返回用 pypdf 提取的逐页记录 ``[{page, text}]``。
 
-    We deliberately keep the Document creation in pure dicts here
-    rather than ``langchain_core.documents.Document`` so this helper
-    is unit-testable without touching LangChain's API surface.
+    特意将文档的创建操作放在纯字典中进行，非使用 ``langchain_core.documents.Document`` ，这样这个辅助函数就可以在不涉及 LangChain API 接口的情况下进行单元测试。
     """
     import pypdf
 
@@ -464,14 +364,10 @@ def _chunk_pages(
     chunk_size: int,
     chunk_overlap: int,
 ) -> list[dict[str, Any]]:
-    """Split each page's text into ``chunk_size``-character windows.
+    """将每页文本切分为 ``chunk_size`` 字符的窗口。
 
-    Each chunk inherits ``page`` and ``source`` so the eventual
-    answer can cite ``"source.pdf p.42"`` faithfully. We preserve the
-    page boundary (chunks never span pages) — that loses a tiny bit
-    of recall for cross-page sentences but makes the citation
-    unambiguous, which is the more valuable property for finance RAG
-    where users will sanity-check page numbers.
+    每个分块继承 ``page`` 和 ``source``，以便最终回答可以忠实引用 ``"source.pdf p.42"``。
+    保留页面边界（分块不跨页）—— 这会对跨页句子损失少量召回，但使引用无歧义，这对金融 RAG 更有价值， 因为用户会核对页码。
     """
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -494,7 +390,7 @@ def _chunk_pages(
 
 
 # ---------------------------------------------------------------------
-# Tool 1: ingest a PDF into a collection
+# 工具 1：将 PDF 导入集合
 # ---------------------------------------------------------------------
 @mcp.tool()
 async def ingest_pdf(
@@ -503,36 +399,20 @@ async def ingest_pdf(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> dict:
-    """Ingest a single PDF into the persistent knowledge base.
+    """将单个 PDF 导入持久化知识库。
 
-    The PDF is read once with ``pypdf`` (pages preserved as the unit
-    of provenance), split into ``chunk_size``-character windows with a
-    ``chunk_overlap``-character slide, embedded with the bge-small
-    Chinese model, and written to a FAISS collection (one folder
-    per collection under ``DEFAULT_DB_DIR``). Re-ingesting the same
-    PDF appends duplicate chunks — there is no content-hash dedup
-    yet (TODO for a future iteration; current pattern is "one
-    collection per ingestion pass").
+    PDF 用 ``pypdf`` 读取一次（页面保留为溯源单位），切分为 ``chunk_size``字符的窗口并有 ``chunk_overlap`` 字符的滑动，用 bge-small 中文模型嵌入，
+    然后写入 FAISS 集合（``DEFAULT_DB_DIR`` 下每个集合一个文件夹）。重复导入 同一 PDF 会追加重复分块 — 尚无内容哈希去重（TODO 留待未来迭代；当前模式为"每次导入一个集合"）。
 
     Args:
-        local_path: Absolute or repo-relative path to a ``.pdf`` file.
-            For convenience this is typically the path returned by
-            ``pdf_download_pdf`` (Phase-4.2 server) so the two tools
-            chain naturally.
-        collection: Target collection name. Created on first use.
-            Must match ``[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]`` and
-            be 3..63 chars.
-        chunk_size: Characters per chunk. 800 is a reasonable default
-            for bge-small-zh's 512-token window (Chinese ≈ 1 char/
-            token, English ≈ 0.25 token/char on average).
-        chunk_overlap: Slide between adjacent chunks. 15% of
-            ``chunk_size`` is the rule of thumb.
+        local_path: ``.pdf`` 文件的绝对或相对路径。通常为``pdf_download_pdf``（服务器）返回的路径，以便两个工具自然串联。
+        collection: 目标集合名。首次使用时创建。须匹配 ``[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]``且长度 3..63 字符。
+        chunk_size: 每个分块的字符数。800 对 bge-small-zh 的 512 token 窗口是合理默认值（中文约 1 字符/token，英文平均约 0.25 token/字符）。
+        chunk_overlap: 相邻分块的滑动量。经验法则为 ``chunk_size`` 的 15%。
 
     Returns:
-        On success: ``{collection, source, num_pages, num_chunks_added,
-        total_chunks_in_collection}``.
-
-        On failure: ``{error, context}``.
+        成功时：``{collection, source, num_pages, num_chunks_added, total_chunks_in_collection}``。
+        失败时：``{error, context}``。
     """
     try:
         _validate_collection_name(collection)
@@ -625,12 +505,10 @@ async def ingest_pdf(
 
 
 def _collection_count(collection: str) -> int:
-    """Return the chunk count for ``collection`` (best-effort, 0 on error).
+    """返回 ``collection`` 的分块数量（尽力而为，出错返回 0）。
 
-    For FAISS we count entries in ``index_to_docstore_id`` rather
-    than ``index.ntotal``: the two should be equal, but the former
-    is the same number we used to build BM25, which keeps the two
-    layers consistent under any future "soft delete" we might add.
+    FAISS 中计数 ``index_to_docstore_id`` 的条目而非 ``index.ntotal``：
+    两者应相等，但前者与构建 BM25 时使用的数量一致，在未来可能添加的"软删除"下保持两层一致。
     """
     try:
         store = _load_faiss_store(collection)
@@ -642,7 +520,7 @@ def _collection_count(collection: str) -> int:
 
 
 # ---------------------------------------------------------------------
-# Tool 2: hybrid search with corrective-RAG quality signals
+# 工具 2：带纠正式 RAG 质量信号的混合检索
 # ---------------------------------------------------------------------
 from research_agent.rag.grader import RetrievalGrader as _RetrievalGrader  # noqa: E402
 
@@ -653,7 +531,7 @@ _GRADER = _RetrievalGrader(
 
 
 def _classify_quality(top_score: float, mean_score: float, unique_sources: int) -> str:
-    """Delegate to ``rag.grader.RetrievalGrader``."""
+    """委托给 ``rag.grader.RetrievalGrader``。"""
     return _GRADER.grade(top_score, mean_score, unique_sources)
 
 
@@ -663,22 +541,17 @@ from research_agent.rag.retriever import hybrid_rrf_fuse as _hybrid_fuse  # noqa
 async def _maybe_rerank(
     query: str, candidates: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Optionally rerank ``candidates`` with a local cross-encoder.
+    """可选地使用本地 cross-encoder 对 ``candidates`` 重排序。
 
-    Returns the input list unchanged when:
-      * the ``KNOWLEDGE_RERANKER_ENABLED`` env var is falsey, or
-      * the reranker model fails to load (e.g. ``sentence_
-        transformers`` not importable on this host), or
-      * the underlying ``CrossEncoder.predict`` call raises.
+    以下情况返回原列表不变：
+      * ``KNOWLEDGE_RERANKER_ENABLED`` 环境变量为假值，
+      * 或重排序模型加载失败（如该主机无法 import ``sentence_transformers``），
+      * 或底层 ``CrossEncoder.predict`` 调用抛出异常。
 
-    In every fallback path each candidate still ends up with a
-    ``rerank_score`` key (set to ``None``) so the response shape is
-    stable regardless of whether reranking actually ran. Callers
-    must therefore tolerate ``rerank_score is None``.
+    在所有回退路径中，每个候选仍携带 ``rerank_score`` 键（设为 ``None``），
+    因此无论重排序是否实际执行，响应形状保持稳定。调用者须容忍``rerank_score is None``。
 
-    The function is intentionally tolerant: search is the agent's
-    primary tool and breaking it because an optional reranker
-    misbehaved would be the wrong trade-off.
+    此函数有意设计为容错：搜索是 Agent 的主要工具，因可选的重排序器异常而中断搜索是错误的权衡。
     """
     if not candidates:
         return candidates
@@ -710,7 +583,7 @@ async def search(
     collection: str = "default",
     top_k: int = 5,
 ) -> dict:
-    """Hybrid retrieval (vector + BM25 + optional cross-encoder rerank).
+    """混合检索（向量 + BM25 + 可选 cross-encoder 重排序）。
 
     Pipeline::
 
@@ -718,30 +591,20 @@ async def search(
                            ├─ RRF fuse ─→ cross-encoder rerank ─→ trim
         BM25  (top_k * 3) ─┘    (over-fetch)        (optional)    (top_k)
 
-    The reranker step uses a local ``BAAI/bge-reranker-base``
-    cross-encoder; toggle via the ``KNOWLEDGE_RERANKER_ENABLED`` env
-    var. When disabled or unavailable the pipeline degrades
-    gracefully to RRF order — the response shape is identical, just
-    with ``rerank_score: null`` on every hit.
+    重排序步骤使用本地 ``BAAI/bge-reranker-base`` cross-encoder；
+    通过 ``KNOWLEDGE_RERANKER_ENABLED`` 环境变量切换。禁用或不可用时，管线 优雅降级为 RRF 顺序 — 响应形状相同，只是每个命中的``rerank_score: null``。
 
-    The response is shaped to make a CORRECTIVE-RAG agent's life easy:
-    it carries per-hit scores AND a top-level ``quality`` label. The
-    intended agent loop is::
+    响应形状为纠正式 RAG Agent 量身设计：携带逐命中分数和顶级``quality`` 标签。预期的 Agent 循环为::
 
         result = call("knowledge_search", query=Q, collection=C, top_k=5)
         if result["quality"] == "low":
-            Q' = rewrite(Q)        # the agent does this
+            Q' = rewrite(Q)        # Agent 执行此操作
             result = call("knowledge_search", query=Q', ...)
 
     Args:
-        query: Free-form natural-language question. Chinese or English
-            both work — the bge-small-zh embedder is bilingual.
-        collection: Collection to search. The tool returns an empty
-            ``quality='low'`` response (NOT an error) when the
-            collection does not exist or is empty, so a fresh
-            agent can probe collections without exception handling.
-        top_k: Maximum hits to return after fusion. Capped at
-            ``MAX_TOP_K`` (20) to protect the LLM context window.
+        query: 自由格式自然语言问题。中英文均可 — bge-small-zh 嵌入器支持双语。
+        collection: 要搜索的集合。集合不存在或为空时返回空的 ``quality='low'`` 响应（非错误），以便新 Agent 可无需异常处理即可探测集合。
+        top_k: 融合后返回的最大命中数。上限为 ``MAX_TOP_K``（20） 以保护 LLM 上下文窗口。
 
     Returns:
         ``{
@@ -755,14 +618,11 @@ async def search(
             ]
         }``
 
-        ``rerank_score`` is a float when the cross-encoder ran and
-        ``None`` when reranking was disabled / unavailable. The
-        ``quality`` label is computed from ``vector_score`` (whose
-        bands are calibrated for normalised cosine), not from the
-        cross-encoder's logits, so the corrective-RAG agent loop
-        keeps a stable signal across reranker on/off configurations.
+        ``rerank_score`` 在 cross-encoder 执行时为浮点数，重排序禁用/不可用时为 ``None``。
+        ``quality`` 标签基于``vector_score`` 计算（其区间针对归一化余弦校准），而非 cross-encoder 的 logits，
+         因此纠正式 RAG Agent 循环在重排序器开/关配置间保持稳定信号。
 
-        On failure: ``{error, context}``.
+        失败时返回：``{error, context}``。
     """
     try:
         _validate_collection_name(collection)
@@ -782,15 +642,11 @@ async def search(
     top_k = min(top_k, MAX_TOP_K)
 
     def _collect_candidates() -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
-        """Sync phase: load FAISS, run vector + BM25, fuse via RRF.
+        """同步阶段：加载 FAISS，运行向量 + BM25，通过 RRF 融合。
 
-        Returns ``(candidates, None)`` on the happy path — the
-        candidate list is over-fetched (``top_k * RERANK_OVERFETCH_
-        MULTIPLIER``) so the async reranker has slack to re-order.
 
-        Returns ``(None, early_response)`` for cold-start cases
-        (collection missing / empty) so the caller can short-circuit
-        without paying the reranker startup cost.
+        在正常流程中，返回值为 ``(candidates, None)`` — 此时候选列表被过度提取（``top_k * RERANK_OVERFETCH_MULTIPLIER``），以便异步重排序器有空间进行重新排序。
+        对于冷启动情况 (collection missing / empty) ，会返回 ``(None, early_response)`` ，以便调用者能够直接结束流程而无需支付重新排序器的启动费用。
         """
         store = _load_faiss_store(collection)
         if store is None or len(store.index_to_docstore_id) == 0:
@@ -809,19 +665,15 @@ async def search(
                 ),
             }
 
-        # Over-fetch from each retriever so the cross-encoder has
-        # room to promote items the bi-encoder ranked lower.
+        # 从每个检索器多取一些候选，给 cross-encoder 留出空间 提升 bi-encoder 排名较低的条目。
         retrieve_k = max(top_k * RERANK_OVERFETCH_MULTIPLIER, 10)
         try:
             raw_vec = store.similarity_search_with_score(query, k=retrieve_k)
         except Exception:  # noqa: BLE001
             raw_vec = []
-        # LangChain's FAISS returns (Document, L2 distance) by
-        # default. Because we set ``normalize_embeddings=True`` in
-        # ``_get_embedder`` the embeddings are unit vectors, so the
-        # squared L2 distance ``d`` and the cosine similarity ``s``
-        # are related by ``d = 2 - 2s`` ⇒ ``s = 1 - d / 2``. Clamp
-        # to [0, 1] to absorb tiny FP drift.
+        # LangChain 的 FAISS 默认返回 (Document, L2 距离)。
+        # 因为在``_get_embedder`` 中设置了 ``normalize_embeddings=True``，
+        # 这些嵌入(embeddings)是单位向量，因此 L2 平方距离 ``d`` 和余弦相似度 ``s`` 满足``d = 2 - 2s`` ⇒ ``s = 1 - d / 2``。钳位到 [0, 1] 以吸收微小浮点漂移。
         vector_hits: list[tuple[dict[str, Any], float]] = []
         for doc, distance in raw_vec:
             similarity = max(0.0, min(1.0, 1.0 - float(distance) / 2.0))
@@ -836,9 +688,7 @@ async def search(
         bm25_raw = bm25.search(query, top_k=retrieve_k)
         bm25_hits = [(idx, score, bm25.docs[idx]) for idx, score in bm25_raw]
 
-        # Hand the full fused list to the reranker — trimming to
-        # ``top_k`` happens AFTER reranking, otherwise we'd lose the
-        # very candidates the cross-encoder is meant to promote.
+        # 将完整融合列表交给重排序器 — 裁剪到 ``top_k`` 在重排序之后进行，否则会丢失 cross-encoder 本应提升的候选。
         candidates = _hybrid_fuse(vector_hits, bm25_hits)[:retrieve_k]
         return candidates, None
 
@@ -857,10 +707,8 @@ async def search(
 
     assert candidates is not None  # narrows for type checkers
 
-    # Reranking is best-effort: ``_maybe_rerank`` always returns a
-    # list of the same shape (with ``rerank_score`` populated or
-    # ``None``), even when the env-var is off or the model fails to
-    # load — the search response shape stays stable.
+    # 重排序是尽力而为的：``_maybe_rerank`` 始终返回相同形状的列表（``rerank_score`` 已填充或为 ``None``），
+    # 即使环境变量关闭或模型加载失败 — 搜索响应形状保持稳定。
     reranked = await _maybe_rerank(query, candidates)
     final_records = reranked[:top_k]
 
@@ -881,10 +729,7 @@ async def search(
             }
         )
 
-    # Quality classification stays on ``vector_score`` — those
-    # thresholds were calibrated against the bi-encoder's normalised
-    # cosine. The cross-encoder logits live on a different scale
-    # and would silently invalidate the high/medium/low bands.
+    # 质量分类基于 ``vector_score`` — 这些阈值是针对 bi-encoder 归一化余弦校准的。cross-encoder logits 处于不同的尺度，会悄悄使 high/medium/low 区间失效。
     scores = [r["vector_score"] for r in results]
     top_score = max(scores) if scores else 0.0
     mean_score = sum(scores) / len(scores) if scores else 0.0
@@ -904,26 +749,19 @@ async def search(
 
 
 # ---------------------------------------------------------------------
-# Tool 3: list collections (with chunk counts)
+# 工具 3：列出集合（含分块数量）
 # ---------------------------------------------------------------------
 @mcp.tool()
 async def list_collections() -> dict:
-    """List all collections currently in the persistent knowledge base.
+    """列出持久化知识库中当前所有集合。
 
-    Useful as the agent's first call when the user's query implies a
-    library but doesn't name a collection (e.g. "what's in my ESG
-    library?"). The agent can then route subsequent ``search`` calls
-    at the right collection.
+    当用户查询暗示某个库但未指定集合名（如"我的 ESG 库里有什么？"）时，可作为 Agent 的首个调用。Agent 随后可将后续 ``search`` 调用路由到正确的集合。
 
-    A "collection" here is any subdirectory of ``DEFAULT_DB_DIR``
-    that contains both ``index.faiss`` and ``index.pkl``. Stray
-    directories (e.g. half-deleted leftovers) are silently skipped —
-    we never want to surface a broken collection to the LLM.
+    此处"集合"指 ``DEFAULT_DB_DIR`` 下同时包含 ``index.faiss`` 和``index.pkl`` 的子目录。无关目录（如半删除残留）被静默跳过，从不向 LLM 暴露损坏的集合。
 
     Returns:
-        ``{db_dir, collections: [{name, chunk_count}]}``. Each entry
-        has ``name`` (str) and ``chunk_count`` (int, best-effort —
-        ``-1`` if the FAISS pair is unreadable).
+        ``{db_dir, collections: [{name, chunk_count}]}``。每个条目含
+        ``name``（str）和 ``chunk_count``（int，尽力而为 —— FAISS 文件对不可读时为 ``-1``）。
     """
 
     def _list() -> dict[str, Any]:
@@ -948,18 +786,16 @@ async def list_collections() -> dict:
 
 
 # ---------------------------------------------------------------------
-# Tool 4: delete a collection
+# 工具 4：删除集合
 # ---------------------------------------------------------------------
 @mcp.tool()
 async def delete_collection(collection: str) -> dict:
-    """Delete a collection and its in-memory caches. Idempotent.
+    """删除集合及其内存缓存。幂等操作。
 
-    Used for housekeeping when a user wants to re-ingest a corpus from
-    scratch (e.g. after changing chunk_size). Missing collections do
-    NOT raise — the response just reports ``existed=False``.
+    用于用户想要从头重新导入语料库时的清理（如更改 chunk_size 后）。缺失的集合不会抛异常 — 响应仅报告 ``existed=False``。
 
     Returns:
-        ``{collection, existed, deleted}``.
+        ``{collection, existed, deleted}``。
     """
     try:
         _validate_collection_name(collection)
@@ -972,8 +808,7 @@ async def delete_collection(collection: str) -> dict:
         cdir = _collection_dir(collection)
         existed = _faiss_index_exists(collection)
         if not existed:
-            # Nothing on disk; still drop any stale in-memory caches
-            # so the next ingest under this name starts truly fresh.
+            # 磁盘上无数据；仍需清除过期的内存缓存，以便下次以此名称导入时真正从零开始。
             _FAISS_STORES.pop(collection, None)
             _BM25_CACHE.pop(collection, None)
             return {"collection": collection, "existed": False, "deleted": False}
@@ -990,9 +825,7 @@ async def delete_collection(collection: str) -> dict:
 
 
 # ---------------------------------------------------------------------
-# Module export — math import is here only so ruff doesn't warn about
-# unused imports if a future iteration uses log/exp normalisation. It
-# costs nothing.
+# 模块导出 — math 导入仅为避免 ruff 在未来迭代使用 log/exp 归一化时，报未使用导入警告。零开销。
 # ---------------------------------------------------------------------
 _ = math
 

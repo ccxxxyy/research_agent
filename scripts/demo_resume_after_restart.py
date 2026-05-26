@@ -1,32 +1,28 @@
-"""Demonstrate conversation RESUME across a fresh Python process.
+"""演示跨 Python 进程重启后恢复对话。
 
-Run:
+运行::
+
     uv run python scripts/demo_resume_after_restart.py
 
-What makes this demo honest:
+本演示的诚实之处：
 
-*Instead of pretending* that "rebuilding the agent in the same process"
-equals "surviving a crash", we actually spawn a **second Python process**
-with ``subprocess.run`` and show it reads state written by the first
-process. The two processes only share one thing — a SQLite file on disk.
-No in-memory trickery.
+不假装 "在同一进程中重建 Agent"等于"从崩溃中恢复"，而是实际启动第二个 Python 进程（通过 ``subprocess.run``），并展示它能读取第一个进程写入的状态。
+两个进程唯一共享的是磁盘上的一个 SQLite 文件。没有内存层面的花招。
 
-Scenario timeline:
+场景时间线：
 
-    [process A, role=writer]
+    [进程 A，角色=写入者]
         build_simple_agent(checkpointer=SqliteSaver("./data/resume.db"))
-        turn 1: "Remember: the project codename is 'North Star'."
-        turn 2: calculate 999 * 37  → 36963
-        exit(0)         <-- process A dies here; nothing in memory survives
+        第 1 轮: "记住：项目代号是 'North Star'。"
+        第 2 轮: 计算 999 * 37  → 36963
+        exit(0)         <-- 进程 A 在此退出；内存中的一切都不复存在
 
-    [process B, role=reader, spawned by subprocess.run]
-        SAME SQLite file, SAME thread_id, BRAND NEW ModelRouter & agent
-        turn 3: "What is the codename? What was the multiplication result?"
-        <-- correct recall from DB proves the resume works
+    [进程 B，角色=读取者，由 subprocess.run 启动]
+        同一 SQLite 文件，同一 thread_id，全新的 ModelRouter 和 Agent
+        第 3 轮: "项目代号是什么？之前的乘法结果是多少？"
+        <-- 从数据库正确回忆证明恢复有效
 
-The scenario is written so the reader can distinguish a real resume
-from an accidentally-shared in-memory object: the writer and reader
-never touch the same Python objects.
+场景经过精心设计，使读者能区分真正的恢复和意外共享的内存对象：写入者和读取者从未接触过相同的 Python 对象。
 """
 
 from __future__ import annotations
@@ -66,11 +62,11 @@ def _last_ai_text(result: dict) -> str:
     for msg in reversed(result["messages"]):
         if isinstance(msg, AIMessage) and not msg.tool_calls:
             return str(msg.content)
-    return "<no final answer>"
+    return "<无最终回答>"
 
 
 async def role_writer() -> None:
-    _banner("Process A (writer): storing facts into SQLite and exiting")
+    _banner("进程 A（写入者）：将事实存入 SQLite 并退出")
 
     agent = await _build_stateful_agent()
     cfg = {"configurable": {"thread_id": THREAD_ID}}
@@ -83,30 +79,30 @@ async def role_writer() -> None:
         start=1,
     ):
         result = await agent.ainvoke({"messages": [HumanMessage(content=question)]}, config=cfg)
-        print(f"  writer turn {step}")
-        print(f"    user : {question}")
-        print(f"    ai   : {_last_ai_text(result)}")
+        print(f"  写入者第 {step} 轮")
+        print(f"    用户 : {question}")
+        print(f"    AI   : {_last_ai_text(result)}")
 
     snapshot = await agent.aget_state(cfg)
     print(
-        f"\n  writer exit — persisted {len(snapshot.values.get('messages', []))} messages "
-        f"to {DB_PATH.resolve()}"
+        f"\n  写入者退出 — 已持久化 {len(snapshot.values.get('messages', []))} 条消息 "
+        f"到 {DB_PATH.resolve()}"
     )
-    print("  --> Process A terminating now. Memory wiped.")
+    print("  --> 进程 A 即将终止。内存已清除。")
 
 
 async def role_reader() -> None:
-    _banner("Process B (reader): a brand-new Python process opens the DB")
+    _banner("进程 B（读取者）：全新的 Python 进程打开数据库")
 
     agent = await _build_stateful_agent()
     cfg = {"configurable": {"thread_id": THREAD_ID}}
 
     snapshot = await agent.aget_state(cfg)
     persisted = len(snapshot.values.get("messages", []))
-    print(f"  reader startup — found {persisted} pre-existing messages in SQLite")
+    print(f"  读取者启动 — 在 SQLite 中发现 {persisted} 条已有消息")
 
     if persisted == 0:
-        print("  [FATAL] nothing to resume from. Did the writer run first?")
+        print("  [致命错误] 无可恢复的内容。写入者是否运行过？")
         sys.exit(2)
 
     probe = (
@@ -115,17 +111,17 @@ async def role_reader() -> None:
     )
     result = await agent.ainvoke({"messages": [HumanMessage(content=probe)]}, config=cfg)
 
-    print(f"\n  reader probe")
-    print(f"    user : {probe}")
-    print(f"    ai   : {_last_ai_text(result)}")
+    print(f"\n  读取者探测")
+    print(f"    用户 : {probe}")
+    print(f"    AI   : {_last_ai_text(result)}")
 
-    # Sanity checks that the answer references the facts from process A.
+    # 检查回答是否引用了进程 A 中的事实。
     answer = _last_ai_text(result).lower()
     checks = {
-        "codename recalled": "north star" in answer,
-        "multiplication recalled (36963)": "36963" in answer or "36,963" in answer,
+        "代号已回忆": "north star" in answer,
+        "乘法结果已回忆 (36963)": "36963" in answer or "36,963" in answer,
     }
-    print("\n  resume verification:")
+    print("\n  恢复验证:")
     for check, passed in checks.items():
         verdict = "PASS" if passed else "FAIL"
         print(f"    [{verdict}] {check}")
@@ -135,51 +131,49 @@ async def role_reader() -> None:
 
 
 async def role_orchestrator() -> None:
-    """Entry point: clean slate, run writer in subprocess A, then reader in B."""
+    """入口：清理旧数据，在子进程 A 中运行写入者，然后在子进程 B 中运行读取者。"""
     import subprocess
 
     if DB_PATH.exists():
         logger.info("Removing stale DB at {}", DB_PATH)
         DB_PATH.unlink()
 
-    _banner("Orchestrator — two-process resume demo begins")
-    print(f"  SQLite path : {DB_PATH.resolve()}")
-    print(f"  thread_id   : {THREAD_ID}")
+    _banner("编排器 — 双进程恢复演示开始")
+    print(f"  SQLite 路径  : {DB_PATH.resolve()}")
+    print(f"  thread_id    : {THREAD_ID}")
 
-    # ---- Process A ----
-    print("\n  >>> spawning Process A (writer)...")
+    # ---- 进程 A ----
+    print("\n  >>> 启动进程 A（写入者）...")
     proc_a = subprocess.run(
         [sys.executable, __file__, "writer"],
         check=True,
     )
-    print(f"  <<< Process A exited with code {proc_a.returncode}")
+    print(f"  <<< 进程 A 退出，返回码 {proc_a.returncode}")
 
-    # ---- Process B ----
-    print("\n  >>> spawning Process B (reader)...")
+    # ---- 进程 B ----
+    print("\n  >>> 启动进程 B（读取者）...")
     proc_b = subprocess.run(
         [sys.executable, __file__, "reader"],
     )
-    print(f"  <<< Process B exited with code {proc_b.returncode}")
+    print(f"  <<< 进程 B 退出，返回码 {proc_b.returncode}")
 
-    _banner("Takeaway")
+    _banner("要点总结")
     if proc_b.returncode == 0:
         print(
             """
-  The reader process — which NEVER shared a single Python object with
-  the writer — correctly recalled both:
-    * a plain-text fact ("North Star")
-    * a tool-computed numeric result (36963 = 999 * 37)
+  读取者进程 — 与写入者从未共享过任何 Python 对象 — 正确
+  回忆了两者：
+    * 纯文本事实（"North Star"）
+    * 工具计算的数值结果（36963 = 999 * 37）
 
-  The only channel between the two processes is the SQLite file. That
-  means the entire conversation state, including tool-call artefacts,
-  survived a simulated crash / redeploy / horizontal scale-out event.
+  两个进程之间唯一的通道是 SQLite 文件。这意味着完整的对话状态（包括工具调用产物）经受住了模拟的崩溃 / 重部署 /水平扩展事件。
 
-  In a production FastAPI deployment, swap SqliteSaver for PostgresSaver
-  and the exact same code path works — multi-instance, HA-grade.
+  在生产 FastAPI 部署中，将 SqliteSaver 换成 PostgresSaver，
+  完全相同的代码路径即可工作 — 支持多实例、高可用级别。
             """.rstrip()
         )
     else:
-        print("  Demo FAILED — reader process did not recover expected facts.")
+        print("  演示失败 — 读取者进程未能恢复预期事实。")
         sys.exit(proc_b.returncode)
 
 
@@ -193,7 +187,7 @@ def main() -> None:
     elif role == "reader":
         asyncio.run(role_reader())
     else:
-        print(f"Unknown role: {role}. Use one of: orchestrator, writer, reader.")
+        print(f"未知角色: {role}。请使用: orchestrator, writer, reader。")
         sys.exit(2)
 
 

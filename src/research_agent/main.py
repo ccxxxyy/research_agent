@@ -1,4 +1,4 @@
-"""FastAPI application entry point."""
+"""FastAPI Application 入口。"""
 
 from __future__ import annotations
 
@@ -18,20 +18,14 @@ from research_agent.observability.logging import setup_logging
 
 
 async def _try_build_research_supervisor(model_router, checkpointer, settings=None):
-    """Best-effort compile of the Phase-4.5 / 4.6 research supervisor.
+    """尽力编译研究 supervisor。
 
-    Tool discovery runs four loaders in parallel: three MCP-stdio
-    subprocesses (fin_data, pdf_report, code) plus the in-process
-    knowledge-tools loader. If any of them fails (missing dependency,
-    network timeout, etc.) we degrade gracefully: the surviving
-    specialists are still wired in, and ``get_research_supervisor_graph``
-    surfaces a 503 only when **every** specialist's tool discovery
-    failed. Startup never dies because of an unavailable backend.
+    工具发现并行运行若干加载器：三个 MCP stdio 子进程（fin_data、pdf_report、code）以及进程内的 knowledge-tools 加载器。
+    若任一失败（缺依赖、网络超时等），会优雅降级：
+    仍可接入已成功发现的 specialist；仅当所有 specialist 的工具发现均失败时，``get_research_supervisor_graph`` 才返回 503。后端不可用也不会导致启动失败。
 
-    Returns ``(compiled_graph, specialist_roster)`` — the roster is
-    a list of specialist names that were successfully wired in (e.g.
-    ``["data_expert", "news_expert"]``). Returns ``(None, [])`` if
-    no specialist could be loaded.
+    返回 ``(compiled_graph, specialist_roster)`` — roster 为已成功接入的 specialist 名称列表（例如 ``["data_expert", "news_expert"]``）。
+    若未能加载任何 specialist 则返回 ``(None, [])``。
     """
     from research_agent.graph.research_supervisor import build_research_supervisor
     from research_agent.mcp_servers.client_factory import (
@@ -43,11 +37,9 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         load_pdf_report_server_tools,
     )
 
-    # NOTE: ``load_knowledge_tools_inproc`` is the in-process replacement
-    # for the (deprecated) MCP-stdio ``load_knowledge_server_tools``.
-    # The other four loaders still spawn MCP subprocesses — those
-    # servers' import chains are light enough that the stdio path is
-    # stable. See ``knowledge_server.py`` for why knowledge is special.
+    # 说明：``load_knowledge_tools_inproc`` 是进程内替代方案，取代（已弃用的） MCP stdio ``load_knowledge_server_tools``。
+    # 其余加载器仍拉起 MCP 子进程 —— 那些服务器的 import 链较轻，stdio 路径稳定。
+    # knowledge 为何特殊见 ``knowledge_server.py``。
     timeout = float(getattr(settings, "mcp_tool_discovery_timeout", 30.0))
     results = await asyncio.gather(
         asyncio.wait_for(load_fin_data_server_tools(), timeout=timeout),
@@ -96,8 +88,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         if tools.get(src)
     ]
 
-    # ``settings`` is optional so this helper stays unit-testable in
-    # isolation. In the production lifespan we always pass it.
+    # ``settings`` 可选以便单独做单测；生产 lifespan 中总会传入。
     reflect = bool(getattr(settings, "reflection_enabled", False))
     pass_threshold = float(getattr(settings, "reflection_pass_threshold", 0.85))
     max_iter = int(getattr(settings, "reflection_max_iterations", 2))
@@ -120,16 +111,14 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         )
         return graph, roster
     except Exception:  # noqa: BLE001
-        # A crash here (e.g. misconfigured model router) should not
-        # take down the entire API — the minimal supervisor and RAG
-        # pipeline may still be usable.
+        # 此处崩溃（例如模型路由配置错误）不应拖垮整个 API —— minimal supervisor 与 RAG 流水线仍可能可用。
         logger.exception("Failed to compile research_supervisor; route will 503.")
         return None, []
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialize and tear down application resources."""
+    """初始化并释放 Application 资源。"""
     settings = get_settings()
     setup_logging(
         settings.observability.log_level,
@@ -190,18 +179,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
-    # --- Graceful shutdown: release resources in reverse order ---
+    # --- 优雅关闭：按相反顺序释放资源 ---
     logger.info("Shutting down: releasing resources...")
 
     async def _close_conn(owner_name: str, conn: object) -> None:
-        """Close a connection-like object, awaiting it iff its ``close``
-        is a coroutine function.
+        """关闭类连接对象：若 ``close`` 为协程函数则 await。
 
-        Postgres pools expose a sync ``close``; ``aiosqlite.Connection``
-        and a few LangGraph async stores expose an *async* ``close`` —
-        calling those without ``await`` raises a ``RuntimeWarning``
-        ("coroutine was never awaited") and the underlying socket may
-        leak. We detect the variant at runtime and dispatch correctly.
+        Postgres 连接池暴露同步 ``close``；
+        ``aiosqlite.Connection`` 及若干 LangGraph 异步存储暴露异步 ``close`` —— 不带 ``await`` 调用会触发 ``RuntimeWarning``
+       （「coroutine was never awaited」）且底层套接字可能泄漏。运行时识别类型并正确分发。
         """
         close_fn = getattr(conn, "close", None)
         if close_fn is None:
@@ -215,11 +201,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Error closing {}: {}", owner_name, exc)
 
-    # Close memory store connection pool / async sqlite connection
+    # 关闭 memory store 连接池 / 异步 sqlite 连接
     if hasattr(memory_store, "conn"):
         await _close_conn("Memory store connection", memory_store.conn)
 
-    # Close checkpointer connection pool / sqlite connection
+    # 关闭 checkpointer 连接池 / sqlite 连接
     if hasattr(checkpointer, "conn"):
         await _close_conn("Checkpointer connection", checkpointer.conn)
 
@@ -227,7 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def _parse_cors_origins(raw: str) -> list[str]:
-    """Parse comma-separated CORS origins or wildcard."""
+    """解析逗号分隔的 CORS 源或通配符。"""
     if raw.strip() == "*":
         return ["*"]
     return [o.strip() for o in raw.split(",") if o.strip()]
@@ -236,7 +222,7 @@ def _parse_cors_origins(raw: str) -> list[str]:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Research Agent",
-        description="Multi-agent deep research system with LangGraph, MCP, and Agentic RAG",
+        description="基于 LangGraph、MCP 与 Agentic RAG 的多智能体深度研究系统",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -244,9 +230,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     origins = _parse_cors_origins(settings.cors_origins)
 
-    # Middleware stack (execution order is bottom-to-top). Outermost
-    # middleware runs first: RequestId → Metrics → RequestTimeout →
-    # Auth → RateLimit → CORS → route handler.
+    # 中间件栈（执行顺序自下而上）。最外层最先执行：RequestId → Metrics → RequestTimeout → Auth → RateLimit → CORS → 路由处理器。
     app.add_middleware(
         CORSMiddleware,  # type: ignore[arg-type]
         allow_origins=origins,
@@ -286,7 +270,7 @@ def create_app() -> FastAPI:
     app.include_router(sentiment.router)
     app.include_router(supervisor.router)
 
-    # --- Static frontend ---
+    # --- 静态前端 ---
     from pathlib import Path as _Path
 
     from fastapi.responses import FileResponse

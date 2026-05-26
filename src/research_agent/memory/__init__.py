@@ -1,4 +1,4 @@
-"""Memory management — short-term (checkpointer) and long-term (store)."""
+"""记忆管理 — 短期记忆（checkpointer）与长期记忆（store）。"""
 
 from research_agent.memory.checkpointer import init_checkpointer
 from research_agent.memory.store import init_memory_store

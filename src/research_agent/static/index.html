@@ -205,7 +205,7 @@ let streaming = false;
 let available = new Set();
 let hitlPendingThread = null;
 
-// --- Init ---
+// --- 初始化 ---
 function init() {
   renderSpecialists([]);
   checkHealth();
@@ -213,7 +213,7 @@ function init() {
   autoResize(document.getElementById('queryInput'));
 }
 
-// --- Specialists panel ---
+// --- 专家面板 ---
 function renderSpecialists(availableList) {
   available = new Set(availableList);
   const el = document.getElementById('specialistList');
@@ -255,7 +255,7 @@ function clearHighlights() {
   });
 }
 
-// --- Health check ---
+// --- 健康检查 ---
 async function checkHealth() {
   try {
     const r = await fetch('/health');
@@ -275,7 +275,7 @@ async function checkHealth() {
   }
 }
 
-// --- Usage stats ---
+// --- 用量统计 ---
 async function refreshUsage() {
   try {
     const r = await fetch('/api/usage');
@@ -285,16 +285,16 @@ async function refreshUsage() {
       pt += m.prompt_tokens||0;
       ct += m.completion_tokens||0;
       calls += m.call_count||0;
-      cost += m.total_cost_usd||0;
+      cost += m.total_cost_cny||0;
     }
     document.getElementById('statPT').textContent = pt.toLocaleString();
     document.getElementById('statCT').textContent = ct.toLocaleString();
     document.getElementById('statCalls').textContent = calls;
-    document.getElementById('statCost').textContent = '$' + cost.toFixed(4);
+    document.getElementById('statCost').textContent = '¥' + cost.toFixed(4);
   } catch {}
 }
 
-// --- Messages ---
+// --- 消息区域 ---
 function addUserMsg(text) {
   document.getElementById('welcome')?.remove();
   const d = document.createElement('div');
@@ -319,7 +319,7 @@ function scrollToBottom() {
   m.scrollTop = m.scrollHeight;
 }
 
-// --- Auto-resize textarea ---
+// --- 输入框自适应高度 ---
 function autoResize(el) {
   el.addEventListener('input', () => {
     el.style.height = 'auto';
@@ -327,7 +327,7 @@ function autoResize(el) {
   });
 }
 
-// --- Fill example query ---
+// --- 填入示例问题 ---
 function fillQuery(el) {
   const input = document.getElementById('queryInput');
   input.value = el.textContent;
@@ -335,7 +335,7 @@ function fillQuery(el) {
   input.dispatchEvent(new Event('input'));
 }
 
-// --- Key handler ---
+// --- 按键处理 ---
 function handleKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -343,7 +343,7 @@ function handleKey(e) {
   }
 }
 
-// --- Toast ---
+// --- 错误提示 ---
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -351,7 +351,7 @@ function showToast(msg) {
   setTimeout(() => t.style.display = 'none', 4000);
 }
 
-// --- Send query (SSE via fetch POST) ---
+// --- 发送查询（通过 fetch POST 进行 SSE 流式传输）---
 async function sendQuery() {
   const input = document.getElementById('queryInput');
   const query = input.value.trim();
@@ -525,7 +525,7 @@ async function sendQuery() {
   }
 }
 
-// --- Minimal markdown rendering ---
+// --- 简易 Markdown 渲染 ---
 function renderMarkdown(text) {
   let html = text
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -539,7 +539,7 @@ function renderMarkdown(text) {
   return html;
 }
 
-// --- HITL approve / revise ---
+// --- 人机协作：审批 / 修改 ---
 async function hitlApprove() {
   if (!hitlPendingThread) return;
   const feedback = document.getElementById('reviewFeedback')?.value.trim() || '';
@@ -591,7 +591,7 @@ async function _hitlSubmit(action, feedback) {
   }
 }
 
-// --- New conversation ---
+// --- 新建对话 ---
 function newThread() {
   currentThread = null;
   document.getElementById('threadDisplay').textContent = '-';

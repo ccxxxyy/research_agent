@@ -1,21 +1,23 @@
-"""Long-term memory — cross-session persistent memory store.
+"""长期记忆 — 跨会话持久化记忆存储。
 
-MemoryStore enables agents to remember information across different
-conversation threads. Typical use cases:
-- User preferences and research interests
-- Previously generated insights that can be reused
-- Accumulated domain knowledge from past research sessions
+MemoryStore 使 agent 能够在不同对话线程之间记住信息。典型用例：
+- 用户偏好和研究兴趣
+- 之前生成的可复用洞察
+- 从过往研究会话中积累的领域知识
 
-Data is namespaced by (user_id, memory_type) for isolation.
+数据按 (user_id, memory_type) 命名空间隔离。
+    用户 A 的偏好：("userA", "user_preferences") → {"language": "zh", ...}
+    用户 A 的研究历史：("userA", "research_history") → {"query": "宁德时代业绩", ...}
+    用户 B 的数据和 A 完全隔离
 
-Three backends are supported, chosen in priority order:
+支持三种后端，按以下优先级选择：
 
-1. **PostgresStore** (production) — when ``postgres_uri`` is supplied
-   and reachable. Durable, concurrent, survives process restart.
-2. **AsyncSqliteStore** (dev / demos) — when ``sqlite_path`` is
-   supplied. File-based, survives process restart, no server needed.
-3. **InMemoryStore** (tests / smoke) — fallback when neither is
-   available. Fast but data dies with the Python process.
+1. PostgresStore（生产环境）— 当提供 ``postgres_uri`` 且可达时使用。
+   持久化、支持并发，进程重启后数据不丢失。
+2. AsyncSqliteStore（开发/演示）— 当提供 ``sqlite_path`` 时使用。
+   基于文件，进程重启后数据不丢失，无需服务器。
+3. InMemoryStore（测试/冒烟）— 两者都不可用时的回退方案。
+   快速但数据随 Python 进程终止而丢失。
 """
 
 from __future__ import annotations
@@ -33,23 +35,19 @@ async def init_memory_store(
     postgres_uri: str | None = None,
     sqlite_path: str | Path | None = None,
 ) -> BaseStore:
-    """Initialize long-term memory store with three-level fallback.
+    """初始化长期记忆存储，支持三级回退。
 
     Args:
-        postgres_uri: PostgreSQL connection string. If given and
-            reachable, wins. Used in production / docker-compose.
-        sqlite_path: Path to a SQLite database file. If given and
-            Postgres is not used, an ``AsyncSqliteStore`` is created
-            at that path (parent dirs auto-created). Typical on
-            Windows / laptop dev when docker Postgres is down.
+        postgres_uri: PostgreSQL 连接字符串。如果提供且可达，则优先使用。
+            用于生产环境 / docker-compose 部署。
+        sqlite_path: SQLite 数据库文件路径。如果提供且未使用 Postgres，则在该路径创建 ``AsyncSqliteStore``（父目录会自动创建）。
+            适用于 docker Postgres 未运行时。
 
     Returns:
-        An instance of :class:`BaseStore`. Caller does not need to
-        know which backend was chosen.
+        一个 :class:`BaseStore` 实例。调用方无需知道选择了哪个后端。
 
     Notes:
-        Any failure to initialize Postgres falls back to SQLite (if
-        configured) then to in-memory, with a warning.
+        Postgres 初始化失败时会回退到 SQLite（如果已配置），然后回退到 内存方案，并发出警告。
     """
     if postgres_uri:
         if not is_postgres_reachable(postgres_uri):

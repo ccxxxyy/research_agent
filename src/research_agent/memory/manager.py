@@ -1,4 +1,15 @@
-"""Memory manager — unified interface for reading/writing long-term memories."""
+"""记忆管理器 — 读写长期记忆的统一接口。
+
+在 store 之上封装了更友好的 API。store 是底层的 key-value 存储，manager 加了命名空间概念。
+    store.py 负责"怎么存"：选择用 Postgres 还是 SQLite 还是内存，初始化连接。关心的是基础设施。
+    manager.py 负责"存什么"：定义命名空间（用户偏好、研究历史、领域知识），提供 save_memory/get_memory/save_research_result 等业务方法。关心的是业务逻辑。
+核心方法：
+    save_memory — 存一条记忆
+    get_memory — 按 key 读一条
+    search_memories — 搜索某个命名空间下的记忆
+    save_research_result — 快捷方法，把研究结果存到历史
+    get_user_context — 一次性拉出用户的偏好+最近研究，用来个性化 Agent 行为
+"""
 
 from __future__ import annotations
 
@@ -10,7 +21,7 @@ from loguru import logger
 
 
 class MemoryNamespace:
-    """Predefined namespaces for organizing long-term memories."""
+    """用于组织长期记忆的预定义命名空间。分别是用户偏好 / 研究历史 / 领域知识。 """
 
     USER_PREFERENCES = "user_preferences"
     RESEARCH_HISTORY = "research_history"
@@ -18,10 +29,9 @@ class MemoryNamespace:
 
 
 class MemoryManager:
-    """High-level API for managing long-term agent memories.
+    """管理 agent 长期记忆的高层 API。
 
-    Wraps LangGraph's BaseStore with convenient namespace-based
-    read/write operations.
+    封装 LangGraph 的 BaseStore，提供基于命名空间的便捷读写操作。
     """
 
     def __init__(self, store: BaseStore) -> None:
@@ -34,7 +44,7 @@ class MemoryManager:
         key: str,
         value: dict[str, Any],
     ) -> None:
-        """Store a memory item under the given namespace."""
+        """在指定命名空间下存储一条记忆项。"""
         ns = (user_id, namespace)
         value["_updated_at"] = datetime.now(timezone.utc).isoformat()
         await self._store.aput(ns, key, value)
@@ -46,7 +56,7 @@ class MemoryManager:
         namespace: str,
         key: str,
     ) -> dict[str, Any] | None:
-        """Retrieve a specific memory item."""
+        """检索指定的记忆项。"""
         ns = (user_id, namespace)
         item = await self._store.aget(ns, key)
         if item is None:
@@ -60,7 +70,7 @@ class MemoryManager:
         query: str | None = None,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
-        """Search memories in a namespace, optionally filtered by query."""
+        """在命名空间中搜索记忆，可选按查询条件过滤。"""
         ns = (user_id, namespace)
         items = await self._store.asearch(ns, query=query, limit=limit)
         return [item.value for item in items]
@@ -72,7 +82,7 @@ class MemoryManager:
         summary: str,
         thread_id: str,
     ) -> None:
-        """Save a completed research result to history for future reference."""
+        """将已完成的研究结果保存到历史记录中，供未来参考。"""
         await self.save_memory(
             user_id=user_id,
             namespace=MemoryNamespace.RESEARCH_HISTORY,
@@ -85,7 +95,7 @@ class MemoryManager:
         )
 
     async def get_user_context(self, user_id: str) -> dict[str, Any]:
-        """Retrieve all relevant user context for personalizing agent behavior."""
+        """检索所有相关的用户上下文，用于个性化 agent 行为。"""
         preferences = await self.search_memories(
             user_id, MemoryNamespace.USER_PREFERENCES, limit=5,
         )

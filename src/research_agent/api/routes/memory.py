@@ -1,12 +1,11 @@
-"""Long-term memory management endpoints.
+"""长期记忆管理端点。
 
-Exposes the MemoryManager as a REST surface so frontends can:
-- View a user's research history
-- Set / update user preferences
-- Query accumulated domain knowledge
+将 MemoryManager 以 REST 接口暴露，使前端可以：
+- 查看用户的研究历史
+- 设置 / 更新用户偏好
+- 查询积累的领域知识
 
-These endpoints complement the automatic memory lifecycle in the
-supervisor routes (which save research results on completion).
+这些端点是主管路由中自动记忆生命周期（研究完成时自动保存结果）的补充。
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ router = APIRouter(prefix="/api/memory", tags=["memory"])
 
 
 # =====================================================================
-# Request / Response models
+# 请求 / 响应模型
 # =====================================================================
 
 
@@ -55,7 +54,7 @@ class UserContextResponse(BaseModel):
 
 
 # =====================================================================
-# Endpoints
+# 端点
 # =====================================================================
 
 
@@ -64,10 +63,9 @@ async def get_user_context(
     memory: MemoryDep,
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> UserContextResponse:
-    """Retrieve full user context (preferences + recent research history).
+    """获取完整的用户上下文（偏好 + 近期研究历史）。
 
-    This is the same context the research supervisor injects as a
-    preamble before each invocation.
+    与研究主管在每次调用前注入的前导上下文相同。
     """
     ctx = await memory.get_user_context(x_user_id)
     return UserContextResponse(
@@ -83,7 +81,7 @@ async def get_research_history(
     x_user_id: str = Header(..., alias="X-User-ID"),
     limit: int = 10,
 ) -> ResearchHistoryResponse:
-    """List the user's saved research results (most recent first)."""
+    """列出用户保存的研究结果（最新优先）。"""
     items = await memory.search_memories(
         user_id=x_user_id,
         namespace=MemoryNamespace.RESEARCH_HISTORY,
@@ -102,11 +100,9 @@ async def save_preference(
     memory: MemoryDep,
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> SavePreferenceResponse:
-    """Save or update a user preference.
+    """保存或更新用户偏好。
 
-    Preferences are injected into the supervisor prompt so it can
-    personalize answers (e.g. preferred language, analysis depth,
-    favorite sectors).
+    偏好会注入主管提示词中，以便个性化回答（如首选语言、分析深度、关注行业等）。
     """
     await memory.save_memory(
         user_id=x_user_id,
@@ -123,7 +119,7 @@ async def delete_preference(
     memory: MemoryDep,
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> dict[str, Any]:
-    """Remove a user preference by key."""
+    """按键删除用户偏好。"""
     try:
         ns = (x_user_id, MemoryNamespace.USER_PREFERENCES)
         await memory._store.adelete(ns, key)

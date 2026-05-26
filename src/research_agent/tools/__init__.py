@@ -1,16 +1,10 @@
-"""In-process LangChain tools.
+"""进程内 LangChain 工具。
 
-These tools use ``@tool`` / ``StructuredTool`` and run in the same
-process as the agent. For out-of-process tools served over MCP-stdio,
-see ``mcp_servers/`` (currently: ``code_server``, ``fin_data_server``,
-``pdf_report_server``, ``echo_server``).
+这些工具使用 ``@tool`` / ``StructuredTool`` 装饰器，与 Agent 运行在同一进程中。
+跨进程通过 MCP-stdio 提供的工具见 ``mcp_servers/``（目前包括：``code_server``、``fin_data_server``、``pdf_report_server``、``news_server``、``news_sentiment_server``、``echo_server``）。
 
-The knowledge-base tools are *defined* in
-``mcp_servers/knowledge_server.py`` (which holds the MCP contract) but
-*delivered* in-process via :mod:`research_agent.tools.knowledge_tools`
-because their import chain (sentence-transformers / faiss-cpu / torch)
-is incompatible with fastmcp's stdio transport on Windows + Python
-3.13. See ``knowledge_server.py`` for the full diagnosis.
+知识库工具定义在 ``mcp_servers/knowledge_server.py``（持有 MCP 契约），但通过 :mod:`research_agent.tools.knowledge_tools` 以进程内方式交付，
+原因是其导入链（sentence-transformers / faiss-cpu / torch）与 fastmcp 在 Windows + Python 3.13 上的 stdio 传输不兼容。见 ``knowledge_server.py`` 中的完整诊断。
 """
 
 from research_agent.tools.knowledge_tools import (

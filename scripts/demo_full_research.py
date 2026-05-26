@@ -1,68 +1,52 @@
-"""Phase-4.6 end-to-end demo — research supervisor over ALL four specialists.
+"""端到端演示 — 研究 supervisor 调度全部四个专家。
 
-What this script demonstrates
------------------------------
-``demo_financial_research.py`` proved that the supervisor could route
-across ``data_expert`` + ``report_expert`` + ``coder_expert`` (the
-three MCP-stdio specialists). What it could NOT exercise was the
-**knowledge_expert** — that specialist needs a populated FAISS
-collection, and at the time the only collection was the synthetic
-2-page PDF the smoke-test ingested.
+本脚本展示的内容
+----------------
+``demo_financial_research.py`` 证明了 supervisor 能在 ``data_expert`` + ``report_expert`` + ``coder_expert``（三个MCP-stdio 专家）之间路由。
+但它无法测试knowledge_expert — 该专家需要一个已填充的 FAISS collection，
+而当时唯一可用的collection 只有冒烟测试灌入的合成 2 页 PDF。
 
-Now that ``scripts/seed_real_research_reports.py`` has populated the
-``prod_reports`` collection with three real A-share annual reports
-spanning the AI / semiconductor value chain (寒武纪 — AI 算力芯片,
-中际旭创 — CPO/光模块, 兆易创新 — 存储芯片), we can put the FULL team
-under one research question that forces a four-way fan-out:
+现在 ``scripts/seed_real_research_reports.py`` 已向 ``prod_reports`` collection 灌入了三份真实 A 股年报，
+覆盖 AI /半导体价值链（寒武纪 — AI 算力芯片、中际旭创 — CPO/光模块、兆易创新 — 存储芯片），可以用一个研究问题驱动 完整团队的四路扇出：
 
     ┌─────────────────────────────────────────────────────────┐
-    │            research_supervisor   (HEAVY tier)           │
+    │            research_supervisor   (HEAVY 层)              │
     └─┬─────────────┬───────────────┬───────────────┬─────────┘
       ▼             ▼               ▼               ▼
   data_expert  report_expert  coder_expert  knowledge_expert
    (akshare)    (cninfo)       (sandbox py)    (FAISS RAG)
 
-The single user turn asks for:
+单轮用户提问要求：
     1) 最新基本面 (data_expert)
     2) 最近 30 天的新公开披露 (report_expert)
-    3) 已灌入的知识库里 prod_reports 中年报原文摘录 (knowledge_expert)
+    3) 已灌入的知识库 prod_reports 中年报原文摘录 (knowledge_expert)
     4) 在步骤 1 的最近 5 日收盘价上算均值 / 标准差 (coder_expert)
 
-then a 3-5 行的总结 written by the supervisor itself.
+然后由 supervisor 自行撰写 3-5 行的总结。
 
-Run::
+运行::
 
     .venv/Scripts/python.exe scripts/demo_full_research.py
-    # optional: --company 宁德时代 --ticker 300750
+    # 可选: --company 宁德时代 --ticker 300750
 
-Prerequisites:
-    * ``scripts/seed_real_research_reports.py`` has been run at least
-      once (the demo will refuse to start if ``prod_reports`` is
-      missing or empty for the requested ticker).
-    * Network access (akshare / cninfo).
-    * A working LLM config in ``.env``.
+前置条件:
+    * ``scripts/seed_real_research_reports.py`` 至少运行过一次（若请求的标的在 ``prod_reports`` 中不存在或为空，演示会拒绝启动）。
+    * 网络连接（akshare / cninfo）。
+    * ``.env`` 中已配置可用的 LLM。
 
-Exit codes:
-    0 → supervisor produced a final answer that passes the four soft
-        routing checks below.
-    1 → any configuration / MCP / LLM error, or one of the four
-        specialists was NOT routed to.
+退出码:
+    0 → supervisor 的最终回答通过了以下四项宽松路由校验。
+    1 → 任何配置 / MCP / LLM 错误，或四个专家中有任何一个未被路由到。
 
-Soft heuristic checks (intentionally lenient — we never pin LLM wording):
-    * non-empty final answer
-    * answer mentions the target company (name OR 6-digit ticker)
-    * supervisor issued ``transfer_to_data_expert`` AND
-      ``transfer_to_report_expert`` AND ``transfer_to_coder_expert``
-      AND ``transfer_to_knowledge_expert`` at least once each.
+宽松启发式校验（故意不固定 LLM 措辞）：
+    * 最终回答非空
+    * 回答中提及目标公司（名称或 6 位代码）
+    * supervisor 至少各发出一次 ``transfer_to_data_expert``、``transfer_to_report_expert``、``transfer_to_coder_expert``和 ``transfer_to_knowledge_expert``。
 
-Why we don't assert specific tool names
----------------------------------------
-``output_mode="last_message"`` (chosen in
-``build_research_supervisor`` to keep token-cost realistic) means the
-specialists' inner ``ToolMessage`` traffic stays in their subgraphs.
-The outer state therefore only carries the supervisor's
-``transfer_to_*`` hand-offs and each specialist's final summary —
-that's exactly what we verify.
+为何不断言具体工具名
+--------------------
+``output_mode="last_message"``（在 ``build_research_supervisor``中选用，以保持 token 开销合理）意味着各专家内部的``ToolMessage`` 通信保留在其子图中。
+因此外层状态只携带supervisor 的 ``transfer_to_*`` 移交记录和各专家的最终摘要 — 这正是我们所验证的内容。
 """
 
 from __future__ import annotations
@@ -76,19 +60,13 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------
-# Force UTF-8 on stdout/stderr.
+# 强制 stdout/stderr 使用 UTF-8。
 #
-# The supervisor's final answer routinely contains emoji and CJK
-# characters (✅, ❌, 表格 frame chars). On Windows the default
-# console code page is cp936 / GBK, and ``print(answer_with_emoji)``
-# raises ``UnicodeEncodeError`` mid-script — we lose the trace
-# summary even though the ainvoke succeeded. Reconfiguring the
-# wrappers to UTF-8 at import time avoids that without forcing the
-# operator to set ``PYTHONIOENCODING`` in their shell. ``errors=
-# "replace"`` is a safety net for the rare case where the wrapper
-# can't be reconfigured (e.g. when stdout is captured by a non-text
-# stream); we still keep going and just print '?' for unmappable
-# chars.
+# supervisor 的最终回答经常包含 emoji 和中日韩字符（✅、❌、表格框线字符）。
+# 在 Windows 上默认控制台代码页为 cp936 / GBK，``print(answer_with_emoji)`` 会在脚本运行中途抛出``UnicodeEncodeError`` — 即使 ainvoke 成功也会丢失跟踪摘要。
+# 在导入时将包装器重配为 UTF-8 可避免此问题，无需在 shell 中设置 ``PYTHONIOENCODING``。``errors="replace"`` 是安全网，
+# 用于包装器无法重配的少数情况（如 stdout 被非文本流捕获）；
+# 对无法映射的字符仅打印 '?'。
 # ---------------------------------------------------------------------
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -110,24 +88,18 @@ from research_agent.mcp_servers.client_factory import (
 )
 
 
-# Default target intentionally aligns with one of the seeded tickers.
-# 中际旭创 (300308) is the CPO/光模块 龙头, riding the AI data-centre
-# interconnect wave — its 2025 年报 is the most narrative-rich entry
-# in the seeded corpus (业绩爆发型故事), which gives knowledge_expert
-# something quotable to retrieve and gives the supervisor a strong
-# multi-specialist demo on the AI infra theme.
+# 默认目标故意对齐已灌入的某个标的。
+# 中际旭创 (300308) 是 CPO/光模块龙头，乘 AI 数据中心互联浪潮 — 其 2025 年报在灌入语料库中叙事最丰富（业绩爆发型故事），
+# 可为 knowledge_expert 提供可引用的内容，也为 supervisor 在 AI 基础设施主题上提供强有力的多专家演示。
 DEFAULT_COMPANY = "中际旭创"
 DEFAULT_TICKER = "300308"
 DEFAULT_COLLECTION = "prod_reports"
 
 
 def _question(company: str, ticker: str, collection: str) -> str:
-    """Compose the composite four-way research question.
+    """构造四路复合研究问题。
 
-    Crafted to make each specialist the OBVIOUS choice for one
-    sub-task — the supervisor should never need to guess between two
-    candidates, which keeps the demo deterministic enough for an
-    interview walk-through.
+    精心设计使每个专家成为某个子任务的显而易见的选择 — supervisor 永远不需要在两个候选之间猜测，
     """
     return (
         f"我想对 {company}（股票代码 {ticker}）做一份小型研究简报。\n"
@@ -146,12 +118,9 @@ def _question(company: str, ticker: str, collection: str) -> str:
 
 
 def _last_plain_assistant(messages: list) -> str:
-    """Return the last AIMessage that is NOT itself a tool call.
+    """返回最后一条 **非工具调用** 的 AIMessage。
 
-    With ``output_mode="last_message"`` the supervisor's final
-    synthesis is always such a message — anything before it is
-    either a hand-off ``AIMessage`` (carries ``tool_calls``) or a
-    specialist's interim summary.
+    使用 ``output_mode="last_message"`` 时，supervisor 的最终综合始终是这样的消息 — 之前的要么是携带 ``tool_calls`` 的移交 ``AIMessage``，要么是专家的中间摘要。
     """
     for m in reversed(messages):
         if isinstance(m, AIMessage):
@@ -162,11 +131,9 @@ def _last_plain_assistant(messages: list) -> str:
 
 
 def _trace_tool_calls(messages: list) -> list[str]:
-    """Collect every tool name observable in the outer supervisor state.
+    """收集外层 supervisor 状态中可观测到的所有工具名称。
 
-    Each ``transfer_to_*`` typically produces TWO entries:
-    one ``AIMessage.tool_calls`` from the supervisor and one
-    ``ToolMessage`` echo. We keep both — counting is the caller's job.
+    每个 ``transfer_to_*`` 通常产生两条记录：一条来自 supervisor 的 ``AIMessage.tool_calls``，一条 ``ToolMessage`` 回声。两者均保留 — 计数由调用方负责。
     """
     names: list[str] = []
     for m in messages:
@@ -187,12 +154,9 @@ def _trace_tool_calls(messages: list) -> list[str]:
 
 
 def _transfers_reached(calls: list[str]) -> set[str]:
-    """Return the set of distinct specialists the supervisor routed to.
+    """返回 supervisor 路由到的不同专家集合。
 
-    ``transfer_back_to_supervisor`` (auto-injected by
-    ``langgraph_supervisor``) is intentionally stripped; we care about
-    which specialists were *invoked*, not how many supervisor turns
-    happened.
+    ``transfer_back_to_supervisor``（由 ``langgraph_supervisor``自动注入）被故意排除；我们关心的是哪些专家被调用了，而非 supervisor 回收了多少次控制权。
     """
     reached: set[str] = set()
     for n in calls:
@@ -202,13 +166,10 @@ def _transfers_reached(calls: list[str]) -> set[str]:
 
 
 async def _load_all_tools() -> dict[str, Any]:
-    """Spawn the three MCP servers + load in-process knowledge tools.
+    """启动三个 MCP 服务器 + 加载进程内知识库工具。
 
-    The three MCP loaders run concurrently; the knowledge loader is
-    in-process (just imports + StructuredTool wrapping) so it
-    contributes negligible wall-time. We still ``gather`` it for
-    symmetry — if it ever grows expensive (e.g. eager bge load) the
-    parallelism is already in place.
+    三个 MCP 加载器并发运行；知识库加载器在进程内执行（仅导入 + StructuredTool 包装），耗时可忽略。
+    仍使用 ``gather`` 以保持对称性 — 如果将来变得昂贵（如提前加载 bge），并发机制已就位。
     """
     data_tools, report_tools, coder_tools, knowledge_tools = await asyncio.gather(
         load_fin_data_server_tools(),
@@ -232,13 +193,9 @@ async def _load_all_tools() -> dict[str, Any]:
 
 
 async def _verify_collection_seeded(collection: str) -> bool:
-    """Refuse to start the demo if ``collection`` is unseeded.
+    """如果 ``collection`` 未灌入则拒绝启动演示。
 
-    Running the demo against an empty collection would make the
-    knowledge_expert always return ``quality='low'`` and exhaust its
-    three retries on every turn — wasting LLM budget for an obvious
-    operator error. Far better to surface "run the seed script
-    first" up front.
+    在空 collection 上运行演示会使 knowledge_expert 始终返回 ``quality='low'`` 并耗尽其三次重试 — 为一个显而易见的操作 失误浪费 LLM 预算。不如提前提示"先运行灌入脚本"。
     """
     from research_agent.mcp_servers.knowledge_server import list_collections
 
@@ -261,28 +218,26 @@ async def _verify_collection_seeded(collection: str) -> bool:
 
 async def amain(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="End-to-end demo of the four-specialist research supervisor."
+        description="四专家研究 supervisor 端到端演示。"
     )
     parser.add_argument(
-        "--company", default=DEFAULT_COMPANY, help="Company name in Chinese."
+        "--company", default=DEFAULT_COMPANY, help="公司中文名称。"
     )
     parser.add_argument(
         "--ticker",
         default=DEFAULT_TICKER,
-        help="6-digit A-share ticker (must match --company).",
+        help="6 位 A 股代码（需与 --company 匹配）。",
     )
     parser.add_argument(
         "--collection",
         default=DEFAULT_COLLECTION,
-        help="FAISS collection the knowledge_expert should target.",
+        help="knowledge_expert 应搜索的 FAISS collection。",
     )
     parser.add_argument(
         "--no-verify-seed",
         action="store_true",
         help=(
-            "Skip the up-front check that the collection has been "
-            "seeded. Use only when intentionally exercising the "
-            "agent's empty-library handling."
+            "跳过 collection 已灌入的前置检查。仅在故意测试 Agent 空知识库处理时使用。"
         ),
     )
     args = parser.parse_args(argv)
@@ -307,19 +262,13 @@ async def amain(argv: list[str]) -> int:
     logger.info("Sending composite four-way research question:\n{}", question)
 
     try:
-        # Recursion budget needs to comfortably cover:
-        #   * 4 supervisor hand-offs (one per specialist)
-        #   * each specialist's ReAct loop (3-6 tool calls,
-        #     knowledge_expert can take up to 3 search retries)
-        #   * supervisor final synthesis
-        # Empirically the run needs ~25 supervisor steps with
-        # ``deepseek-v3.2`` (PASSes well below 75). Stronger /
-        # newer models (e.g. ``deepseek-v4-pro``) occasionally
-        # ReAct-loop on the coder hand-off, consuming the inner
-        # subgraph's slice of the recursion budget. 150 buys
-        # enough headroom that even a misbehaving specialist
-        # will be visibly diagnosed (we surface the exception
-        # text) rather than silently truncated by the limit.
+        # 递归预算需要舒适地覆盖：
+        #   * 4 次 supervisor 移交（每个专家一次）
+        #   * 每个专家的 ReAct 循环（3-6 次工具调用， knowledge_expert 可能最多 3 次搜索重试）
+        #   * supervisor 最终综合
+        # 实测 ``deepseek-v3.2`` 约需 25 步即可通过（远低于 75）。
+        # 更强/更新的模型（如 ``deepseek-v4-pro``）偶尔会在 coder移交时 ReAct 循环，消耗内部子图的递归配额。
+        # 150 提供足够余量，即使专家行为异常也能给出可诊断的异常信息,而非被限制静默截断。
         result = await graph.ainvoke(
             {"messages": [HumanMessage(content=question)]},
             config={"recursion_limit": 150},
@@ -333,11 +282,8 @@ async def amain(argv: list[str]) -> int:
     calls = _trace_tool_calls(messages)
     reached = _transfers_reached(calls)
 
-    # Persist a JSON artifact alongside the script. The console print
-    # below is "best effort" — on a misconfigured Windows console
-    # any single un-mappable character (e.g. ✅ in the answer) would
-    # otherwise eat the whole trace summary. Saving to disk means
-    # the interview material survives even when the print fails.
+    # 将 JSON 产物保存在脚本旁边。下方的控制台打印是"尽力而为"
+    # — 在配置不当的 Windows 控制台上，任何单个无法映射的字符（如回答中的 ✅）都会吃掉整个跟踪摘要。保存到磁盘意味着至少可以保留完整的 JSON 记录供诊断。
     transcript_path = (
         Path(__file__).resolve().parent
         / f"demo_full_research.last.{datetime.now():%Y%m%d-%H%M%S}.json"
@@ -361,39 +307,37 @@ async def amain(argv: list[str]) -> int:
     )
     logger.info("Transcript JSON written to {}", transcript_path)
 
-    print("\n=== Final supervisor answer ===\n")
-    print(final if final else "<empty>")
-    print("\n=== Trace summary ===")
-    print(f"  total messages        : {len(messages)}")
-    print(f"  specialists reached   : {sorted(reached) or ['<none>']}")
-    print(f"  total tool-name events: {len(calls)}")
-    print(f"  transcript saved to   : {transcript_path.name}")
+    print("\n=== Supervisor 最终回答 ===\n")
+    print(final if final else "<空>")
+    print("\n=== 跟踪摘要 ===")
+    print(f"  消息总数          : {len(messages)}")
+    print(f"  已到达的专家      : {sorted(reached) or ['<无>']}")
+    print(f"  工具调用事件总数  : {len(calls)}")
+    print(f"  记录已保存至      : {transcript_path.name}")
 
-    print("\n=== Heuristic verification ===")
+    print("\n=== 启发式校验 ===")
     ok_answer = bool(final.strip())
     ok_subject = (args.company in final) or (args.ticker in final)
     ok_data = "data_expert" in reached
     ok_report = "report_expert" in reached
     ok_coder = "coder_expert" in reached
     ok_knowledge = "knowledge_expert" in reached
-    print(f"  non-empty final answer        : {ok_answer}")
-    print(f"  company mentioned in answer   : {ok_subject}")
-    print(f"  data_expert routed to         : {ok_data}")
-    print(f"  report_expert routed to       : {ok_report}")
-    print(f"  coder_expert routed to        : {ok_coder}")
-    print(f"  knowledge_expert routed to    : {ok_knowledge}")
+    print(f"  最终回答非空              : {ok_answer}")
+    print(f"  回答中提及目标公司        : {ok_subject}")
+    print(f"  已路由到 data_expert      : {ok_data}")
+    print(f"  已路由到 report_expert    : {ok_report}")
+    print(f"  已路由到 coder_expert     : {ok_coder}")
+    print(f"  已路由到 knowledge_expert : {ok_knowledge}")
 
     if all((ok_answer, ok_subject, ok_data, ok_report, ok_coder, ok_knowledge)):
         print(
-            "\n  [PASS] Supervisor routed to all four specialists "
-            "and produced a non-empty, on-topic answer."
+            "\n  [PASS] Supervisor 路由到全部四个专家，"
+            "并产生了非空且切题的回答。"
         )
         return 0
     print(
-        "\n  [WARN] Heuristic checks failed — inspect trace above. "
-        "Most common cause: the supervisor decided one of the "
-        "sub-tasks was already 'covered' by another specialist's "
-        "summary and skipped the hand-off."
+        "\n  [WARN] 启发式校验失败 — 请检查上方跟踪信息。"
+        "最常见原因：supervisor 认为某个子任务已被另一专家的摘要'覆盖'而跳过了移交。"
     )
     return 1
 

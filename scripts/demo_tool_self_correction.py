@@ -1,30 +1,20 @@
-"""Demonstrate an agent recovering from tool errors without human help.
+"""演示 Agent 在无人干预下从工具错误中自动恢复。
 
-Run:
+运行::
+
     uv run python scripts/demo_tool_self_correction.py
 
-The ReAct loop has a property that is easy to state but surprisingly
-useful: **a tool's error message is fed back to the LLM as a ToolMessage,
-and the LLM can read it and retry with different inputs**.
+ReAct 循环有一个简单却非常有用的特性：工具的错误消息会作为 ToolMessage 反馈给 LLM，LLM 可以读取错误信息并使用不同参数重试。
 
-We showcase this in two deterministic probes. Each probe uses a custom
-tool that is guaranteed to fail in a specific, instructive way the
-first time, then accept a corrected call. This avoids depending on
-stochastic LLM reasoning to manufacture the failure.
+通过两个确定性探针来展示这一点。每个探针使用一个自定义工具，
+该工具保证在第一次调用时以特定、有教育意义的方式失败，然后接受修正后的调用。这避免了依赖随机的 LLM 推理来制造失败。
 
-Probe 1 — Transient service failure (retry with SAME arguments)
-    We inject ``flaky_calculator`` that returns an error on its first
-    call and succeeds on the second. The LLM must read the error and
-    call the tool again with the same expression.
+探针 1 — 临时服务故障（使用相同参数重试）注入 ``flaky_calculator``，首次调用返回错误，第二次成功。 LLM 必须读取错误并使用相同表达式再次调用。
 
-Probe 2 — Strict-validation failure (retry with FIXED arguments)
-    We inject ``length_in_cm`` that rejects any unit outside the
-    enumerated set {m, mm, cm, inch}. The user's question deliberately
-    uses the noisy word "meters" in the prose; the LLM must read the
-    tool's error message and re-invoke with unit="m".
+探针 2 — 严格验证失败（使用修正后的参数重试）注入 ``length_in_cm``，拒绝枚举集合 {m, mm, cm, inch} 之外的任何单位。
+    用户的问题故意在文本中使用了"meters"这个口语化词汇；LLM 必须读取工具的错误消息并用 unit="m" 重新调用。
 
-Every invocation is bounded by a tight ``recursion_limit`` so the
-process cannot hang in a pathological retry loop.
+每次调用都受严格的 ``recursion_limit`` 约束，防止进程在病态重试循环中卡死。
 """
 
 from __future__ import annotations
@@ -42,7 +32,7 @@ from research_agent.llm.provider import ModelRouter
 
 
 # ---------------------------------------------------------------------------
-# Observable tools for the demo
+# 演示用的可观测工具
 # ---------------------------------------------------------------------------
 
 FLAKY_CALLS = 0
@@ -51,14 +41,12 @@ STRICT_CALLS: list[dict[str, Any]] = []
 
 @tool
 def flaky_calculator(expression: str) -> str:
-    """Evaluate a simple arithmetic expression. This calculator is flaky.
+    """计算简单的算术表达式。此计算器不稳定。
 
-    The service is known to be unreliable: transient errors are possible.
-    If the returned content starts with "Error:", RETRY the call once
-    with the same arguments.
+    该服务已知不可靠：可能出现临时性错误。如果返回内容以 "Error:" 开头，请使用相同参数重试一次。
 
     Args:
-        expression: Arithmetic expression, e.g. "12 * 11".
+        expression: 算术表达式，如 "12 * 11"。
     """
     global FLAKY_CALLS
     FLAKY_CALLS += 1
@@ -73,23 +61,17 @@ def flaky_calculator(expression: str) -> str:
 
 @tool
 def length_in_cm(value: float, unit: str) -> str:
-    """Convert a length to centimetres.
+    """将长度转换为厘米。
 
-    The ``unit`` argument expects an internal unit code string, not a
-    human-readable name. The exact set of accepted codes is not listed
-    here; if the code you pass is not recognised, the tool's error
-    message will report which codes ARE valid.
+    ``unit`` 参数期望接收内部单位代码字符串，而非人类可读的名称。 此处不列出所有可接受的代码；如果传入的代码未被识别，工具的错误消息会报告哪些代码是有效的。
 
     Args:
-        value: Numeric length (non-negative).
-        unit: Internal unit code string. Consult the tool's error
-            message if unsure of the valid values.
+        value: 数值长度（非负数）。
+        unit: 内部单位代码字符串。若不确定有效值，参考工具的错误消息。
     """
     STRICT_CALLS.append({"value": value, "unit": unit})
     logger.debug("length_in_cm call #{} value={} unit={!r}", len(STRICT_CALLS), value, unit)
-    # Deliberately obscure codes (UNIT_* namespace). A model that has not
-    # seen them before will almost certainly guess "m", "meter", or "meters"
-    # on its first attempt, triggering the corrective-feedback path.
+    # 故意使用不透明的代码（UNIT_* 命名空间）。首次遇到的模型几乎肯定会猜 "m"、"meter" 或 "meters"，从而触发纠正反馈路径。
     factors = {
         "UNIT_METRE": 100.0,
         "UNIT_MM": 0.1,
@@ -106,7 +88,7 @@ def length_in_cm(value: float, unit: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 辅助函数
 # ---------------------------------------------------------------------------
 
 def _banner(title: str) -> None:
@@ -140,45 +122,44 @@ def _trace(messages: list[Any]) -> dict[str, Any]:
 
 async def run_probe(agent, label: str, question: str, success_predicate) -> None:
     _banner(label)
-    print(f"  user question : {question}")
+    print(f"  用户问题 : {question}")
 
-    # Tight recursion bound so a runaway retry loop fails fast rather than
-    # hanging. A ReAct step is ~1 LLM call; 10 steps comfortably covers
-    # "one retry" scenarios.
+    # 严格的递归限制，使失控重试循环快速失败而非卡死。
+    # 一个 ReAct 步骤约等于一次 LLM 调用；10 步 足以舒适覆盖 "一次重试"场景。
     try:
         result = await agent.ainvoke(
             {"messages": [HumanMessage(content=question)]},
             config={"recursion_limit": 10},
         )
     except Exception as e:
-        print(f"  [FAIL] agent raised {type(e).__name__}: {e}")
+        print(f"  [FAIL] Agent 抛出 {type(e).__name__}: {e}")
         return
 
     trace = _trace(result["messages"])
 
-    print("\n  tool calls emitted:")
+    print("\n  已发出的工具调用:")
     for tc in trace["tool_calls"]:
         print(f"    - {tc}")
-    print("\n  tool results observed:")
+    print("\n  观测到的工具结果:")
     for tr in trace["tool_results"]:
         print(f"    - {tr}")
-    print(f"\n  total tool calls  : {len(trace['tool_calls'])}")
-    print(f"  final answer      : {trace['final'][:160]}")
+    print(f"\n  工具调用总数  : {len(trace['tool_calls'])}")
+    print(f"  最终回答      : {trace['final'][:160]}")
 
     ok = success_predicate(trace)
     verdict = "PASS" if ok else "WARN"
-    print(f"  [{verdict}] self-correction predicate")
+    print(f"  [{verdict}] 自纠正断言")
 
 
 def probe1_predicate(trace: dict[str, Any]) -> bool:
-    """Success: flaky_calculator called >=2 times AND final answer contains 132."""
+    """成功条件：flaky_calculator 调用 >=2 次 且 最终回答包含 132。"""
     flaky_count = sum(1 for tc in trace["tool_calls"] if tc.startswith("flaky_calculator"))
     had_error = any("Error:" in r for r in trace["tool_results"])
     return flaky_count >= 2 and had_error and "132" in trace["final"]
 
 
 def probe2_predicate(trace: dict[str, Any]) -> bool:
-    """Success: length_in_cm called >=2 times with DIFFERENT unit codes; result contains 100."""
+    """成功条件：length_in_cm 调用 >=2 次且使用了不同的单位代码；结果包含 100。"""
     units_tried = {c["unit"] for c in STRICT_CALLS}
     had_error = any("Error:" in r for r in trace["tool_results"])
     return (
@@ -190,7 +171,7 @@ def probe2_predicate(trace: dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Main
+# 主函数
 # ---------------------------------------------------------------------------
 
 SELF_CORRECTION_PROMPT = """\
@@ -218,20 +199,20 @@ async def main() -> None:
         prompt=SELF_CORRECTION_PROMPT,
     )
 
-    # ------ Probe 1 — transient error, retry with SAME args ------
+    # ------ 探针 1 — 临时错误，使用相同参数重试 ------
     FLAKY_CALLS = 0
     await run_probe(
         agent,
-        "Probe 1 — Transient error, retry with SAME arguments",
+        "探针 1 — 临时错误，使用相同参数重试",
         "Use flaky_calculator to compute 12 * 11. Report the final number.",
         probe1_predicate,
     )
 
-    # ------ Probe 2 — validation error, retry with FIXED args ------
+    # ------ 探针 2 — 验证错误，使用修正后的参数重试 ------
     STRICT_CALLS.clear()
     await run_probe(
         agent,
-        "Probe 2 — Validation error, retry with CORRECTED arguments",
+        "探针 2 — 验证错误，使用修正后的参数重试",
         "Convert 1 metre into centimetres using length_in_cm. "
         "You don't know the tool's expected unit code up front — "
         "make an initial reasonable guess, read the tool's error if any, "
@@ -239,23 +220,17 @@ async def main() -> None:
         probe2_predicate,
     )
 
-    _banner("Takeaway")
+    _banner("要点总结")
     print(
         """
-  The ReAct loop is remarkably fault-tolerant WITHOUT special error-
-  handling code on the application side. The ingredients are:
+  ReAct 循环在应用侧无需任何特殊错误处理代码的情况下就具有 出色的容错能力。关键要素是：
 
-    1. Tools return structured, descriptive errors (never raise).
-    2. Errors become ToolMessages in the graph state.
-    3. The LLM sees those ToolMessages on its next turn and decides
-       whether to retry, adjust arguments, or give up.
-    4. A recursion_limit caps runaway loops so a dishonest tool or a
-       confused model cannot burn tokens indefinitely.
+    1. 工具返回结构化的、描述性的错误（从不抛异常）。
+    2. 错误变成图状态中的 ToolMessage。
+    3. LLM 在下一轮看到这些 ToolMessage 并决定是否重试、 调整参数、还是放弃。
+    4. recursion_limit 封顶失控循环，使不诚实的工具或混乱的模型无法无限消耗 token。
 
-  In production, pair this with a supervisor node that escalates to a
-  stronger model after N consecutive failures, and with structured
-  telemetry so failing tools show up in dashboards before they degrade
-  user experience.
+  在生产中，搭配一个 supervisor 节点在连续 N 次失败后升级到更强的模型，以及结构化遥测使失败的工具在仪表盘中显现 —在它们降低用户体验之前。
         """.rstrip()
     )
 

@@ -1,27 +1,23 @@
-"""Phase 4.2 smoke test — pdf_report_server MCP end-to-end via production path.
+"""冒烟测试 — pdf_report_server MCP 端到端生产路径验证。
 
-Unlike ``tests/unit/test_mcp_pdf_report_server.py`` which opens a single
-session and bypasses the client-level prefixing for speed, this script
-walks the **exact same code path** the Agent will use at runtime:
+与 ``tests/unit/test_mcp_pdf_report_server.py`` 不同（后者打开单个 session 并跳过客户端级别的前缀以提高速度），本脚本走的是与 Agent运行时完全相同的代码路径：
 
-    load_pdf_report_server_tools()       # via MultiServerMCPClient
-        -> spawns subprocess
-        -> discovers tools
-        -> applies ``pdf_`` prefix
-    tool.ainvoke(...)                    # re-entry, normal Agent flow
-        -> spawns subprocess again
-        -> runs HTTP / pypdf work
-        -> returns MCP content block
+    load_pdf_report_server_tools()       # 通过 MultiServerMCPClient
+        -> 启动子进程
+        -> 发现工具
+        -> 添加 ``pdf_`` 前缀
+    tool.ainvoke(...)                    # 再次进入，正常 Agent 流程
+        -> 启动子进程
+        -> 执行 HTTP / pypdf 操作
+        -> 返回 MCP 内容块
 
-Running this script before wiring the ``report_expert`` specialist
-catches schema / prefix / JSON-serialization issues that unit tests
-(which skip the client-level prefix) would miss.
+在接入 ``report_expert`` 专家之前运行本脚本，可捕获 schema / 前缀 / JSON 序列化问题 — 这些是跳过客户端前缀的单元测试无法发现的。
 
-Exit code:
-    0 → all 4 tools executed successfully
-    1 → any tool crashed with a non-structured error
+退出码:
+    0 → 全部 4 个工具执行成功
+    1 → 任何工具以非结构化错误崩溃
 
-Usage::
+用法::
 
     uv run python scripts/smoke_test_pdf_report_mcp.py
 """
@@ -57,7 +53,7 @@ def _parse(raw: object) -> dict[str, Any]:
 
 
 def _is_structured_error(payload: dict[str, Any]) -> bool:
-    """A 'graceful' failure that the Agent can recover from."""
+    """Agent 可以从中恢复的"优雅"失败。"""
     return "error" in payload and "context" in payload
 
 
@@ -81,7 +77,7 @@ async def main() -> int:
 
     all_ok = True
 
-    # ---- Tool 1: search_announcements ----
+    # ---- 工具 1: search_announcements ----
     logger.info(
         "\n[1/4] pdf_search_announcements(symbol='{}', category='年报') ...",
         SAMPLE_SYMBOL,
@@ -118,7 +114,7 @@ async def main() -> int:
         return 1
     logger.info("  using pdf_url = {}", pdf_url)
 
-    # ---- Tool 2: download_pdf (exercises cache on 2nd call) ----
+    # ---- 工具 2: download_pdf（第二次调用测试缓存） ----
     logger.info("\n[2/4] pdf_download_pdf(pdf_url=...) ...")
     dl_first = _parse(
         await tool_map["pdf_download_pdf"].ainvoke({"pdf_url": pdf_url})
@@ -148,7 +144,7 @@ async def main() -> int:
 
     local_path = dl_first["local_path"]
 
-    # ---- Tool 3: extract_pdf_metadata ----
+    # ---- 工具 3: extract_pdf_metadata ----
     logger.info("\n[3/4] pdf_extract_pdf_metadata(local_path=...) ...")
     meta = _parse(
         await tool_map["pdf_extract_pdf_metadata"].ainvoke({"local_path": local_path})
@@ -163,7 +159,7 @@ async def main() -> int:
             list(meta["metadata"].keys()),
         )
 
-    # ---- Tool 4: parse_pdf_pages ----
+    # ---- 工具 4: parse_pdf_pages ----
     logger.info("\n[4/4] pdf_parse_pdf_pages(local_path=..., pages 1-3) ...")
     pages = _parse(
         await tool_map["pdf_parse_pdf_pages"].ainvoke(

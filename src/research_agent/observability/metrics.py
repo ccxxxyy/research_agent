@@ -1,22 +1,35 @@
-"""Lightweight Prometheus-compatible metrics (zero external dependencies).
+"""轻量级 Prometheus 兼容指标（零外部依赖）。统计请求数、耗时、LLM 费用
 
-Exposes three families of counters:
+暴露三类计数器：
 
-* **HTTP request counters** — ``research_agent_http_requests_total``
-  and ``research_agent_http_request_duration_seconds`` (a counter
-  that sums wall-clock time; divide by request count for average
-  latency). Labels: ``method``, ``path``, ``status``.
-* **LLM token counters** — ``research_agent_llm_prompt_tokens_total``,
-  ``research_agent_llm_completion_tokens_total``,
-  ``research_agent_llm_calls_total``,
-  ``research_agent_llm_cost_usd_total``.
-  Labels: ``model``.
-* **Specialist availability** —
-  ``research_agent_specialists_available`` (gauge, set once at startup).
+* HTTP 请求计数器 — ``research_agent_http_requests_total``和 ``research_agent_http_request_duration_seconds``（累加挂钟时间的计数器；除以请求数可得平均延迟）。
+  标签：``method``、``path``、``status``。
+* LLM Token 计数器 — ``research_agent_llm_prompt_tokens_total``、``research_agent_llm_completion_tokens_total``、
+  ``research_agent_llm_calls_total``、``research_agent_llm_cost_cny_total``。
+  标签：``model``。
+* 专家可用性 —``research_agent_specialists_available``（Gauge，启动时设置一次）。
 
-All state lives in a module-level singleton, safe for the single-
-process uvicorn deployment this project targets. The ``/metrics``
-route renders the text exposition format Prometheus expects.
+Prometheus 指标名，每个计数器的全局唯一名字：
+    research_agent_http_requests_total           → HTTP 请求总数
+    research_agent_http_request_duration_seconds  → HTTP 请求累计耗时
+    research_agent_llm_prompt_tokens_total        → LLM 输入 token 总数
+    research_agent_llm_completion_tokens_total     → LLM 输出 token 总数
+    research_agent_llm_calls_total                → LLM 调用总次数
+    research_agent_llm_cost_cny_total             → LLM 估算费用（人民币元）
+    research_agent_specialists_available          → 当前可用专家数
+
+HTTP 指标（请求数 + 耗时）在 _Counters 类的 _http_requests 和 _http_duration 里。
+LLM 指标（token 数 + 费用）不在 _Counters 里——它们在 UsageTracker 里，通过 render(usage_summary=...) 参数传入合并输出。
+专家可用性在 _Counters 的 _specialists_available 里。
+
+
+所有状态保存在模块级单例中；适用于本项目目标的单进程 uvicorn 部署：每个进程有自己的 METRICS 实例，计数器互相独立，/metrics 只能看到当前进程的数据——会不准
+``/metrics`` 路由以 Prometheus 期望的文本展示格式渲染。
+
+_Counters 类：存储数据（记录计数）
+MetricsMiddleware：自动收集 HTTP 请求数据
+METRICS = _Counters()：全局单例
+render()：把存储的数据格式化成 Prometheus 文本
 """
 
 from __future__ import annotations
@@ -32,11 +45,11 @@ from starlette.types import ASGIApp
 
 
 # ---------------------------------------------------------------------------
-# In-process counters
+# 进程内计数器
 # ---------------------------------------------------------------------------
 
 class _Counters:
-    """Thread-safe metric store."""
+    """线程安全的指标存储。计数器：记录 HTTP 请求数、耗时、LLM 用量"""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -55,6 +68,18 @@ class _Counters:
             self._specialists_available = list(names)
 
     def render(self, usage_summary: dict | None = None) -> str:
+        """render() 方法：把计数器格式化成 Prometheus 期望的文本格式
+
+        UsageTracker（ llm/usage_tracker.py ）记录每次 LLM 调用的 token 数，乘以 MODEL_PRICING 里的单价算出费用。
+        render() 方法从 UsageTracker.summary() 拿到数据后格式化输出。所以费用是估算值（基于代码里的单价表）。
+
+        分四段拼字符串：
+            拼 HTTP 请求指标：遍历 _http_requests 字典，每个 (method, path, status) 组合输出一行
+            拼 HTTP 耗时指标：同理
+            拼专家可用性：输出当前可用专家数量
+            拼 LLM 用量：从传入的 usage_summary 参数里取数据，遍历每个模型输出 token 数、调用数、费用
+        """
+
         lines: list[str] = []
 
         with self._lock:
@@ -62,7 +87,7 @@ class _Counters:
             http_dur = dict(self._http_duration)
             specialists = list(self._specialists_available)
 
-        # -- HTTP requests --
+        # -- HTTP 请求 --
         lines.append("# HELP research_agent_http_requests_total Total HTTP requests.")
         lines.append("# TYPE research_agent_http_requests_total counter")
         for (method, path, status), count in sorted(http_req.items()):
@@ -79,12 +104,12 @@ class _Counters:
                 f'path="{path}",status="{status}"}} {dur:.6f}'
             )
 
-        # -- Specialist availability gauge --
+        # -- 专家可用性 Gauge --
         lines.append("# HELP research_agent_specialists_available Number of active specialists.")
         lines.append("# TYPE research_agent_specialists_available gauge")
         lines.append(f"research_agent_specialists_available {len(specialists)}")
 
-        # -- LLM usage (from UsageTracker.summary()) --
+        # -- LLM 用量（来自 UsageTracker.summary()）--
         if usage_summary:
             by_model: dict = usage_summary.get("by_model", {})
             if by_model:
@@ -112,12 +137,12 @@ class _Counters:
                         f'{rec.get("call_count", 0)}'
                     )
 
-                lines.append("# HELP research_agent_llm_cost_usd_total Estimated LLM cost (USD).")
-                lines.append("# TYPE research_agent_llm_cost_usd_total counter")
+                lines.append("# HELP research_agent_llm_cost_cny_total Estimated LLM cost (CNY).")
+                lines.append("# TYPE research_agent_llm_cost_cny_total counter")
                 for model, rec in sorted(by_model.items()):
                     lines.append(
-                        f'research_agent_llm_cost_usd_total{{model="{model}"}} '
-                        f'{rec.get("total_cost_usd", 0)}'
+                        f'research_agent_llm_cost_cny_total{{model="{model}"}} '
+                        f'{rec.get("total_cost_cny", 0)}'
                     )
 
         lines.append("")
@@ -128,11 +153,11 @@ METRICS = _Counters()
 
 
 # ---------------------------------------------------------------------------
-# Middleware — record every request
+# 中间件 — 记录每个请求
 # ---------------------------------------------------------------------------
 
 class MetricsMiddleware(BaseHTTPMiddleware):
-    """Record per-request count and wall-clock duration."""
+    """记录每个请求的计数和挂钟耗时。FastAPI 中间件，每个请求进来自动记录一次"""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         start = time.perf_counter()

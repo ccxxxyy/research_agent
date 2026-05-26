@@ -1,11 +1,11 @@
-"""Unit tests for API middleware (auth + rate limiting).
+"""API 中间件（认证 + 限流）的单元测试。
 
-These tests verify:
-  * In-memory sliding-window rate limiting (no Redis)
-  * Redis-backed sliding-window rate limiting (with fakeredis)
-  * Transparent fallback when Redis is unreachable
-  * Auth-exempt paths bypass rate limiting
-  * Retry-After header on 429 responses
+测试覆盖：
+  * 基于内存的滑动窗口限流（无 Redis）
+  * 基于 Redis 的滑动窗口限流（使用 fakeredis）
+  * Redis 不可达时的透明回退
+  * 认证豁免路径绕过限流
+  * 429 响应中的 Retry-After 头
 """
 
 from __future__ import annotations
@@ -44,10 +44,9 @@ def _build_app(*, max_rpm: int = 3, redis_url: str | None = None) -> FastAPI:
 
 
 def _find_rate_limit_middleware(app: FastAPI) -> RateLimitMiddleware | None:
-    """Walk the ASGI middleware stack to find our RateLimitMiddleware.
+    """遍历 ASGI 中间件栈以找到 RateLimitMiddleware。
 
-    The stack is lazily built by Starlette on the first request, so
-    call this *after* at least one request has been made.
+    该栈由 Starlette 在首次请求时惰性构建，因此请在至少发出一次请求之后调用此函数。
     """
     obj: Any = app.middleware_stack
     while obj is not None:
@@ -58,7 +57,7 @@ def _find_rate_limit_middleware(app: FastAPI) -> RateLimitMiddleware | None:
 
 
 # ---------------------------------------------------------------------------
-# In-memory backend
+# 内存后端
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +91,7 @@ class TestInMemoryRateLimit:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            await client.get("/api/test")  # uses the 1 allowed
+            await client.get("/api/test")  # 用掉 1 次允许额度
             for _ in range(5):
                 r = await client.get("/health")
                 assert r.status_code == 200
@@ -120,7 +119,7 @@ class TestInMemoryRateLimit:
 
 
 # ---------------------------------------------------------------------------
-# Request timeout middleware
+# 请求超时中间件
 # ---------------------------------------------------------------------------
 
 
@@ -178,7 +177,7 @@ class TestRequestTimeoutMiddleware:
         async def quick() -> dict:
             return {"ok": True}
 
-        # Mirror production SSE exemption path suffix
+        # 镜像生产环境 SSE 豁免路径后缀
         @app.get("/api/supervisor/research/stream")
         async def sse() -> dict:
             await asyncio.sleep(sleep_s)
@@ -225,7 +224,7 @@ class TestRequestTimeoutMiddleware:
 
 
 # ---------------------------------------------------------------------------
-# Redis backend
+# Redis 后端
 # ---------------------------------------------------------------------------
 
 
@@ -237,7 +236,7 @@ class TestRedisRateLimit:
 
         app = _build_app(max_rpm=3)
 
-        # Trigger middleware stack build
+        # 触发中间件栈构建
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:

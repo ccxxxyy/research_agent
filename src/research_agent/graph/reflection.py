@@ -1,31 +1,20 @@
-"""Reflection subgraph — Writer / Reasoner self-critique loop.
+"""反思子图 — 写作者 / 推理者自批评循环。
 
-Problem this module solves
---------------------------
-The Phase-4.7 ``research_supervisor`` produces a final synthesis at
-the end of every hand-off chain, but that synthesis is generated in a
-single LLM pass — the same pass that just consumed half-a-dozen
-specialist outputs. Two failure modes show up at evaluation time:
+本模块解决的问题
+----------------
+ ``research_supervisor`` 在每条交接链结束时生成最终综合报告，
+但该综合仅通过一次 LLM 调用完成 — 而此调用刚刚消化了来自多位 specialist的输出。评估时发现两类常见失败模式：
 
-1. **Under-cited claims**: the supervisor paraphrases a specialist
-   finding without preserving the source / page citation, blurring
-   the boundary between "evidence" and "interpretation".
-2. **Skipped sub-questions**: a multi-step user request "(1)…(2)…(3)…"
-   gets a confident summary that quietly drops one of the steps,
-   even though the supervisor's anti-hallucination prompt warned
-   against it.
+1. 引用不足：supervisor 在转述 specialist 发现时未保留来源/页码引用，模糊了"证据"与"解读"的边界。
+2. 遗漏子问题：用户的多步请求"(1)…(2)…(3)…"得到了看似自信的综合，但悄悄丢掉了其中某一步，即使 supervisor 的防幻觉提示词已做了警告。
 
-A second-pass **reflection loop** catches both failure modes cheaply:
-a small LIGHT-tier critic scores the draft, and only when it falls
-below the threshold do we burn a HEAVY-tier rewrite token. The
-canonical "Self-RAG / Reflexion" pattern, applied at the synthesis
-boundary rather than every retrieval step.
+二次反思循环可以低成本地捕获这两类失败：
+一个小型 LIGHT 层级批评者对草稿打分，仅当分数低于阈值时才消耗 HEAVY层级的改写 Token。
+这是经典的"Self-RAG / Reflexion"模式，应用在综合边界而非每个检索步骤。
 
-Topology
+拓扑结构
 --------
-This is a critic-first subgraph — we score before rewriting, so a
-high-quality first draft costs ONE LIGHT-tier call instead of one
-LIGHT + one HEAVY::
+这是一个批评优先的子图 — 先评分再改写，因此高质量的初稿仅花费一次 LIGHT 层级调用，而非 LIGHT + HEAVY::
 
     ┌──────────────────────────────────────────────────────────┐
     │                       START                               │
@@ -36,7 +25,7 @@ LIGHT + one HEAVY::
     │                         ▼                  │              │
     │              ┌────────route?──────┐        │              │
     │              │                    │        │              │
-    │     pass / max_iter           else (fail) │              │
+    │     通过 / 达到上限          否则 (未通过)      │              │
     │              │                    │        │              │
     │              ▼                    ▼        │              │
     │         finalize_node         writer_node──┘              │
@@ -45,41 +34,29 @@ LIGHT + one HEAVY::
     │             END                                           │
     └──────────────────────────────────────────────────────────┘
 
-State semantics
----------------
-``iteration`` counts critic invocations:
+状态语义
+--------
+``iteration`` 计数批评者调用次数：
 
-* ``iteration = 0`` → the supervisor's ORIGINAL draft being critiqued.
-* ``iteration = 1`` → writer's 1st rewrite being critiqued.
-* ``iteration = N`` → writer's Nth rewrite being critiqued.
+* ``iteration = 0`` → 正在批评 supervisor 的原始草稿。
+* ``iteration = 1`` → 正在批评写作者的第 1 次改写。
+* ``iteration = N`` → 正在批评写作者的第 N 次改写。
 
-The loop is bounded by ``max_iterations`` (default 2 rewrites, so at
-most 3 critiques). The bound is invariant: if every iteration fails
-the quality bar, we still terminate, returning the highest-scoring
-draft we saw — that's better than returning nothing or busy-looping.
+循环受 ``max_iterations``（默认 2 次改写，即最多 3 次批评）约束。
+该上限是不变的：即使每次迭代都未达标，仍会终止，返回所见分数最高的草稿 — 这比返回空结果或死循环更好。
 
-Why a SUBGRAPH instead of two extra nodes in ``research_supervisor``?
---------------------------------------------------------------------
-Three concrete benefits:
+为什么用子图而非在 ``research_supervisor`` 中添加两个额外节点？
+--------------------------------------------------------------
+三个具体好处：
 
-1. **Independent testability** — the subgraph runs against any
-   ``messages`` list; we don't need to spin up the supervisor +
-   six MCP subprocesses to test reflection logic in isolation.
-2. **Composable on/off switch** — ``build_research_supervisor``
-   takes ``enable_reflection: bool``; when False the parent graph
-   is identical to the legacy supervisor and there is zero
-   reflection overhead.
-3. **Visible in tracing** — LangSmith / LangGraph studio render
-   the subgraph as its own collapsed node, so the per-iteration
-   write→critic edges are obvious in the visualisation rather than
-   buried in a flat supervisor node.
+1. 独立可测试性 — 子图可对任意 ``messages`` 列表运行；无需启动 supervisor + 六个 MCP 子进程即可单独测试反思逻辑。
+2. 可组合的开关 — ``build_research_supervisor`` 接受``enable_reflection: bool``；为 False 时父图与旧版 supervisor 完全相同，零反思开销。
+3. 在追踪中可见 — LangSmith / LangGraph Studio 将子图渲染为独立折叠节点，逐迭代的 write→critic 边在可视化中一目了然，而非淹没在扁平的 supervisor 节点中。
 
-Why no tools, no react agent?
------------------------------
-The writer and critic are pure transformations (text in → text out).
-Wrapping them in ``create_react_agent`` would buy us nothing except
-a tool-calling envelope they never need, plus one extra LLM round
-trip per call. We invoke the underlying LangChain Runnable directly.
+为什么不用工具，不用 ReAct Agent？
+----------------------------------
+写作者和批评者都是纯变换（文本输入 → 文本输出）。将它们包装在``create_react_agent`` 中，
+除了增加一个它们不需要的工具调用信封，加上每次调用多一次 LLM 往返之外，没有任何收益。直接调用底层的 LangChain Runnable。
 """
 
 from __future__ import annotations
@@ -99,158 +76,118 @@ from research_agent.llm.tier import ModelTier
 
 
 # ---------------------------------------------------------------------
-# Prompts
+# 提示词
 # ---------------------------------------------------------------------
 CRITIC_SYSTEM_PROMPT = """\
-You are the Critic in a self-reflection loop over a multi-agent
-financial-research supervisor's final synthesis. The synthesis was
-generated AFTER a team of specialists already returned their
-findings, so your job is NOT to re-do research — it is to grade
-whether the synthesis faithfully reflects what was returned.
+你是多智能体金融研究 supervisor 最终综合报告的自反思循环中的批评者。
+该综合报告是在一组专家已返回其研究成果之后生成的，因此你的任务不是重新做研究 —而是评估综合报告是否忠实反映了专家们返回的内容。
 
-Evaluate on FIVE dimensions; weight them equally:
-  - faithfulness   : does every claim trace to a specialist's output
-                     or to the user-provided context? No new facts.
-  - citation       : when the synthesis quotes a number or a passage,
-                     is the source named (e.g. "data_expert", "p.12 of
-                     the annual report", or [Source N])?
-  - completeness   : did the synthesis answer EVERY sub-question the
-                     user asked? Numbered or bulleted user requests
-                     are explicit sub-questions and MUST each be
-                     addressed.
-  - structure      : are the required sections present (Key findings
-                     / Sources / explicit conclusions) and is the
-                     ordering coherent?
-  - clarity        : would a busy analyst be able to skim and act on
-                     this in under a minute?
+从以下五个维度进行评估，权重相等：
+  - 忠实度（faithfulness）：每个论断是否都能追溯到某位专家的输出或用户提供的上下文？不得出现新事实。
+  - 引用（citation）      ：当综合报告引用数字或段落时，是否标注了来源（例如 "data_expert"、"年报第12页" 或 [来源 N]）？
+  - 完整性（completeness） ：综合报告是否回答了用户提出的每一个子问题？编号或项目符号形式的用户请求是明确的子问题，必须逐一回应。
+  - 结构（structure）      ：是否包含必要的章节（核心发现 / 数据来源 / 明确结论），且排列是否连贯？
+  - 清晰度（clarity）      ：一位忙碌的分析师能否在一分钟内浏览并据此行动？
 
-Output a SINGLE JSON object — no prose before or after — with
-exactly these keys:
+输出一个单独的 JSON 对象 — 前后不加任何文字 — 包含以下字段：
 
 {
-  "quality_score": <float in [0.0, 1.0]>,
-  "reasoning":     "<one short paragraph justifying the score>",
-  "feedback":      "<concrete, actionable bullet list (newline-separated)
-                    of improvements the writer should apply; empty
-                    string if quality_score >= 0.85>",
-  "issues":        ["<concise issue label 1>", "<concise issue label 2>"]
+  "quality_score": <float，取值 [0.0, 1.0]>,
+  "reasoning":     "<一段简短的评分理由>",
+  "feedback":      "<具体、可操作的改进要点列表（换行分隔）；当 quality_score >= 0.85 时为空字符串>",
+  "issues":        ["<简明问题标签 1>", "<简明问题标签 2>"]
 }
 
-Score calibration:
-  >= 0.90 — production-quality, ship as-is.
-  0.75-0.89 — competent, minor issues, ship after a light rewrite.
-  0.50-0.74 — material gaps, REWRITE required.
-  < 0.50  — broken, REWRITE required (likely missing whole sub-questions).
+评分校准：
+  >= 0.90 — 生产级质量，可直接交付。
+  0.75-0.89 — 合格，有小问题，轻度改写后可交付。
+  0.50-0.74 — 存在实质性缺漏，需要改写。
+  < 0.50  — 严重缺陷，需要改写（可能遗漏了整个子问题）。
 """
 
 WRITER_SYSTEM_PROMPT = """\
-You are the Writer in a self-reflection loop. Your input is:
+你是自反思循环中的写作者。你的输入包括：
 
-  1. The original user question.
-  2. The transcript of specialist outputs the supervisor saw.
-  3. The supervisor's CURRENT draft answer.
-  4. The Critic's feedback on that draft (newline-separated bullets).
+  1. 用户的原始问题。
+  2. supervisor 看到的专家输出记录。
+  3. supervisor 的当前草稿回答。
+  4. 批评者对该草稿的反馈（换行分隔的要点列表）。
 
-Your job: produce a REVISED final answer that addresses every
-critic bullet WITHOUT inventing new facts. Specifically:
+你的任务：生成一份修订后的最终回答，逐条回应批评者的每个要点，且不得编造新事实。具体要求：
 
-  * If the critic flagged a missing sub-question, find the
-    relevant specialist output in the transcript and add a
-    response section for it (with the specialist named).
-  * If the critic flagged missing citations, add them — quote the
-    specialist by role name (data_expert, report_expert, ...) or
-    by source attribution the specialist provided (page number,
-    file basename, etc.).
-  * If the critic flagged structure issues, restructure to use
-    the required sections:
-        ### 核心发现 / Key findings  (3-5 bullets with concrete
-        numbers and short quotations from the PDF where relevant)
-        ### 数据来源 / Sources       (list of specialists called
-        and what each contributed)
-  * Preserve every numeric value that came from a specialist — do
-    NOT round, re-state, or "tidy up" numbers.
-  * Write in the user's language (Chinese if the user wrote in
-    Chinese).
-  * Output ONLY the revised final answer text, no preamble or
-    JSON envelope.
+  * 如果批评者指出遗漏了某个子问题，在专家输出记录中找到相关内容，并为其添加一个回答段落（标注专家名称）。
+  * 如果批评者指出缺少引用，补充引用 — 按专家角色名引用（data_expert、report_expert 等），或按专家提供的来源标注（页码、文件名等）。
+  * 如果批评者指出结构问题，按以下必需章节重新组织：
+        ### 核心发现（3-5 个要点，包含具体数据，并在相关处附上 PDF 的简短引文）
+        ### 数据来源（列出调用了哪些专家，以及每个专家贡献了什么）
+  * 保留每个来自专家的数值 — 不得四舍五入、重新表述或"整理"数字。
+  * 使用用户的语言（如果用户使用中文则用中文回答）。
+  * 仅输出修订后的最终回答文本，不加前言或 JSON 包装。
 
-Hard rule: if the transcript has no evidence for a claim, REMOVE
-the claim from the revision. Better to omit than to hallucinate.
+硬性规则：如果专家输出记录中没有某个论断的证据，从修订版中删除该论断。宁可省略也不要编造。
 """
 
 
 # ---------------------------------------------------------------------
-# State
+# 状态
 # ---------------------------------------------------------------------
 class ReflectionState(TypedDict, total=False):
-    """Internal state for the reflection subgraph.
+    """反思子图的内部状态。
 
-    Why TypedDict + ``total=False``: most fields are *populated by
-    nodes as the graph runs*; declaring them all required would force
-    every node to default-fill keys it doesn't own, which violates
-    the single-responsibility intent of each node.
+    为什么用 TypedDict + ``total=False``：大多数字段由节点在图运行时填充；
+    若全部声明为必填，则每个节点都需要默认填充它不拥有的键，这违反了每个节点的单一职责设计意图。
 
-    Why ``messages`` uses ``add_messages``: identical to the rest of
-    the LangGraph project — the reducer dedupes by message id so
-    re-entrant nodes don't duplicate transcripts.
+    为什么 ``messages`` 使用 ``add_messages``：与 LangGraph 项目其余部分一致 — reducer 按消息 id 去重，使可重入节点不会复制对话记录。
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
-    """Input transcript: user query + specialist outputs + supervisor's draft.
+    """输入对话记录：用户查询 + specialist 输出 + supervisor 草稿。
 
-    The very last non-tool-call ``AIMessage`` is treated as the
-    supervisor's draft and is what the critic + writer operate on.
+    最后一条没有 tool_calls 的 ``AIMessage`` 被视为 supervisor 的草稿，是批评者和写作者操作的对象。
     """
 
     draft: str
-    """The text under critique — supervisor's original on iteration 0,
-    or the writer's most recent rewrite on later iterations."""
+    """正在被批评的文本 — 第 0 次迭代为 supervisor 原稿，后续迭代为写作者的最新改写。"""
 
     critique: dict[str, Any]
-    """Latest Critic verdict: ``{quality_score, reasoning, feedback, issues}``."""
+    """最新的批评者裁定：``{quality_score, reasoning, feedback, issues}``。"""
 
     iteration: int
-    """How many critic invocations have run so far. Starts at 0."""
+    """到目前为止已运行的批评者调用次数。从 0 开始。"""
 
     history: list[dict[str, Any]]
-    """Per-iteration audit trail of ``{iteration, draft, critique}``.
+    """逐迭代审计轨迹 ``{iteration, draft, critique}``。
 
-    Useful in LangSmith traces and for the "show me what you tried"
-    debugging story when reflection plateaus."""
+    在 LangSmith 追踪中和反思趋于平稳时的"展示你尝试了什么"调试场景中有用。"""
 
     best_draft: str
-    """Highest-scoring draft observed across iterations.
+    """跨迭代观察到的最高分草稿。
 
-    Reflection terminates by returning *the best* draft, not necessarily
-    the latest. If a 2nd rewrite scores LOWER than the 1st (the LLM
-    "over-corrected" on a feedback bullet), we should not regress.
+    反思终止时返回最好的草稿，不一定是最新的。如果第 2 次改写分数低于第 1 次（LLM 在某条反馈上"过度修正"了），不应退步。
     """
 
     best_score: float
-    """Score corresponding to ``best_draft``."""
+    """``best_draft`` 对应的分数。"""
 
 
 # ---------------------------------------------------------------------
-# Helpers
+# 辅助函数
 # ---------------------------------------------------------------------
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 _JSON_BRACE = re.compile(r"(\{.*\})", re.DOTALL)
 
 
 def _extract_json(text: str) -> dict[str, Any]:
-    """Return the first parseable JSON object in ``text``.
+    """返回 ``text`` 中第一个可解析的 JSON 对象。
 
-    LLMs frequently wrap JSON in fenced code blocks or add a
-    one-line preamble ("Here is the JSON:") despite the system
-    prompt asking otherwise. We try three strategies in order:
+    LLM 经常将 JSON 包裹在代码围栏中，或添加一行前言（"Here is the JSON:"），即使系统提示词要求不要这样做。
+    按顺序尝试三种策略：
 
-      1. Parse the whole string (best case — strict prompt obeyed).
-      2. Pull the contents of a fenced ``json`` block if present.
-      3. Pull the *first* ``{...}`` substring greedily.
+      1. 直接解析整个字符串（最佳情况 — 严格遵从 prompt）。
+      2. 提取代码围栏 ``json`` 块的内容（若存在）。
+      3. 贪心提取第一个 ``{...}`` 子串。
 
-    Returns an empty dict on total failure rather than raising —
-    the critic node treats an unparseable critique as score 0.0
-    (forcing a rewrite) instead of crashing the whole pipeline.
+    完全失败时返回空字典而非抛出异常 — 批评者节点将无法解析的批评视为0.0 分（强制改写），而非让整个流水线崩溃。
     """
     candidate = text.strip()
 
@@ -277,15 +214,13 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 def _normalise_critique(raw: dict[str, Any]) -> dict[str, Any]:
-    """Coerce a raw LLM-emitted critique dict into our canonical shape.
+    """将 LLM 原始输出的批评字典规范化为标准形状。
 
-    Defends against three common deformations seen in practice:
+    防御实践中发现的三种常见畸变：
 
-      - ``quality_score`` returned as a string ("0.85" or "85%").
-      - ``feedback`` returned as a list of strings instead of a single
-        newline-joined string.
-      - ``issues`` missing entirely (some models inline issues into
-        ``feedback`` instead).
+      - ``quality_score`` 返回为字符串（"0.85" 或 "85%"）。
+      - ``feedback`` 返回为字符串列表而非单个换行连接的字符串。
+      - ``issues`` 完全缺失（某些模型将问题内联到 ``feedback`` 中）。
     """
     score = raw.get("quality_score", 0.0)
     if isinstance(score, str):
@@ -320,16 +255,11 @@ def _normalise_critique(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_supervisor_draft(messages: list[BaseMessage]) -> str:
-    """Pull the supervisor's final synthesis out of the transcript.
+    """从对话记录中提取 supervisor 的最终综合内容。
 
-    The supervisor's final answer is the LAST ``AIMessage`` whose
-    ``tool_calls`` list is empty / absent (every hand-off is itself an
-    ``AIMessage`` carrying a ``transfer_to_<name>`` tool call).
+    supervisor 的最终回答是最后一条 ``tool_calls`` 列表为空/不存在的``AIMessage``（每次交接本身也是一条携带 ``transfer_to_<name>``工具调用的 ``AIMessage``）。
 
-    Returns an empty string when no such message exists — the
-    reflection subgraph will still run (the critic will score 0.0)
-    but downstream code can detect "nothing to reflect on" by
-    checking whether ``draft`` is empty.
+    当不存在此类消息时返回空字符串 — 反思子图仍会运行（批评者将打 0.0 分），但下游代码可通过检查 ``draft`` 是否为空来检测"无内容可反思"。
     """
     for msg in reversed(messages):
         if not isinstance(msg, AIMessage):
@@ -343,14 +273,11 @@ def _extract_supervisor_draft(messages: list[BaseMessage]) -> str:
 
 
 def _format_transcript(messages: list[BaseMessage], *, max_chars: int = 8000) -> str:
-    """Render the supervisor transcript for the writer's context window.
+    """将 supervisor 对话记录渲染为写作者的上下文窗口。
 
-    We label each message by role so the writer can name specialists
-    by their LangGraph node name when adding citations. The total
-    output is hard-capped at ``max_chars`` — long supervisor sessions
-    can otherwise eat the writer's context budget. We keep the TAIL
-    of the transcript (the most recent + most relevant messages) and
-    drop the head, since the synthesis is built from later messages.
+    为每条消息标注角色，以便写作者在添加引用时可以按 LangGraph 节点名称呼 specialist。
+    总输出硬限于 ``max_chars`` — 过长的 supervisor 会话会吃掉写作者的上下文预算。
+    因此保留对话记录的尾部（最近且最相关的消息），丢弃头部，因为综合合成是基于后续消息构建的。
     """
     parts: list[str] = []
     for msg in messages:
@@ -366,45 +293,40 @@ def _format_transcript(messages: list[BaseMessage], *, max_chars: int = 8000) ->
     rendered = "\n\n".join(parts)
     if len(rendered) <= max_chars:
         return rendered
-    # Tail-keep with a head marker so the writer knows truncation
-    # happened.
+    # 保留尾部并添加头部标记，让写作者知道发生了截断。
     return "... (transcript truncated) ...\n\n" + rendered[-max_chars:]
 
 
 # ---------------------------------------------------------------------
-# Nodes
+# 节点
 # ---------------------------------------------------------------------
 def _build_critic_node(
     model_router: ModelRouter,
     *,
     pass_threshold: float,
 ):
-    """Create the critic node closure. Captured kwargs become invariants."""
+    """创建批评者节点闭包。捕获的 kwargs 成为不变量。"""
 
     critic_model = model_router.get_model(ModelTier.LIGHT)
 
     async def critic_node(state: ReflectionState) -> dict[str, Any]:
-        """Score the current draft on the five reflection dimensions.
+        """在五个反思维度上为当前草稿打分。
 
-        On the first invocation we initialise ``draft`` /
-        ``best_draft`` from the supervisor's last AIMessage. Later
-        invocations score whatever the writer just produced.
+        首次调用时从 supervisor 的最后一条 AIMessage 初始化 ``draft`` /``best_draft``。后续调用对写作者刚生成的内容打分。
         """
         iteration = state.get("iteration", 0)
         messages = state.get("messages", [])
 
-        # First entry: seed ``draft`` from the supervisor's output.
+        # 首次进入：从 supervisor 的输出初始化 ``draft``。
         draft = state.get("draft", "")
         if not draft:
             draft = _extract_supervisor_draft(messages)
 
         if not draft.strip():
-            # Nothing to critique — emit a zero-score critique so the
-            # router falls through to finalize with an empty answer
-            # rather than spinning forever.
+            # 无内容可批评 — 发出零分批评，使路由器直接进入 finalize，并返回空回答，而非永远循环。
             empty_critique = {
                 "quality_score": 0.0,
-                "reasoning": "no supervisor draft available to critique",
+                "reasoning": "没有可批评的 supervisor 草稿",
                 "feedback": "",
                 "issues": ["empty_draft"],
             }
@@ -424,11 +346,11 @@ def _build_critic_node(
             SystemMessage(content=CRITIC_SYSTEM_PROMPT),
             HumanMessage(
                 content=(
-                    "## User question (original)\n"
+                    "## 用户问题（原始）\n"
                     f"{_format_transcript([m for m in messages if isinstance(m, HumanMessage)], max_chars=2000)}\n\n"
-                    "## Draft answer to evaluate\n"
+                    "## 待评估的草稿回答\n"
                     f"{draft}\n\n"
-                    "Return the JSON verdict now."
+                    "请立即返回 JSON 评定结果。"
                 )
             ),
         ]
@@ -467,12 +389,12 @@ def _build_critic_node(
 
 
 def _build_writer_node(model_router: ModelRouter):
-    """Create the writer node closure that consumes critic feedback."""
+    """创建消费批评者反馈的写作者节点闭包。"""
 
     writer_model = model_router.get_model(ModelTier.HEAVY)
 
     async def writer_node(state: ReflectionState) -> dict[str, Any]:
-        """Produce a revised draft based on the latest critique."""
+        """根据最新批评生成修订草稿。"""
         messages = state.get("messages", [])
         prev_draft = state.get("draft", "")
         critique = state.get("critique", {})
@@ -482,13 +404,13 @@ def _build_writer_node(model_router: ModelRouter):
             SystemMessage(content=WRITER_SYSTEM_PROMPT),
             HumanMessage(
                 content=(
-                    "## Specialist transcript\n"
+                    "## 专家输出记录\n"
                     f"{_format_transcript(messages)}\n\n"
-                    "## Current draft\n"
+                    "## 当前草稿\n"
                     f"{prev_draft}\n\n"
-                    "## Critic feedback (act on each bullet)\n"
-                    f"{feedback or '(no feedback — polish the draft for clarity and citation density)'}\n\n"
-                    "Output ONLY the revised answer text. No JSON, no preamble."
+                    "## 批评者反馈（逐条回应每个要点）\n"
+                    f"{feedback or '（无反馈 — 请润色草稿以提升清晰度和引用密度）'}\n\n"
+                    "仅输出修订后的回答文本，不加 JSON 或前言。"
                 )
             ),
         ]
@@ -502,14 +424,12 @@ def _build_writer_node(model_router: ModelRouter):
 
 
 def _build_finalize_node():
-    """Append the chosen final draft back into the messages stream."""
+    """将选定的最终草稿追加回消息流。"""
 
     async def finalize_node(state: ReflectionState) -> dict[str, Any]:
-        """Emit the BEST observed draft as a new ``AIMessage``.
+        """将观察到的最佳草稿作为新的 ``AIMessage`` 发出。
 
-        Returning the best (not the latest) draft is intentional —
-        the LLM sometimes over-corrects on critique feedback and
-        produces a regression on iteration N+1; we keep iteration N.
+        返回最佳草稿，避免 LLM 在批评反馈上过度修正，在第 N+1 次迭代产生退步。
         """
         best = state.get("best_draft", "") or state.get("draft", "")
         critique = state.get("critique", {})
@@ -546,17 +466,15 @@ def _build_router(
     pass_threshold: float,
     max_iterations: int,
 ):
-    """Return the conditional-edge function that decides write vs finalize."""
+    """返回决定 write 还是 finalize 的条件边函数。"""
 
     def route(state: ReflectionState) -> str:
         critique = state.get("critique", {})
         score = critique.get("quality_score", 0.0) if isinstance(critique, dict) else 0.0
         iteration = state.get("iteration", 0)
 
-        # ``iteration`` counts critics already RUN (post-increment in
-        # critic_node). ``max_iterations`` is the cap on REWRITES, so
-        # we allow up to (max_iterations + 1) critic invocations
-        # before forcing termination.
+        # ``iteration`` 计数已运行的批评者次数（在 critic_node 中后递增）。
+        # ``max_iterations`` 是改写次数的上限，允许最多(max_iterations + 1) 次批评者调用后再强制终止。
         if score >= pass_threshold:
             return "finalize"
         if iteration >= max_iterations + 1:
@@ -567,7 +485,7 @@ def _build_router(
 
 
 # ---------------------------------------------------------------------
-# Public builder
+# 公开构建器
 # ---------------------------------------------------------------------
 def build_reflection_subgraph(
     *,
@@ -575,31 +493,23 @@ def build_reflection_subgraph(
     pass_threshold: float = 0.85,
     max_iterations: int = 2,
 ) -> CompiledStateGraph:
-    """Compile the reflection critic + writer loop.
+    """编译反思批评者 + 写作者循环。
 
     Args:
-        model_router: Shared router. The critic uses
-            :attr:`ModelTier.LIGHT` (a grader is a classification
-            task, not a creative writing task), the writer uses
-            :attr:`ModelTier.HEAVY` (the rewrite IS creative
-            synthesis under tight constraints).
-        pass_threshold: Score at or above which the loop terminates
-            on the current draft. Default 0.85 is calibrated for the
-            critic prompt's "ship after a light rewrite" band; lower
-            it if you find reflection rarely catches anything,
-            raise it if you find it never stops.
-        max_iterations: Maximum number of REWRITES (writer node
-            invocations). At ``max_iterations=2`` the worst case is
-            3 critics + 2 writers = 5 LLM calls. Set to 0 to make
-            the subgraph a pure quality probe (one critic, never
-            rewrites — useful for ablation studies).
+        model_router: 共享路由器。
+            批评者使用 :attr:`ModelTier.LIGHT`（评分是分类任务而非创意写作），
+            写作者使用:attr:`ModelTier.HEAVY`（改写是在严格约束下的创意综合）。
+
+        pass_threshold: 分数达到或超过此值时，循环在当前草稿上终止。
+            默认 0.85 是针对批评者提示词"轻微修改后即可发布"区间校准的；
+            若发现反思很少捕获问题则降低，若发现它永不停止则提高。
+
+        max_iterations: 最大改写次数（写作者节点调用次数）。
+        当``max_iterations=2`` 时最坏情况为 3 次批评 + 2 次写作 =5 次 LLM 调用。设为 0 使子图成为纯质量探测器（一次批评，永不改写 — 可用于消融实验）。
 
     Returns:
-        A compiled ``StateGraph`` consumable via ``ainvoke`` /
-        ``astream``. The output state's ``messages`` will contain
-        exactly the input messages plus ONE appended ``AIMessage``
-        whose ``additional_kwargs['reflection']`` carries the audit
-        trail.
+        可通过 ``ainvoke`` / ``astream`` 消费的已编译 ``StateGraph``。
+        输出状态的 ``messages`` 将包含输入消息加上一条追加的``AIMessage``，其 ``additional_kwargs['reflection']`` 携带审计轨迹。
     """
     graph: StateGraph = StateGraph(ReflectionState)
 
@@ -613,7 +523,7 @@ def build_reflection_subgraph(
         _build_router(pass_threshold=pass_threshold, max_iterations=max_iterations),
         {"write": "writer", "finalize": "finalize"},
     )
-    # After writer rewrites, always re-critique.
+    # 写作者改写后，始终重新批评。
     graph.add_edge("writer", "critic")
     graph.add_edge("finalize", END)
 

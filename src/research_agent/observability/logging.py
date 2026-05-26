@@ -1,4 +1,4 @@
-"""Structured logging configuration with loguru."""
+"""基于 loguru 的结构化日志配置。"程序在做什么"的实时记录"""
 
 from __future__ import annotations
 
@@ -9,15 +9,14 @@ from loguru import logger
 
 
 def setup_logging(level: str = "INFO", *, log_file_path: str | None = None) -> None:
-    """Configure loguru with structured formatting.
+    """配置 loguru 结构化日志格式。
 
-    Logs always go to stderr. When ``log_file_path`` is a non-empty
-    string the same messages are mirrored to that path (dirs created
-    on demand).
+    用 loguru 做结构化日志，每条日志包含时间戳、日志级别、模块名、行号和请求 ID（通过中间件 RequestIdMiddleware 注入），同时输出到 stderr 和滚动日志文件。
 
-    Every log line includes ``{extra[request_id]}`` — set to ``"-"``
-    by default and overridden per-request by ``RequestIdMiddleware``
-    via ``logger.contextualize()``.
+    日志始终输出到 stderr。当 ``log_file_path`` 为非空字符串时，相同的日志会镜像写入该路径（目录按需自动创建）。
+
+    每行日志包含 ``{extra[request_id]}`` — 默认值为 ``"-"``，
+    由 ``RequestIdMiddleware`` 通过 ``logger.contextualize()`` 在每个请求中覆盖。
     """
     logger.remove()
     logger.configure(extra={"request_id": "-"})

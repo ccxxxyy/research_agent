@@ -1,16 +1,10 @@
-"""Unit tests for the native LangChain tools exposed to ReAct agents.
+"""暴露给 ReAct Agent 的原生 LangChain 工具的单元测试。
 
-These tests validate three independent concerns:
+这些测试验证三个独立的关注点：
 
-1. **Schema correctness** — the ``@tool`` decorator must produce the
-   expected name, description, and argument schema. The LLM relies on
-   these fields to decide when and how to invoke each tool, so schema
-   drift is a common source of silent Function Calling bugs.
-2. **Behavioural correctness** — each tool must produce the right output
-   for a representative set of inputs and edge cases.
-3. **Safety** — ``calculate`` evaluates user-provided expressions; it
-   must sandbox builtins and reject attempts to import modules, access
-   attributes, or call arbitrary functions.
+1. Schema 正确性 — ``@tool`` 装饰器必须产生预期的名称、描述和参数 schema。LLM 依赖这些字段来决定何时以及如何调用每个工具， 因此 schema 漂移是 Function Calling 静默 bug 的常见来源。
+2. 行为正确性 — 每个工具必须对代表性输入集和边界情况产生正确输出。
+3. 安全性 — ``calculate`` 计算用户提供的表达式；它必须沙箱化 内置函数并拒绝导入模块、访问属性或调用任意函数的尝试。
 """
 
 from __future__ import annotations
@@ -28,7 +22,7 @@ from research_agent.tools.native import (
 
 
 class TestToolSchemas:
-    """Verify LangChain produces correct schemas for Function Calling."""
+    """验证 LangChain 为 Function Calling 生成正确的 schema。"""
 
     def test_default_toolset_contains_three_tools(self) -> None:
         names = {t.name for t in DEFAULT_TOOLS}

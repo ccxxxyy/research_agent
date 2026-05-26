@@ -1,4 +1,4 @@
-"""Unit tests for rag.retriever — BM25Index + hybrid_rrf_fuse."""
+"""rag.retriever 单元测试 — BM25Index + hybrid_rrf_fuse。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from research_agent.rag.retriever import BM25Index, hybrid_rrf_fuse
 
 
 # ======================================================================
-# BM25Index
+# BM25Index 测试
 # ======================================================================
 class TestBM25Index:
     def _sample_docs(self) -> list[dict]:
@@ -52,7 +52,7 @@ class TestBM25Index:
 
 
 # ======================================================================
-# hybrid_rrf_fuse
+# hybrid_rrf_fuse 测试
 # ======================================================================
 class TestHybridRRFFuse:
     def test_vector_only(self):
@@ -103,7 +103,7 @@ class TestHybridRRFFuse:
 
 
 # ======================================================================
-# Integration-style: BM25Index results feed into hybrid_rrf_fuse
+# 集成风格测试：BM25Index 结果输入 hybrid_rrf_fuse
 # ======================================================================
 class TestBM25ToFusion:
     def test_end_to_end_pipeline(self):

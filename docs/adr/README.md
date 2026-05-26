@@ -1,47 +1,43 @@
-# Architecture Decision Records
+# 架构决策记录
 
-This directory holds the project's ADRs — the load-bearing
-architectural choices, written down at the moment they were made,
-with the alternatives we rejected and **why**. The goal is twofold:
+本目录存放项目的 ADR（架构决策记录）— 那些承重级的架构选择，
+在做出决策的当下记录下来，包含我们否决的替代方案及**原因**。
+目标有二：
 
-1. **For future maintainers (including future-you):** answer the
-   "why didn't we just do X?" question without having to
-   re-litigate it from scratch.
-2. **For interviews / code reviews:** demonstrate that the
-   non-obvious decisions in the codebase were deliberate trade-offs,
-   not accidents.
+1. **给未来的维护者（包括未来的你）：** 回答"我们为什么不直接
+   做 X？"的问题，而不必从零开始重新辩论。
+2. **用于面试 / 代码审查：** 证明代码库中那些不显而易见的决策
+   是经过深思熟虑的权衡，而非偶然之举。
 
-## Format
+## 格式
 
-We use the [Michael Nygard ADR template](https://github.com/joelparkerhenderson/architecture-decision-record/tree/main/locales/en/templates/decision-record-template-by-michael-nygard)
-in spirit, lightly adapted:
+我们使用 [Michael Nygard ADR 模板](https://github.com/joelparkerhenderson/architecture-decision-record/tree/main/locales/en/templates/decision-record-template-by-michael-nygard)
+的精神，略有改编：
 
-- **Status**: `Proposed` → `Accepted` → `Superseded by …` /
-  `Deprecated`. Once written, an ADR is immutable; subsequent
-  decisions get their own file.
-- **Context**: the problem we were solving.
-- **Decision**: what we picked.
-- **Alternatives considered**: what we rejected, with reasons.
-- **Consequences**: positive, negative, and neutral fallout.
+- **Status（状态）**: `Proposed` → `Accepted` → `Superseded by …` /
+  `Deprecated`。一旦写成，ADR 是不可变的；后续决策以新文件记录。
+- **Context（背景）**: 我们正在解决的问题。
+- **Decision（决策）**: 我们选择了什么。
+- **Alternatives considered（考虑过的替代方案）**: 我们否决了什么，及理由。
+- **Consequences（后果）**: 正面、负面和中性的影响。
 
-## Index
+## 索引
 
-| #    | Title                                                                    | Status   | Phase |
-|------|--------------------------------------------------------------------------|----------|-------|
-| 0001 | [Use FAISS (file-backed) instead of ChromaDB for the knowledge base](0001-faiss-over-chroma.md) | Accepted | 4.6   |
-| 0002 | [Deliver `knowledge_expert` tools in-process, not over MCP stdio](0002-knowledge-server-inprocess.md) | Accepted | 4.6   |
-| 0003 | [Add a Writer / Reasoner reflection loop as a post-supervisor subgraph](0003-reflection-loop.md) | Accepted | 5.2   |
+| #    | 标题                                                                    | 状态     | 阶段  |
+|------|-------------------------------------------------------------------------|----------|-------|
+| 0001 | [使用 FAISS（文件存储）代替 ChromaDB 作为知识库](0001-faiss-over-chroma.md) | Accepted | 4.6   |
+| 0002 | [以进程内方式交付 `knowledge_expert` 工具，而非通过 MCP stdio](0002-knowledge-server-inprocess.md) | Accepted | 4.6   |
+| 0003 | [添加 Writer / Reasoner 反思循环作为 supervisor 后置子图](0003-reflection-loop.md) | Accepted | 5.2   |
 
-## When to write a new ADR
+## 何时编写新的 ADR
 
-Write one when **any** of these apply:
+当以下**任何一项**成立时编写：
 
-- We chose a non-default approach (e.g. picked library A over
-  library B; ran something in-process instead of out-of-process).
-- The decision touches more than one module / package.
-- A reasonable reader would later ask "why is it this way?"
-- The decision has consequences that are noticeable in operations
-  (extra latency, extra deps, extra failure mode).
+- 我们选择了非默认方案（如选择了库 A 而非库 B；以进程内方式
+  运行而非进程外）。
+- 该决策涉及多个模块 / 包。
+- 合理的读者事后会问"为什么是这样的？"
+- 该决策在运营中有可感知的后果（额外延迟、额外依赖、额外故障模式）。
 
-Do **not** write one for routine refactors, bug fixes, or
-implementation details that don't have meaningful alternatives.
+以下情况**不要**编写：常规重构、错误修复、或不具有有意义替代
+方案的实现细节。

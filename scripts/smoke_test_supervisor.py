@@ -1,13 +1,12 @@
-"""Smoke test for Phase-3 minimal supervisor (multi-agent handoffs).
+"""最小 supervisor（多 Agent 移交）冒烟测试。
 
-Run:
+运行::
+
     uv run python scripts/smoke_test_supervisor.py
 
-Requires a working LLM configuration in ``.env`` (same as Phase-1 smoke).
+需要 ``.env`` 中有可用的 LLM 配置（与 Phase-1 冒烟测试相同）。
 
-This script sends a COMPOSITE question that forces the supervisor to
-delegate to at least two different specialists in sequence, then
-synthesise a single final answer.
+本脚本发送一个复合问题，迫使 supervisor 依次委派给至少两个不同的专家，然后综合出一个最终回答。
 """
 
 from __future__ import annotations
@@ -52,21 +51,21 @@ async def main() -> None:
     )
 
     final = _last_plain_assistant(result["messages"])
-    print("\n=== Final supervisor answer ===\n")
+    print("\n=== Supervisor 最终回答 ===\n")
     print(final)
-    print("\n=== Message count ===", len(result["messages"]))
+    print("\n=== 消息总数 ===", len(result["messages"]))
 
-    # Soft checks — we don't hard-assert exact wording from the LLM.
+    # 宽松校验 — 不硬性断言 LLM 的精确措辞。
     lower = final.lower()
     ok_time = "shanghai" in lower or "+08" in final or "202" in final
     ok_math = "391" in final.replace(",", "").replace(" ", "")
-    print("\n=== Heuristic verification ===")
-    print(f"  time-ish content present : {ok_time}")
-    print(f"  17*23=391 present        : {ok_math}")
+    print("\n=== 启发式校验 ===")
+    print(f"  包含时间相关内容   : {ok_time}")
+    print(f"  17*23=391 存在     : {ok_math}")
     if ok_time and ok_math:
-        print("\n  [PASS] Supervisor appears to have delegated correctly.")
+        print("\n  [PASS] Supervisor 似乎正确完成了委派。")
     else:
-        print("\n  [WARN] Heuristic checks failed — inspect the trace above.")
+        print("\n  [WARN] 启发式校验失败 — 请检查上方跟踪信息。")
 
 
 if __name__ == "__main__":
