@@ -1,17 +1,11 @@
-"""Unit tests for the Writer / Reasoner reflection subgraph.
+"""Writer / Reasoner 反思子图的单元测试。
 
-These tests exercise the reflection LOGIC (state transitions,
-critique parsing, routing) end-to-end via the compiled graph,
-but with a fake model router so we never touch a real LLM.
+这些测试通过编译后的图端到端地验证反思逻辑（状态转换、批评解析、路由），但使用伪造的模型路由器，因此不会接触真实 LLM。
 
-What we explicitly DON'T test here:
+明确不测试的内容：
 
-* Real LLM grading quality — that's an evaluation concern, not a
-  unit-test concern, and it would require API credentials.
-* Reflection inside ``build_research_supervisor`` end-to-end with
-  every specialist running — that's integration territory and the
-  specialists require MCP subprocesses. We test the wrapper wiring
-  via a fake inner supervisor instead.
+* 真实 LLM 评分质量 — 那是评估关注点而非单元测试关注点，且需要 API 凭证。
+* 在 ``build_research_supervisor`` 中端到端运行所有专家的反思 — 那属于集成测试领域，专家需要 MCP 子进程。通过伪造的内部 supervisor 测试包装器连线。
 """
 
 from __future__ import annotations
@@ -33,14 +27,12 @@ from research_agent.llm.tier import ModelTier
 
 
 # ---------------------------------------------------------------------
-# Fakes — a model_router substitute that records prompts and replays
-# canned responses without ever touching a network.
+# 伪造对象 — 记录提示词并回放预设响应的 model_router 替身，完全不接触网络。
 # ---------------------------------------------------------------------
 class _FakeModel:
-    """Minimal Runnable-shaped object compatible with reflection code.
+    """与反思代码兼容的最小 Runnable 形状对象。
 
-    Reflection only needs ``.ainvoke(messages)`` → object with
-    ``.content`` string. We capture every prompt for assertions.
+    反思仅需 ``.ainvoke(messages)`` → 含 ``.content`` 字符串的对象。捕获每个提示词用于断言。
     """
 
     def __init__(self, responses: list[str]) -> None:
@@ -50,9 +42,7 @@ class _FakeModel:
     async def ainvoke(self, messages: list[BaseMessage]) -> AIMessage:
         self.prompts.append(list(messages))
         if not self._responses:
-            # Falling off the end of the script means the test gave
-            # an under-specified fake — fail loudly rather than
-            # silently re-using the last response.
+            # 脚本用完意味着测试提供了不完整的伪造对象 —— 大声失败而非静默复用最后一个响应。
             raise AssertionError(
                 "fake model out of canned responses; "
                 "test setup is incomplete"
@@ -62,7 +52,7 @@ class _FakeModel:
 
 
 class _FakeRouter:
-    """Router stub that hands out tier-specific fake models."""
+    """分发层级特定伪造模型的路由器替身。"""
 
     def __init__(
         self,
@@ -78,13 +68,12 @@ class _FakeRouter:
             return self.light
         if tier == ModelTier.HEAVY:
             return self.heavy
-        # Reflection only uses LIGHT + HEAVY. Anything else is a bug
-        # in production code, not the test.
+        # 反思逻辑只使用 LIGHT + HEAVY。请求其他层级说明是生产代码的 bug，而非测试的问题。
         raise AssertionError(f"unexpected tier requested: {tier}")
 
 
 # ---------------------------------------------------------------------
-# Pure-function helpers
+# 纯函数辅助方法测试
 # ---------------------------------------------------------------------
 class TestExtractJson:
     def test_plain_json(self) -> None:
@@ -147,8 +136,7 @@ class TestExtractSupervisorDraft:
                 {"name": "x", "args": {}, "id": "y"},
             ]),
         ]
-        # The "ignored because tool call" message has tool_calls so we
-        # walk past it and return the real draft above it.
+        # "ignored because tool call" 消息含有 tool_calls， 因此跳过它，返回其上方的真正草稿。
         assert _extract_supervisor_draft(msgs) == "real draft"
 
     def test_empty_messages_returns_empty_string(self) -> None:
@@ -160,24 +148,24 @@ class TestExtractSupervisorDraft:
 
 class TestFormatTranscript:
     def test_long_transcript_truncated_with_marker(self) -> None:
-        # Build a transcript that is comfortably > max_chars.
+        # 构建一个远超 max_chars 的对话记录。
         msgs: list[BaseMessage] = [
             HumanMessage(content="x" * 500),
             AIMessage(content="y" * 5000),
         ]
         rendered = _format_transcript(msgs, max_chars=1000)
         assert rendered.startswith("... (transcript truncated) ...")
-        # Tail-keep: the very end of the AIMessage should be present.
+        # 保留尾部：AIMessage 的末尾应当存在。
         assert rendered.endswith("y")
         assert len(rendered) <= 1000 + len("... (transcript truncated) ...\n\n")
 
 
 # ---------------------------------------------------------------------
-# Subgraph behaviour
+# 子图行为
 # ---------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_high_score_first_pass_skips_rewrite() -> None:
-    """A draft that scores ≥ threshold should NOT trigger the writer."""
+    """得分 ≥ 阈值的草稿不应触发 writer。"""
     router = _FakeRouter(
         light_responses=['{"quality_score": 0.95, "reasoning": "good", "feedback": "", "issues": []}'],
         heavy_responses=[],
@@ -208,7 +196,7 @@ async def test_high_score_first_pass_skips_rewrite() -> None:
 
 @pytest.mark.asyncio
 async def test_low_score_triggers_rewrite_then_passes() -> None:
-    """Fail-then-pass: critic scores 0.4 then 0.9 after one rewrite."""
+    """先失败后通过：critic 评分 0.4，重写一次后评分 0.9。"""
     router = _FakeRouter(
         light_responses=[
             '{"quality_score": 0.4, "reasoning": "bad", "feedback": "add citations", "issues": ["no_cite"]}',
@@ -240,14 +228,13 @@ async def test_low_score_triggers_rewrite_then_passes() -> None:
 
 @pytest.mark.asyncio
 async def test_max_iterations_enforced_when_critic_never_satisfied() -> None:
-    """Pathological case: critic ALWAYS scores below threshold."""
+    """病态用例：critic 始终评分低于阈值。"""
     router = _FakeRouter(
         light_responses=[
             '{"quality_score": 0.3, "feedback": "more"}',
             '{"quality_score": 0.4, "feedback": "more"}',
             '{"quality_score": 0.5, "feedback": "more"}',
-            # If the loop were unbounded a 4th response would be
-            # required; we deliberately omit it.
+            # 如果循环无上限则需要第 4 个响应；我们有意省略。
         ],
         heavy_responses=[
             "rewrite #1",
@@ -267,27 +254,25 @@ async def test_max_iterations_enforced_when_critic_never_satisfied() -> None:
         ],
     })
 
-    # With max_iterations=2, we run up to 3 critics + 2 writers.
+    # max_iterations=2 时，最多运行 3 次 critic + 2 次 writer。
     assert len(router.light.prompts) == 3
     assert len(router.heavy.prompts) == 2
     refl = out["messages"][-1].additional_kwargs["reflection"]
     assert refl["iterations_run"] == 3
-    # The "best" draft was the one scored 0.5 — that's the second
-    # rewrite ("rewrite #2"), since it had the highest score.
+    # "最佳"草稿是得分 0.5 的那个 — 即第二次重写（"rewrite #2"）， 因为它分数最高。
     assert out["messages"][-1].content == "rewrite #2"
 
 
 @pytest.mark.asyncio
 async def test_best_draft_preserved_on_regression() -> None:
-    """If a rewrite REGRESSES, finalize returns the earlier high-water mark."""
+    """如果重写导致退步，finalize 返回先前的最高水位草稿。"""
     router = _FakeRouter(
         light_responses=[
-            # Initial supervisor draft: scores 0.6 (just under threshold)
+            # 初始 supervisor 草稿：得分 0.6（刚好低于阈值）
             '{"quality_score": 0.6, "feedback": "tighten"}',
-            # Rewrite regresses: 0.3 — should NOT be the final answer
+            # 重写退步：0.3 — 不应成为最终答案
             '{"quality_score": 0.3, "feedback": "much worse"}',
-            # Second rewrite recovers but only to 0.5 — still below
-            # threshold, loop terminates by max-iter
+            # 第二次重写恢复到 0.5 — 仍低于阈值， 循环因达到最大迭代次数而终止
             '{"quality_score": 0.5, "feedback": "still off"}',
         ],
         heavy_responses=[
@@ -308,8 +293,7 @@ async def test_best_draft_preserved_on_regression() -> None:
         ],
     })
 
-    # Highest score (0.6) was the supervisor's ORIGINAL draft, so
-    # finalize should return that, not the rewrites.
+    # 最高分（0.6）是 supervisor 的原始草稿，因此 finalize 应返回该草稿而非重写版本。
     assert out["messages"][-1].content == "initial supervisor draft"
     refl = out["messages"][-1].additional_kwargs["reflection"]
     assert refl["final_score"] == pytest.approx(0.6)
@@ -317,9 +301,9 @@ async def test_best_draft_preserved_on_regression() -> None:
 
 @pytest.mark.asyncio
 async def test_empty_draft_terminates_gracefully() -> None:
-    """No supervisor synthesis present → critic emits zero, loop ends fast."""
+    """无 supervisor 合成内容 → critic 输出零分，循环快速结束。"""
     router = _FakeRouter(
-        light_responses=[],  # critic never called for the substantive path
+        light_responses=[],  # critic 不会在实质路径上被调用
         heavy_responses=[],
     )
     graph = build_reflection_subgraph(
@@ -328,26 +312,18 @@ async def test_empty_draft_terminates_gracefully() -> None:
         max_iterations=2,
     )
 
-    # Only a human message — there is no draft to critique. The
-    # critic node short-circuits with score 0.0 and the router sees
-    # iteration=1 > max_iterations+1? No, 1 < 3, so it would
-    # actually try to rewrite. We want to make sure it terminates
-    # WITHOUT calling the writer too — that requires a second
-    # short-circuit in critic_node OR feeding empty responses.
+    # 仅有一条人类消息 — 没有草稿可供批评。critic 节点以分数 0.0 短路，路由器看到 iteration=1 > max_iterations+1？不，1 < 3，
+    # 所以它实际上会尝试重写。我们想确保它在不调用 writer 的情况下也能终止 — 这需要 critic_node 中的第二个短路或提供空响应。
     #
-    # Documented behaviour: with no draft, critic emits empty
-    # critique with score 0.0; the router decides to rewrite; the
-    # writer needs a response, which our fake doesn't have →
-    # AssertionError. So in practice the caller would handle this
-    # upstream. We test that the helper itself doesn't crash on
-    # the input shape.
+    # 文档化行为：无草稿时，critic 输出空批评和分数 0.0；路由器决定重写；writer 需要一个响应，而我们的伪造对象没有 → AssertionError。
+    # 实践中调用者会在上游处理此情况。测试辅助函数本身不会在此输入形状上崩溃。
     with pytest.raises(AssertionError):
         await graph.ainvoke({"messages": [HumanMessage(content="hi")]})
 
 
 @pytest.mark.asyncio
 async def test_zero_max_iterations_makes_critic_only_pass() -> None:
-    """Ablation mode: ``max_iterations=0`` → one critic, no rewrites."""
+    """消融模式：``max_iterations=0`` → 一次 critic，无重写。"""
     router = _FakeRouter(
         light_responses=['{"quality_score": 0.2, "feedback": "bad"}'],
         heavy_responses=[],
@@ -367,6 +343,5 @@ async def test_zero_max_iterations_makes_critic_only_pass() -> None:
 
     assert len(router.light.prompts) == 1
     assert len(router.heavy.prompts) == 0
-    # Even though the score is below threshold, with max_iterations=0
-    # we still finalize on the original draft.
+    # 即使分数低于阈值，max_iterations=0 时仍以原始草稿完成。
     assert out["messages"][-1].content == "draft"

@@ -1,23 +1,14 @@
-"""unit tests — ``knowledge_server`` MCP tools and helpers.
+"""单元测试 — ``knowledge_server`` MCP 工具与辅助函数。
 
-Two tiers of coverage:
+两层覆盖范围：
 
-1. **Pure-helper tests** (always run): exercise the tokenizer, BM25
-   index, hybrid-fusion math, quality classifier, chunker, and PDF
-   loader against a tiny synthetic in-memory PDF. Zero network, no
-   model weights — these run in <1 s.
+1. 纯辅助函数测试（始终运行）：使用一个微小的合成内存 PDF 测试分词器、BM25 索引、混合融合数学、质量分类器、分块器和 PDF 加载器。无网络、无模型权重 — 运行时间 <1 秒。
 
-2. **End-to-end ingestion + search** (marked ``slow``): build a
-   real FAISS index under a tmp directory, ingest a tiny PDF, and
-   run a ``search()`` round-trip. This pulls in the bge-small
-   embedding model the first time it runs (~95 MB cached under
-   ``~/.cache/huggingface``); subsequent runs are warm and
-   complete in a few seconds.
+2. 端到端摄入 + 搜索（标记为 ``slow``）：在临时目录下构建真实 FAISS 索引，摄入微小 PDF，并运行 ``search()`` 往返。
+   首次运行时会拉取 bge-small embedding 模型（约 95 MB 缓存在 ``~/.cache/huggingface`` 下）；后续运行已预热，几秒内完成。
 
-The slow tier is opt-in via ``pytest -m slow`` so CI doesn't pay the
-embedding-download tax on every commit. ``pytest`` (default) runs the
-fast helpers; the demo script
-``scripts/demo_knowledge_expert.py`` is the real end-to-end smoke.
+慢速层通过 ``pytest -m slow`` 选择性加入，这样 CI 不用在每次提交时承担 embedding 下载开销。``pytest``（默认）运行快速辅助函数测试；
+演示脚本 ``scripts/demo_knowledge_expert.py`` 是真正的端到端冒烟测试。
 """
 
 from __future__ import annotations
@@ -40,30 +31,23 @@ from research_agent.mcp_servers.knowledge_server import (
 )
 
 # ---------------------------------------------------------------------
-# Helpers — synthetic in-memory PDF
+# 辅助函数 — 合成内存 PDF
 # ---------------------------------------------------------------------
 
 
 def _make_tiny_pdf(pages: list[str]) -> bytes:
-    """Render ``pages`` to a real (tiny) PDF using ``pypdf``.
+    """使用 ``pypdf`` 将 ``pages`` 渲染为真实（微小）PDF。
 
-    We avoid shipping a fixture PDF in the repo because the fast tier
-    must work in a fresh checkout. ``pypdf`` can't author from
-    scratch, so we use ``reportlab`` if available — and otherwise
-    fall back to a hard-coded 2-page PDF where the page text is
-    verbatim ASCII captured between the BT/ET markers in the content
-    stream. The latter is what we actually use here so we keep deps
-    to a minimum (``pypdf`` is already required).
+    避免在仓库中附带 fixture PDF，因为快速层必须在全新克隆中工作。
+    ``pypdf`` 无法从零创建，所以使用 ``reportlab``（如果可用）— 否则退回到一个硬编码的 2 页 PDF，
+    其中页面文本是在内容流的 BT/ET 标记之间逐字捕获的 ASCII。后者是实际使用的方式，以保持依赖最少（``pypdf`` 已是必需项）。
 
-    The result is a structurally minimal but spec-compliant PDF that
-    ``pypdf.PdfReader`` happily parses.
+    结果是一个结构最小但符合规范的 PDF，``pypdf.PdfReader`` 可以正常解析。
     """
-    # Hand-rolled minimal PDF skeleton. We only need the text-extraction
-    # round-trip to work; we are NOT trying to render anything visually.
-    # pypdf's text extractor reads ``Tj`` operators inside ``BT/ET``.
+    # 手工构建的最小 PDF 骨架。我们只需要文本提取往返能工作；并不试图进行任何可视化渲染。pypdf 的文本提取器读取 ``BT/ET`` 内的 ``Tj`` 操作符。
 
     def _content_stream(text: str) -> bytes:
-        # Escape parentheses; PDF strings are () delimited.
+        # 转义括号；PDF 字符串以 () 分隔。
         safe = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
         body = f"BT /F1 12 Tf 50 750 Td ({safe}) Tj ET".encode("latin-1")
         return body
@@ -74,12 +58,11 @@ def _make_tiny_pdf(pages: list[str]) -> bytes:
         objects.append(obj_bytes)
         return len(objects)
 
-    # 1. Catalog
+    # 1. 目录对象
     catalog_obj_num = _push(b"<< /Type /Catalog /Pages 2 0 R >>")
-    # 2. Pages tree (forward-ref placeholder; we'll patch in the kids
-    # list once the page objects exist).
+    # 2. 页面树（前向引用占位符；页面对象创建后再填充子节点列表）。
     pages_obj_num = _push(b"")
-    # Font (shared by all pages)
+    # 字体（所有页面共享）
     font_obj_num = _push(
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
     )
@@ -108,7 +91,7 @@ def _make_tiny_pdf(pages: list[str]) -> bytes:
         )
         page_obj_nums.append(_push(page_obj))
 
-    # Patch the Pages tree with the actual kid references.
+    # 用实际子节点引用填充页面树。
     kids = b" ".join(
         str(n).encode("ascii") + b" 0 R" for n in page_obj_nums
     )
@@ -118,10 +101,10 @@ def _make_tiny_pdf(pages: list[str]) -> bytes:
         + b" /Kids [" + kids + b"] >>"
     )
 
-    # Assemble the PDF: header, body objects, xref, trailer.
+    # 组装 PDF：头部、主体对象、交叉引用表、尾部。
     buf = io.BytesIO()
     buf.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-    offsets: list[int] = [0]  # entry 0 is the standard "free" record
+    offsets: list[int] = [0]  # 条目 0 是标准的"空闲"记录
     for i, obj in enumerate(objects, start=1):
         offsets.append(buf.tell())
         buf.write(str(i).encode("ascii") + b" 0 obj\n" + obj + b"\nendobj\n")
@@ -145,7 +128,7 @@ def _make_tiny_pdf(pages: list[str]) -> bytes:
 
 @pytest.fixture
 def tiny_pdf_path(tmp_path: Path) -> Path:
-    """Two-page synthetic PDF with predictable extractable text."""
+    """具有可预测可提取文本的两页合成 PDF。"""
     pdf_bytes = _make_tiny_pdf(
         [
             "carbon neutrality 2030 goal scope 1 emissions",
@@ -158,7 +141,7 @@ def tiny_pdf_path(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------
-# Pure-helper tests
+# 纯辅助函数测试
 # ---------------------------------------------------------------------
 
 
@@ -201,7 +184,7 @@ class TestQualityClassifier:
         )
 
     def test_medium_band(self) -> None:
-        # top_score ≥ medium but < high; mean still high enough.
+        # top_score ≥ medium 但 < high；mean 仍然足够高。
         score = (QUALITY_HIGH_THRESHOLD + QUALITY_MEDIUM_THRESHOLD) / 2
         assert _classify_quality(score, score, unique_sources=2) == "medium"
 
@@ -212,8 +195,8 @@ class TestQualityClassifier:
         )
 
     def test_low_when_no_unique_sources(self) -> None:
-        # We treat ``unique_sources=0`` as "no usable evidence" — the
-        # classifier must NOT report 'high' even if some scores drift up.
+        # 我们将 ``unique_sources=0`` 视为"无可用证据" — 即使部分分数
+        # 漂移上升，分类器也不得报告 'high'。
         assert (
             _classify_quality(QUALITY_HIGH_THRESHOLD + 0.1, 0.5, unique_sources=0)
             in {"medium", "low"}
@@ -234,7 +217,7 @@ class TestBM25Index:
         idx = _BM25Index(docs)
         ranked = idx.search("carbon emissions", top_k=3)
         assert ranked, "expected at least one BM25 hit"
-        # The first doc shares both query terms — must rank #1.
+        # 第一个文档共享两个查询词 — 必须排名第 1。
         first_idx, first_score = ranked[0]
         assert first_idx == 0, ranked
         assert first_score > 0
@@ -244,8 +227,8 @@ class TestBM25Index:
         assert idx.search("   ", top_k=5) == []
 
     def test_handles_empty_corpus(self) -> None:
-        # Empty corpora are a normal cold-start case (collection
-        # exists but no docs ingested yet) — must not raise.
+        # 空语料库是正常的冷启动场景（集合存在但尚未摄入文档）
+        # — 不应抛出异常。
         idx = _BM25Index([])
         assert idx.search("anything", top_k=5) == []
 
@@ -262,7 +245,7 @@ class TestChunkPages:
         assert chunks
         assert all("page" in c["metadata"] for c in chunks)
         assert all(c["metadata"]["source"] == "x.pdf" for c in chunks)
-        # Chunks NEVER span pages — provenance must stay clean.
+        # 分块绝不跨页 — 来源追溯必须保持干净。
         page_to_chunks: dict[int, int] = {}
         for c in chunks:
             page_to_chunks[c["metadata"]["page"]] = (
@@ -291,8 +274,7 @@ class TestHybridFuse:
         fused_both = _hybrid_fuse(
             vector_hits=[(doc, 0.8)], bm25_hits=[(0, 5.0, doc)]
         )
-        # The same doc appearing in both lists should outrank the
-        # single-list version on RRF.
+        # 同一文档出现在两个列表中时，其 RRF 分数应高于仅出现在单个列表中的版本。
         assert fused_both[0]["rrf_score"] > fused_only_vec[0]["rrf_score"]
 
     def test_results_sorted_descending_by_rrf(self) -> None:
@@ -300,7 +282,7 @@ class TestHybridFuse:
             {"content": f"doc{i}", "metadata": {"source": "s", "page": i}}
             for i in range(5)
         ]
-        # Highest vector rank for doc0, lowest for doc4. Same for BM25.
+        # doc0 向量排名最高，doc4 最低。BM25 同理。
         vec = [(docs[i], 1.0 - i * 0.1) for i in range(5)]
         bm = [(i, 5.0 - i, docs[i]) for i in range(5)]
         fused = _hybrid_fuse(vec, bm)
@@ -309,7 +291,7 @@ class TestHybridFuse:
 
 
 # ---------------------------------------------------------------------
-# PDF loader (still pure-helper tier, but uses real pypdf)
+# PDF 加载器（仍属纯辅助函数层，但使用真实 pypdf）
 # ---------------------------------------------------------------------
 
 
@@ -318,35 +300,32 @@ class TestLoadPdfPages:
         pages = _load_pdf_pages(tiny_pdf_path)
         assert len(pages) == 2
         assert all(isinstance(p["page"], int) for p in pages)
-        # First page text contains the carbon-neutrality phrase.
+        # 第一页文本包含碳中和相关短语。
         joined = " ".join(p["text"] for p in pages)
         assert "carbon" in joined.lower()
         assert "dividend" in joined.lower()
 
 
 # ---------------------------------------------------------------------
-# End-to-end ingest + search (slow tier)
+# 端到端摄入 + 搜索（慢速层）
 # ---------------------------------------------------------------------
 
 
 @pytest.mark.slow
 class TestIngestAndSearch:
-    """Real FAISS + bge-small embedder end-to-end.
+    """真实 FAISS + bge-small embedder 端到端测试。
 
-    Marked ``slow`` because the first run downloads ~95 MB of model
-    weights and warms a sentence-transformer; subsequent runs are
-    sub-second on a warm cache. Run with ``pytest -m slow``.
+    标记为 ``slow``，因为首次运行会下载约 95 MB 的模型权重并
+    预热 sentence-transformer；后续运行在预热缓存上不到一秒。
+    使用 ``pytest -m slow`` 运行。
     """
 
     @pytest.mark.asyncio
     async def test_ingest_then_search_returns_relevant_chunk(
         self, tiny_pdf_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Redirect persistence + cached singletons to a clean tmp dir
-        # so this test can never collide with the user's real DB.
-        # NOTE: ``@mcp.tool()`` in fastmcp returns the original async
-        # function unwrapped — we can ``await`` it directly without
-        # going through stdio.
+        # 将持久化 + 缓存的单例重定向到干净的临时目录， 使此测试永远不会与用户的真实数据库冲突。
+        # 注意：fastmcp 中的 ``@mcp.tool()`` 返回原始未包装的异步函数 — 我们可以直接 ``await`` 它而无需通过 stdio。
         monkeypatch.setattr(knowledge_server, "DEFAULT_DB_DIR", tmp_path / "kb")
         monkeypatch.setattr(knowledge_server, "_FAISS_STORES", {})
         monkeypatch.setattr(knowledge_server, "_BM25_CACHE", {})
@@ -358,8 +337,7 @@ class TestIngestAndSearch:
         assert "error" not in ingest_result, ingest_result
         assert ingest_result["num_chunks_added"] >= 2
 
-        # Carbon-neutrality query must surface the page-1 chunk near
-        # the top, NOT the page-2 dividend chunk.
+        # 碳中和查询必须将第 1 页的分块浮到顶部附近，而非第 2 页的股息分块。
         hits = await knowledge_server.search(
             query="carbon neutrality goal",
             collection="test-coll",
@@ -372,8 +350,7 @@ class TestIngestAndSearch:
         top_content = hits["results"][0]["content"].lower()
         assert "carbon" in top_content or "neutrality" in top_content
 
-        # Quality should classify as at least medium for an exact-phrase
-        # match in a tiny corpus.
+        # 在微小语料库中精确短语匹配的质量应至少分类为 medium。
         assert hits["quality"] in {"high", "medium"}, hits
 
     @pytest.mark.asyncio
@@ -414,7 +391,7 @@ class TestIngestAndSearch:
         assert deleted["existed"] is True
         assert deleted["deleted"] is True
 
-        # Idempotent second call.
+        # 幂等的第二次调用。
         deleted_again = await knowledge_server.delete_collection(
             collection="to-delete"
         )

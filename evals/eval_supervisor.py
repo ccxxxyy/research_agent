@@ -1,15 +1,15 @@
-"""CLI entry-point: run the LangSmith evaluation suite for the research supervisor.
+"""CLI 入口：运行研究 supervisor 的 LangSmith 评估套件。
 
-Usage::
+用法::
 
     python -m evals.eval_supervisor
     python -m evals.eval_supervisor --dataset-name my-custom-name
     python -m evals.eval_supervisor --experiment-prefix nightly
 
-Prerequisites:
-  - ``LANGSMITH_API_KEY`` set (or ``LANGCHAIN_API_KEY``)
+前置条件:
+  - 已设置 ``LANGSMITH_API_KEY``（或 ``LANGCHAIN_API_KEY``）
   - ``LANGCHAIN_TRACING_V2=true``
-  - LLM API keys for the supervisor (HEAVY tier) and judge (LIGHT tier)
+  - supervisor（HEAVY 层）和评判（LIGHT 层）的 LLM API 密钥
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ _DATASET_PATH = Path(__file__).parent / "datasets" / "supervisor_routing.json"
 
 
 def _ensure_dataset(client: Client, dataset_name: str) -> str:
-    """Create or update the LangSmith dataset from the local JSON file.
+    """从本地 JSON 文件创建或更新 LangSmith 数据集。
 
-    Returns the dataset name (for ``evaluate(data=...)``).
+    返回数据集名称（用于 ``evaluate(data=...)``）。
     """
     examples = json.loads(_DATASET_PATH.read_text(encoding="utf-8"))
 
@@ -81,7 +81,7 @@ def _ensure_dataset(client: Client, dataset_name: str) -> str:
 
 
 async def _run_eval(dataset_name: str, experiment_prefix: str) -> None:
-    """Build environment, then launch ``langsmith.evaluate``."""
+    """构建环境，然后启动 ``langsmith.evaluate``。"""
     logger.info("Building evaluation environment (graph + memory)...")
     await build_eval_environment()
     logger.info("Environment ready. Starting evaluation...")

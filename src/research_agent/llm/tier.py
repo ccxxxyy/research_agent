@@ -1,4 +1,4 @@
-"""Model tier definitions and agent-to-model mapping."""
+"""模型层级定义与 Agent 到模型的映射。"""
 
 from __future__ import annotations
 
@@ -6,15 +6,15 @@ from enum import Enum
 
 
 class ModelTier(str, Enum):
-    """Task complexity tiers for model routing."""
+    """按任务复杂度划分的模型路由层级。"""
 
-    LIGHT = "light"    # Classification, extraction, formatting, grading
-    MEDIUM = "medium"  # Summarization, analysis, evaluation
-    HEAVY = "heavy"    # Deep reasoning, report writing, planning
+    LIGHT = "light"    # 分类、提取、格式化、评分
+    MEDIUM = "medium"  # 摘要、分析、评估
+    HEAVY = "heavy"    # 深度推理、报告撰写、规划
 
 
 class AgentName(str, Enum):
-    """Registered agent identifiers for model routing."""
+    """已注册的 Agent 标识符，用于模型路由。"""
 
     SUPERVISOR = "supervisor"
     RETRIEVER = "retriever"

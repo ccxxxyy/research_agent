@@ -1,4 +1,4 @@
-"""Centralized configuration via pydantic-settings."""
+"""基于 pydantic-settings 的集中式配置。"""
 
 from __future__ import annotations
 
@@ -23,10 +23,8 @@ class LLMConfig(BaseSettings):
         ge=10,
         le=3600,
         description=(
-            "Per-invocation HTTP timeout (seconds) for OpenAI-compatible "
-            "chat-completion calls. Passed to LangChain ``ChatOpenAI`` as "
-            "``request_timeout`` so stalled provider connections do not "
-            "tie up workers indefinitely."
+            "每次调用 OpenAI 兼容聊天补全接口的 HTTP 超时时间（秒）。"
+            "作为 ``request_timeout`` 传递给 LangChain ``ChatOpenAI``，防止停滞的提供商连接无限期占用工作线程。"
         ),
     )
 
@@ -37,7 +35,7 @@ class LLMConfig(BaseSettings):
     dashscope_api_key: str = ""
     dashscope_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    light_model: str = "qwen3-max-2026-01-23"
+    light_model: str = "deepseek-v4-flash"
     light_api_key: str = ""
     light_api_base: str = ""
 
@@ -68,14 +66,13 @@ class ObservabilityConfig(BaseSettings):
     log_file_path: str = Field(
         default="logs/research_agent.log",
         description=(
-            "Path to the rotating application log file. Set to empty string "
-            "to emit logs to stderr only (no file sink)."
+            "滚动应用日志文件的路径。设为空字符串则仅输出日志到 stderr （不写入文件）。"
         ),
     )
 
 
 class Settings(BaseSettings):
-    """Root settings aggregating all sub-configs."""
+    """聚合所有子配置的根设置类。"""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -95,52 +92,37 @@ class Settings(BaseSettings):
         ge=0.0,
         le=7200.0,
         description=(
-            "Optional ASGI-layer wall-clock timeout per request (seconds). "
-            "Zero disables. Exempt paths: ``/health``, docs/OpenAPI, and "
-            "``/api/supervisor/research/stream`` (SSE can legitimately exceed "
-            "any short cap)."
+            "可选的 ASGI 层每请求挂钟超时时间（秒）。"
+            "零值表示禁用。豁免路径：``/health``、文档/OpenAPI 以及 ``/api/supervisor/research/stream``（SSE 可能合理地超出任何短时限制）。"
         ),
     )
 
     reflection_enabled: bool = False
-    """When True, the research supervisor wraps its final synthesis in a
-    critic+writer reflection loop. Default OFF because reflection adds
-    1–3 extra LLM calls per request and most demo flows don't need it;
-    flip to True in production for higher answer quality."""
+    """当设为 True 时，研究主管会将最终综合结果包裹在批评者+写作者的反思循环中。
+    默认关闭，因为反思每次请求会增加 1–3 次额外的 LLM 调用，且大多数流程不需要；在生产环境中设为 True 可提高回答质量。"""
 
     hitl_enabled: bool = False
-    """When True, the research supervisor pauses after producing its
-    draft synthesis and waits for human approval before continuing to
-    reflection (if enabled) or finalizing. The frontend receives a
-    ``review_requested`` SSE event containing the draft; the reviewer
-    calls ``POST /api/supervisor/research/{thread_id}/approve`` or
-    ``/resume`` to continue.  Requires a persistent checkpointer
-    (SQLite or Postgres) — in-memory checkpoints lose state across
-    requests."""
+    """当设为 True 时，研究主管在生成综合草稿后暂停，等待人工审批后再继续进入反思（如已启用）或最终定稿。
+    前端会收到包含草稿的 ``review_requested`` SSE 事件；
+    审阅者调用``POST /api/supervisor/research/{thread_id}/approve`` 或 ``/resume`` 以继续。
+    需要持久化检查点存储（SQLite 或 Postgres）—— 内存检查点会在请求间丢失状态。"""
 
     reflection_pass_threshold: float = 0.85
-    """Critic score at or above which the reflection loop terminates
-    early. 0.85 maps to the critic prompt's "ship after a light
-    rewrite" band."""
+    """批评者评分达到或超过此阈值时，反思循环提前终止。
+    0.85 对应批评者提示词中"轻微修改后即可发布"的区间。"""
 
     reflection_max_iterations: int = 2
-    """Hard cap on writer rewrites. Worst-case LLM budget per request
-    is ``max_iterations + 1`` critic calls plus ``max_iterations``
-    writer calls."""
+    """写作者重写次数的硬上限。每次请求最坏情况的 LLM 预算为 ``max_iterations + 1`` 次批评者调用加上 ``max_iterations``次写作者调用。"""
 
     default_recursion_limit: int = Field(
         default=50,
         ge=10,
         le=150,
         description=(
-            "Default LangGraph recursion limit applied when the client "
-            "does not specify one. The 6-specialist research supervisor "
-            "needs ~4 graph steps per specialist hand-off (transfer + "
-            "tool-call + tool-result + transfer-back), plus supervisor "
-            "planning and optional reflection (up to 5 extra steps). "
-            "25 (LangGraph's built-in default) is too low for complex "
-            "multi-specialist queries; 50 covers 6 specialists + "
-            "reflection with headroom."
+            "客户端未指定时应用的默认 LangGraph 递归限制。"
+            "6 个专家的研究主管每次专家切换需要约 4 个图步骤（转移 + 工具调用 + 工具结果 + 转移回），"
+            "加上主管规划和可选反思（最多 5 个额外步骤）。"
+            "25（LangGraph 内置默认值）对于复杂的多专家查询过低；50 可覆盖 6 个专家 + 反思并留有余量。"
         ),
     )
 
@@ -149,20 +131,15 @@ class Settings(BaseSettings):
         ge=0,
         le=86400,
         description=(
-            "Interval between SSE comment-free keep-alive DATA frames "
-            "on ``/api/supervisor/research/stream`` while the graph "
-            "is idle — keeps reverse proxies / CDNs from closing long "
-            "requests. Zero disables heartbeat."
+            "图空闲期间 ``/api/supervisor/research/stream`` 上 SSE 保活 DATA 帧的发送间隔 — 防止反向代理/CDN 关闭长连接请求。零值禁用心跳。"
         ),
     )
 
     checkpoint_sqlite_path: str = Field(
         default="data/langgraph_checkpoint.db",
         description=(
-            "When Postgres is unreachable at startup, LangGraph writes "
-            "checkpoints to this SQLite file (parent dirs are created). "
-            "Set to empty string to skip SQLite and fall back to "
-            "in-memory checkpoints only."
+            "启动时 Postgres 不可达时，LangGraph 将检查点写入此 SQLite 文件"
+            "（父目录会自动创建）。设为空字符串则跳过 SQLite，仅回退到内存检查点。"
         ),
     )
 
@@ -171,19 +148,15 @@ class Settings(BaseSettings):
         ge=5,
         le=300,
         description=(
-            "Timeout in seconds for each MCP tool-discovery call at "
-            "startup. If a subprocess takes longer than this to "
-            "enumerate its tools, that specialist is skipped."
+            "启动时每个 MCP 工具发现调用的超时时间（秒）。若子进程枚举工具耗时超过此值，则跳过该 specialist。"
         ),
     )
 
     memory_store_sqlite_path: str = Field(
         default="data/langgraph_memory_store.db",
         description=(
-            "When Postgres is unreachable at startup, long-term memory "
-            "(user preferences, research history) is persisted to this "
-            "SQLite file via AsyncSqliteStore. Set to empty string to "
-            "skip SQLite and fall back to InMemoryStore (non-persistent)."
+            "启动时 Postgres 不可达时，长期记忆（用户偏好、研究历史）通过 AsyncSqliteStore 持久化到此 SQLite 文件。"
+            "设为空字符串则跳过 SQLite，回退到 InMemoryStore（非持久化）。"
         ),
     )
 

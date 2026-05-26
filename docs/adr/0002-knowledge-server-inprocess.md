@@ -1,170 +1,135 @@
-# ADR 0002: Deliver `knowledge_expert` tools in-process, not over MCP stdio
+# ADR 0002: 以进程内方式交付 `knowledge_expert` 工具，而非通过 MCP stdio
 
-- **Status**: Accepted
-- **Date**: 2026-05-10
-- **Deciders**: research-agent maintainers
-- **Phase**: 4.6 (RAG closure)
-- **Supersedes**: the Phase-2 plan to wrap `knowledge_server` as an
-  MCP stdio subprocess identical to `fin_data_server`,
-  `pdf_report_server`, and `code_server`.
+- **状态**: Accepted
+- **日期**: 2026-05-10
+- **决策者**: research-agent 维护者
+- **阶段**: 4.6（RAG 收尾）
+- **取代**: Phase-2 中将 `knowledge_server` 包装为与 `fin_data_server`、
+  `pdf_report_server` 和 `code_server` 相同的 MCP stdio 子进程的计划。
 
-## Context
+## 背景
 
-The project's tool-delivery contract is **Model Context Protocol
-(MCP) over stdio**: each tool family (financial data, PDF reports,
-code execution, news, ...) is implemented as a `fastmcp` server,
-launched as a child process at FastAPI startup by
-`langchain_mcp_adapters.MultiServerMCPClient`. The supervisor never
-imports the tool implementation; it sees only the JSON-RPC envelope.
+项目的工具交付契约是 **Model Context Protocol (MCP) over stdio**：
+每个工具族（金融数据、PDF 报告、代码执行、新闻……）都实现为一个
+`fastmcp` 服务器，在 FastAPI 启动时由
+`langchain_mcp_adapters.MultiServerMCPClient` 作为子进程启动。
+Supervisor 从不导入工具实现；它只看到 JSON-RPC 信封。
 
-This pattern has three properties we want:
+这种模式具有我们想要的三个属性：
 
-1. **Strict tool/agent separation.** A tool crash cannot take down
-   the agent.
-2. **Language-agnostic tools.** A Node.js MCP server is as legitimate
-   as a Python one.
-3. **Hot-swap of tool implementations.** Replace `fin_data_server.py`
-   with a new version, and the agent picks it up on next launch
-   without code changes.
+1. **严格的工具/Agent 隔离。** 工具崩溃不会拖垮 Agent。
+2. **语言无关的工具。** Node.js MCP 服务器与 Python 服务器同样合法。
+3. **工具实现热替换。** 用新版本替换 `fin_data_server.py`，Agent
+   下次启动时即可感知，无需代码变更。
 
-The Phase-2 design therefore prescribed: implement `knowledge_server`
-as an MCP server too. This was straightforward to write — the file
-exists, decorated with `@mcp.tool()` — but in practice the
-`knowledge_server` subprocess hung intermittently on Windows.
-Diagnosis:
+因此 Phase-2 设计规定：也将 `knowledge_server` 实现为 MCP 服务器。
+这编写起来很简单 — 文件存在，用 `@mcp.tool()` 装饰 — 但实际上
+`knowledge_server` 子进程在 Windows 上间歇性卡死。诊断：
 
-- The hang was post-business-logic: the `_ingest` function ran to
-  completion, returned a `dict`, and `fastmcp` started serialising
-  the response to `stdout`. The parent never saw the response and
-  timed out at 90 s.
-- The root cause was a combination of (a) heavy ML imports in the
-  same process as the MCP transport (`sentence-transformers`,
-  `langchain_text_splitters`, originally `chromadb` — see
-  [ADR 0001](0001-faiss-over-chroma.md)) and (b) Windows' stdio
-  pipe behaviour with mixed buffered/unbuffered writes from native
-  C extensions and Python.
-- We attempted a low-level fix: a `_stdio_firewall.py` module that
-  ran at server import time, `dup`ed the original `stdout` fd,
-  redirected fd 1 to `NUL` to silence C-level writes, and routed
-  Python's `sys.stdout` back through the saved fd. This worked for
-  ChromaDB's daemon-thread chatter but did **not** prevent the
-  post-`_ingest` hang under FAISS — proving that more than one
-  layer in the stack was contributing.
+- 卡死发生在业务逻辑之后：`_ingest` 函数运行完成，返回一个 `dict`，
+  `fastmcp` 开始将响应序列化到 `stdout`。父进程从未看到响应，
+  在 90 秒后超时。
+- 根本原因是 (a) 与 MCP 传输在同一进程中的重量级 ML 导入
+  （`sentence-transformers`、`langchain_text_splitters`，最初还有
+  `chromadb` — 参见 [ADR 0001](0001-faiss-over-chroma.md)）和
+  (b) Windows 的 stdio 管道行为与来自原生 C 扩展和 Python 的
+  混合缓冲/非缓冲写入的结合。
+- 我们尝试了一个底层修复：一个 `_stdio_firewall.py` 模块在服务器
+  导入时运行，`dup` 原始 `stdout` fd，将 fd 1 重定向到 `NUL`
+  以静默 C 级别写入，并将 Python 的 `sys.stdout` 通过保存的 fd
+  重路由回来。这对 ChromaDB 的守护线程杂音有效，但**未能**防止
+  FAISS 下 `_ingest` 后的卡死 — 证明堆栈中不止一层在贡献。
 
-The same `knowledge_server.py` code, called **in-process** (no MCP
-subprocess, no stdio at all), executed `_ingest` + `_search` + `_list`
-+ `_delete` cleanly in well under the original timeout. We confirmed
-this with `_diag_ingest_inproc.py` (now removed).
+相同的 `knowledge_server.py` 代码，以**进程内**方式调用（无 MCP
+子进程、完全无 stdio），清洁地执行 `_ingest` + `_search` + `_list`
++ `_delete`，远在原始超时之内。我们通过 `_diag_ingest_inproc.py`
+（现已删除）确认了这一点。
 
-## Decision
+## 决策
 
-Expose the knowledge-base operations to the agent as **in-process
-LangChain `StructuredTool` instances**, not as MCP stdio tools.
+将知识库操作以**进程内 LangChain `StructuredTool` 实例**的形式暴露给
+Agent，而非 MCP stdio 工具。
 
-Mechanics:
+机制：
 
-- `src/research_agent/mcp_servers/knowledge_server.py` keeps its
-  `@mcp.tool()` decorators and stays an MCP server **on paper** —
-  the FastMCP entry point is preserved so the server is still
-  runnable as a subprocess when needed (e.g. from a non-Python
-  agent, or for protocol-conformance tests).
-- `src/research_agent/tools/knowledge_tools.py` is the
-  production-mode adapter: it imports `_ingest`, `_search`,
-  `_list_collections`, `_delete_collection` directly and wraps each
-  in a `StructuredTool.from_function`. These are what
-  `knowledge_expert` actually consumes at runtime.
-- `src/research_agent/mcp_servers/client_factory.py` exposes
-  `load_knowledge_tools_inproc()` — symmetric in shape with the
-  other `load_*_server_tools()` functions — so the FastAPI lifespan
-  treats the knowledge tools identically to the MCP-loaded ones at
-  the call site. Only the implementation differs.
+- `src/research_agent/mcp_servers/knowledge_server.py` 保留其
+  `@mcp.tool()` 装饰器，**名义上**仍是一个 MCP 服务器 — FastMCP
+  入口点被保留，因此当需要时（如从非 Python Agent 调用，或用于
+  协议一致性测试）仍可作为子进程运行。
+- `src/research_agent/tools/knowledge_tools.py` 是生产模式适配器：
+  它直接导入 `_ingest`、`_search`、`_list_collections`、
+  `_delete_collection`，并将每个包装在 `StructuredTool.from_function`
+  中。这些才是 `knowledge_expert` 在运行时实际消费的。
+- `src/research_agent/mcp_servers/client_factory.py` 暴露
+  `load_knowledge_tools_inproc()` — 与其他 `load_*_server_tools()`
+  函数形状对称 — 因此 FastAPI lifespan 在调用点对待知识库工具与
+  MCP 加载的工具完全一致。仅实现不同。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-1. **Run `knowledge_server` over MCP sse instead of stdio.**
-   FastMCP supports SSE transport, which would dodge the stdio
-   pipe issue. Rejected because:
-   - It adds a TCP port to the deployment (or a Unix domain
-     socket, which doesn't exist on Windows).
-   - It moves the failure mode from "subprocess hangs" to
-     "subprocess crashes; SSE client keeps the agent blocked
-     until heartbeat timeout".
-   - SSE transport is also less battle-tested in
-     `langchain_mcp_adapters` than stdio at the time of writing.
-2. **Spawn the MCP subprocess with `PYTHONUNBUFFERED=1` and
-   `sys.stdout.reconfigure(line_buffering=True)`.** Tried; reduced
-   but did not eliminate the hang on Windows under heavy ML
-   imports.
-3. **Move the heavy ML imports to a lazy path.** `_ingest` already
-   imports `sentence-transformers` and `langchain_text_splitters`
-   lazily inside the function. The hang happened **after**
-   `_ingest` returned, while writing the response, so lazy imports
-   didn't help.
-4. **Accept the timeout and add retry logic at the supervisor
-   level.** Rejected because retries waste embedding work
-   (sentence-transformers calls aren't cheap) and inflate latency.
-   Also masks the real problem.
-5. **Move ALL specialists in-process.** Tempting for symmetry but
-   loses the very property we want from MCP for the OTHER
-   specialists: `fin_data_server` calling `akshare` could legitimately
-   crash from an upstream API; isolation is valuable. We pay the
-   "two transports" cost only for the one specialist whose import
-   chain is incompatible with stdio.
+1. **通过 MCP SSE 而非 stdio 运行 `knowledge_server`。**
+   FastMCP 支持 SSE 传输，可以绕开 stdio 管道问题。否决原因：
+   - 它在部署中增加了一个 TCP 端口（或 Unix 域套接字，Windows
+     上不存在）。
+   - 它将故障模式从"子进程卡死"转变为"子进程崩溃；SSE 客户端
+     在心跳超时前一直阻塞 Agent"。
+   - 在撰写时，`langchain_mcp_adapters` 中 SSE 传输不如 stdio 成熟。
+2. **用 `PYTHONUNBUFFERED=1` 和
+   `sys.stdout.reconfigure(line_buffering=True)` 启动 MCP 子进程。**
+   已尝试；在重量级 ML 导入下 Windows 上减少但未消除卡死。
+3. **将重量级 ML 导入移到惰性路径。** `_ingest` 已经在函数内部
+   惰性导入 `sentence-transformers` 和 `langchain_text_splitters`。
+   卡死发生在 `_ingest` 返回**之后**，在写入响应时，因此惰性导入
+   无济于事。
+4. **接受超时并在 supervisor 级别添加重试逻辑。** 否决原因：重试
+   浪费嵌入工作（sentence-transformers 调用开销不低）并膨胀延迟。
+   同时掩盖了真正的问题。
+5. **将所有专家移到进程内。** 对称性很诱人，但会丢失我们从 MCP
+   对其他专家所期望的属性：`fin_data_server` 调用 akshare 时可能
+   因上游 API 而合法崩溃；隔离是有价值的。我们仅为这一个导入链
+   与 stdio 不兼容的专家承担"两种传输"成本。
 
-## Consequences
+## 后果
 
-### Positive
+### 正面
 
-- **Reliability.** Knowledge-base operations are deterministic
-  again. No more 90 s timeouts on Windows; no more "works on
-  Linux, hangs on my colleague's laptop".
-- **Faster cold start for knowledge calls.** No per-call subprocess
-  spin-up; the tools are method calls. Local benchmark: first
-  `knowledge_search` after server boot drops from ~3.2 s to ~0.4 s.
-- **Eager-import warm-up still works.** Top-of-module imports in
-  `knowledge_server.py` (FAISS, text splitter) front-load the
-  expensive initialisation at FastAPI startup so the first
-  `knowledge_ingest_pdf` call doesn't pay the cost. Originally
-  introduced to avoid the MCP-stdio deadlock, the eager imports
-  keep their value as a startup-warm-up mechanism.
-- **MCP protocol surface preserved.** The `@mcp.tool()` decorators
-  are intact, so the server can still be run as a stdio subprocess
-  by non-Python clients or in protocol-conformance tests. The
-  default Python agent path simply chooses the in-process adapter.
+- **可靠性。** 知识库操作再次具有确定性。不再有 Windows 上的 90 秒
+  超时；不再有"在 Linux 上正常，在同事笔记本上卡死"。
+- **知识库调用冷启动更快。** 无逐调用的子进程启动；工具即方法调用。
+  本地基准：服务器启动后首次 `knowledge_search` 从约 3.2 秒降至
+  约 0.4 秒。
+- **急切导入预热仍有效。** `knowledge_server.py` 顶部的模块级导入
+  （FAISS、文本分割器）将昂贵的初始化前置到 FastAPI 启动时，使首次
+  `knowledge_ingest_pdf` 调用不必承担该开销。最初引入是为了避免
+  MCP-stdio 死锁，急切导入作为启动预热机制保持其价值。
+- **MCP 协议表面保留。** `@mcp.tool()` 装饰器完好无损，因此服务器
+  仍可由非 Python 客户端或在协议一致性测试中作为 stdio 子进程运行。
+  默认的 Python Agent 路径只是选择了进程内适配器。
 
-### Negative
+### 负面
 
-- **Loss of crash isolation for knowledge tools.** An unhandled
-  exception in `_ingest` (e.g. a corrupted PDF causing pypdf to
-  raise inside the calling task) now lands inside the FastAPI
-  worker. We mitigate by wrapping every in-process tool function
-  with a defensive try/except that converts exceptions to
-  structured error returns — same contract as the MCP error
-  envelope.
-- **Two delivery modes to maintain.** The `knowledge_server.py`
-  file now serves two consumers: the MCP runtime (for protocol
-  conformance) and the in-process adapter (for the agent). Anything
-  the in-process path needs (lazy/eager imports, error wrapping)
-  has to remain compatible with the subprocess path. We document
-  this explicitly in the module docstring.
-- **Symmetry break in the explainer story.** When pitching the
-  architecture, "all six specialists are MCP-backed" was a clean
-  one-liner. The reality is now "five MCP, one in-process; here's
-  why, and here's how we kept the protocol surface intact". This
-  is a worse soundbite but more accurate.
+- **知识库工具失去了崩溃隔离。** `_ingest` 中未处理的异常（如损坏的
+  PDF 导致 pypdf 在调用任务内抛出异常）现在落在 FastAPI worker 内部。
+  我们通过用防御性 try/except 包装每个进程内工具函数来缓解 — 将异常
+  转换为结构化错误返回 — 与 MCP 错误信封的契约相同。
+- **需维护两种交付模式。** `knowledge_server.py` 文件现在服务两个
+  消费者：MCP 运行时（用于协议一致性）和进程内适配器（用于 Agent）。
+  进程内路径需要的任何东西（惰性/急切导入、错误包装）都必须与子进程
+  路径保持兼容。我们在模块文档字符串中明确记录了这一点。
+- **解释叙事中的对称性打破。** 在讲解架构时，"所有六个专家都由 MCP
+  支持"是一个清晰的一句话。现实是"五个 MCP、一个进程内；原因如下，
+  以及我们如何保持协议表面完整"。这是一个更差的表述，但更准确。
 
-### Neutral
+### 中性
 
-- The supervisor and the rest of the agent code are unaware of
-  the delivery mode. They consume `BaseTool` instances either way.
-- `knowledge_expert` still validates that the right tool family
-  was loaded (it rejects empty tool lists at build time) — the
-  contract is identical to other specialists.
+- Supervisor 和 Agent 代码的其余部分不感知交付模式。它们以任何方式
+  消费 `BaseTool` 实例。
+- `knowledge_expert` 仍在构建时验证正确的工具族已加载（它拒绝空的
+  工具列表）— 契约与其他专家完全相同。
 
-## Status
+## 状态
 
-Implemented in commit `<git rev-parse HEAD>` (Phase 4.6). All
-167 + 21 + 2 unit tests (regression + reflection + new wrapper
-tests) green on Windows + Python 3.13.13. Knowledge end-to-end
-flow (ingest → list → search → delete) verified via in-process
-test fixtures.
+在提交 `<git rev-parse HEAD>`（Phase 4.6）中实现。全部
+167 + 21 + 2 个单元测试（回归 + 反思 + 新包装器测试）在
+Windows + Python 3.13.13 上为绿色。知识库端到端流程
+（灌入 → 列举 → 搜索 → 删除）通过进程内测试固件验证。

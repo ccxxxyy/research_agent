@@ -1,10 +1,10 @@
-"""Unit tests for the Human-in-the-Loop (HITL) approve / resume flow.
+"""人机协作 (HITL) 审批/恢复流程的单元测试。
 
-Tests cover:
-  * SSE stream emitting ``review_requested`` when the graph is interrupted.
-  * ``POST /api/supervisor/research/{thread_id}/approve`` resuming the graph.
-  * ``POST /api/supervisor/research/{thread_id}/resume`` with revision feedback.
-  * 409 response when thread is not paused.
+测试覆盖：
+  * 当图被中断时，SSE 流发出 ``review_requested`` 事件。
+  * ``POST /api/supervisor/research/{thread_id}/approve`` 恢复图执行。
+  * ``POST /api/supervisor/research/{thread_id}/resume`` 携带修订反馈。
+  * 线程未暂停时返回 409 响应。
 """
 
 from __future__ import annotations
@@ -29,17 +29,15 @@ from langgraph.store.memory import InMemoryStore
 
 
 # ---------------------------------------------------------------------------
-# Fake graphs for HITL testing
+# 用于 HITL 测试的模拟图
 # ---------------------------------------------------------------------------
 
 
 class _FakeState:
-    """Minimal stand-in for a LangGraph StateSnapshot.
+    """LangGraph StateSnapshot 的最小替身。
 
-    Real ``StateSnapshot.values`` is always a dict (never ``None``).
-    Non-existent threads are signalled by ``aget_state`` returning
-    ``None``; completed threads have empty ``next`` but populated
-    ``values``; interrupted threads have a non-empty ``next``.
+    真实的 ``StateSnapshot.values`` 始终是 dict（不会为 ``None``）。 不存在的线程通过 ``aget_state`` 返回 ``None`` 来表示；
+    已完成的线程``next`` 为空但 ``values`` 有值；被中断的线程 ``next`` 非空。
     """
 
     def __init__(
@@ -56,10 +54,9 @@ class _FakeState:
 
 
 class _HITLStreamGraph:
-    """Simulates a graph that streams updates then gets interrupted.
+    """模拟一个流式输出更新后被中断的图。
 
-    ``astream`` yields scripted messages; ``aget_state`` reports the
-    graph as interrupted so the SSE layer emits ``review_requested``.
+    ``astream`` 产出预设的消息；``aget_state`` 报告图处于中断状态，使 SSE 层发出 ``review_requested``。
     """
 
     def __init__(self, scripted_messages: list[Any]) -> None:
@@ -84,7 +81,7 @@ class _HITLStreamGraph:
 
 
 class _HITLResumeGraph(_HITLStreamGraph):
-    """Extends _HITLStreamGraph with ``ainvoke`` for resume testing."""
+    """扩展 _HITLStreamGraph，添加 ``ainvoke`` 用于恢复测试。"""
 
     def __init__(
         self,
@@ -105,7 +102,7 @@ class _HITLResumeGraph(_HITLStreamGraph):
 
 
 class _CompletedGraph:
-    """A graph that is NOT interrupted — for testing the 409 path."""
+    """未被中断的图 — 用于测试 409 路径。"""
 
     async def aget_state(self, config: dict) -> _FakeState:
         return _FakeState(is_interrupted=False)
@@ -126,7 +123,7 @@ class _CompletedGraph:
 
 
 # ---------------------------------------------------------------------------
-# Test app builder
+# 测试应用构建器
 # ---------------------------------------------------------------------------
 
 
@@ -153,15 +150,14 @@ def _parse_sse(body: bytes) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# SSE review_requested emission
+# SSE review_requested 事件发送
 # ---------------------------------------------------------------------------
 
 
 class TestSSEReviewRequested:
     @pytest.mark.asyncio
     async def test_stream_emits_review_requested_when_interrupted(self) -> None:
-        """When the graph is interrupted, the SSE stream should emit
-        a ``review_requested`` event containing the draft."""
+        """当图被中断时，SSE 流应发出包含草稿内容的``review_requested`` 事件。"""
         graph = _HITLStreamGraph([
             AIMessage(
                 content="",
@@ -194,7 +190,7 @@ class TestSSEReviewRequested:
 
     @pytest.mark.asyncio
     async def test_stream_no_review_requested_when_not_interrupted(self) -> None:
-        """Normal completed graph should NOT emit review_requested."""
+        """正常完成的图不应发出 review_requested 事件。"""
         graph = _CompletedGraph()
         app = _build_hitl_app(graph)
 
@@ -212,7 +208,7 @@ class TestSSEReviewRequested:
 
 
 # ---------------------------------------------------------------------------
-# POST /approve
+# POST /approve 审批接口
 # ---------------------------------------------------------------------------
 
 
@@ -275,7 +271,7 @@ class TestApproveRoute:
 
 
 # ---------------------------------------------------------------------------
-# POST /resume
+# POST /resume 恢复接口
 # ---------------------------------------------------------------------------
 
 
@@ -337,12 +333,12 @@ class TestResumeRoute:
 
 
 # ---------------------------------------------------------------------------
-# Thread-state error classification (P1-C)
+# 线程状态错误分类 (P1-C)
 # ---------------------------------------------------------------------------
 
 
 class _AbsentThreadGraph:
-    """``aget_state`` returns ``None`` — thread does not exist."""
+    """``aget_state`` 返回 ``None`` — 线程不存在。"""
 
     async def aget_state(self, config: dict) -> None:
         return None
@@ -352,11 +348,9 @@ class _AbsentThreadGraph:
 
 
 class _EmptyStateGraph:
-    """``aget_state`` returns a state with no ``next`` AND empty values.
+    """``aget_state`` 返回一个 ``next`` 为空且 values 也为空的状态。
 
-    LangGraph's PostgresStore / SqliteStore can technically return an
-    empty snapshot for an unknown thread_id (depending on backend
-    semantics) instead of ``None``. We treat that as "does not exist".
+    LangGraph 的 PostgresStore / SqliteStore 对于未知的 thread_id可能返回空快照（取决于后端语义）而非 ``None``。将此视为"不存在"。
     """
 
     async def aget_state(self, config: dict) -> _FakeState:
@@ -367,7 +361,7 @@ class _EmptyStateGraph:
 
 
 class _CheckpointerFailingGraph:
-    """``aget_state`` raises — emulates DB / checkpointer failure."""
+    """``aget_state`` 抛出异常 — 模拟数据库 / checkpointer 故障。"""
 
     async def aget_state(self, config: dict):
         raise RuntimeError("checkpointer DB unreachable")
@@ -377,7 +371,7 @@ class _CheckpointerFailingGraph:
 
 
 class TestThreadStateErrorMatrix:
-    """Verify ``_verify_thread_interrupted`` produces the right status code."""
+    """验证 ``_verify_thread_interrupted`` 产生正确的状态码。"""
 
     @pytest.mark.asyncio
     async def test_approve_404_when_thread_does_not_exist(self) -> None:
@@ -395,7 +389,7 @@ class TestThreadStateErrorMatrix:
 
     @pytest.mark.asyncio
     async def test_approve_404_when_state_is_empty(self) -> None:
-        """Empty state (no next, no values) is treated as non-existent."""
+        """空状态（无 next、无 values）被视为不存在。"""
         graph = _EmptyStateGraph()
         app = _build_hitl_app(graph)
         async with AsyncClient(
@@ -423,8 +417,7 @@ class TestThreadStateErrorMatrix:
 
     @pytest.mark.asyncio
     async def test_resume_409_message_says_completed(self) -> None:
-        """Existing but terminated thread should report 409 with a
-        message that clarifies the thread isn't gone, just done."""
+        """已存在但已终止的线程应返回 409，并在消息中说明线程并非不存在，只是已完成。"""
         graph = _CompletedGraph()
         app = _build_hitl_app(graph)
         async with AsyncClient(

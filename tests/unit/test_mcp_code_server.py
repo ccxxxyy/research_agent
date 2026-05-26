@@ -1,26 +1,18 @@
-"""Phase-3: MCP ``code_server`` independent round-trip tests.
+"""Phase-3：MCP ``code_server`` 独立往返测试。
 
-Why these tests matter
+为什么这些测试很重要
 ----------------------
-Unlike ``echo_server`` (which has no real logic to validate), the
-``code_server`` carries the actual sandboxing contract that
-``coder_expert`` — and in Phase 4 the financial analyst — will rely
-on. If the sandbox silently lets through ``open(...)``, or if an
-exception does NOT surface as a structured ``error`` field, every
-downstream agent will misbehave.
+与 ``echo_server``（没有实际逻辑需要验证）不同，``code_server``承载着 ``coder_expert``（以及金融分析师）所依赖的实际沙箱契约。
+如果沙箱静默放行 ``open(...)``，或者异常未能以结构化的``error`` 字段呈现，所有下游 Agent 都会出现异常行为。
 
-These tests therefore cover four independent guarantees:
+因此这些测试覆盖四项独立保证：
 
-1. Tool discovery: the MCP client sees ``code_execute_python``.
-2. Happy path: stdout capture + ``result`` binding both work.
-3. Sandbox denial: names outside the whitelist raise ``NameError``
-   (checked for ``open`` and ``__import__``).
-4. Runtime error capture: raising inside user code produces
-   ``error`` rather than crashing the subprocess.
+1. 工具发现：MCP 客户端能看到 ``code_execute_python``。
+2. 正常路径：stdout 捕获和 ``result`` 绑定均正常工作。
+3. 沙箱拒绝：不在白名单中的名称抛出 ``NameError``（针对 ``open`` 和 ``__import__`` 进行检查）。
+4. 运行时错误捕获：用户代码中的异常以 ``error`` 形式返回， 而非导致子进程崩溃。
 
-All tests spawn a real MCP subprocess via stdio — the same code path
-used by the ``coder_expert`` specialist at runtime — so a pass here
-means the full pipeline is wired correctly.
+所有测试通过 stdio 启动真实的 MCP 子进程——与 ``coder_expert``专家在运行时使用的代码路径相同——因此测试通过意味着整个流水线连接正确。
 """
 
 from __future__ import annotations
@@ -38,14 +30,14 @@ CODE_TOOL_NAME = "code_execute_python"
 
 
 def _parse_execute_result(raw: object) -> dict:
-    """Decode the JSON payload wrapped in the MCP content block."""
+    """解码 MCP 内容块中包装的 JSON 载荷。"""
     text = extract_text_content(raw)
     return json.loads(text)
 
 
 @pytest.mark.asyncio
 async def test_tool_is_discoverable() -> None:
-    """MCP handshake succeeds and the expected tool is advertised."""
+    """MCP 握手成功且预期工具已被发布。"""
     tools = await load_code_server_tools()
     names = {t.name for t in tools}
     assert CODE_TOOL_NAME in names, (
@@ -55,7 +47,7 @@ async def test_tool_is_discoverable() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_python_stdout_and_return_value() -> None:
-    """A trivial script roundtrips both ``stdout`` and ``result``."""
+    """一个简单脚本同时完成 ``stdout`` 和 ``result`` 的往返验证。"""
     tools = await load_code_server_tools()
     tool = next(t for t in tools if t.name == CODE_TOOL_NAME)
 
@@ -70,8 +62,7 @@ async def test_execute_python_stdout_and_return_value() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_python_captures_runtime_error() -> None:
-    """An exception inside user code must be returned as ``error``,
-    not raised to the caller."""
+    """用户代码中的异常必须以 ``error`` 形式返回，而非向调用者抛出异常。"""
     tools = await load_code_server_tools()
     tool = next(t for t in tools if t.name == CODE_TOOL_NAME)
 
@@ -86,7 +77,7 @@ async def test_execute_python_captures_runtime_error() -> None:
 
 @pytest.mark.asyncio
 async def test_sandbox_blocks_open_builtin() -> None:
-    """``open`` is not in the safe-globals whitelist → NameError."""
+    """``open`` 不在安全全局变量白名单中 → NameError。"""
     tools = await load_code_server_tools()
     tool = next(t for t in tools if t.name == CODE_TOOL_NAME)
 
@@ -101,7 +92,7 @@ async def test_sandbox_blocks_open_builtin() -> None:
 
 @pytest.mark.asyncio
 async def test_sandbox_blocks_dunder_import() -> None:
-    """``__import__`` is also denied by the minimal safe-globals."""
+    """``__import__`` 同样被最小安全全局变量所拒绝。"""
     tools = await load_code_server_tools()
     tool = next(t for t in tools if t.name == CODE_TOOL_NAME)
 
@@ -115,7 +106,7 @@ async def test_sandbox_blocks_dunder_import() -> None:
 
 @pytest.mark.asyncio
 async def test_preimported_math_module_available() -> None:
-    """``math`` is pre-injected into safe globals for numeric work."""
+    """``math`` 已预注入到安全全局变量中以支持数值计算。"""
     tools = await load_code_server_tools()
     tool = next(t for t in tools if t.name == CODE_TOOL_NAME)
 

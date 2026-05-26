@@ -1,20 +1,15 @@
-"""Unit tests for the Postgres reachability probe.
+"""Postgres 可达性探针的单元测试。
 
-Why test this
+为什么要测试
 -------------
-A regression that re-introduces the eager ``ConnectionPool`` would
-re-introduce the symptom we solved: a missing Postgres at dev/test
-time hangs the lifespan and the HTTP handlers. Locking the probe's
-contract makes that regression cheap to catch.
+如果回归性地重新引入了急切的 ``ConnectionPool``，就会重新引入已解决的症状：开发/测试时缺少 Postgres 会挂起 lifespan和 HTTP 处理器。锁定探针的契约使此类回归易于发现。
 
-We do NOT spin up a real Postgres in these tests. Instead we point
-the probe at:
-  * an explicitly closed loopback port (refused TCP)
-  * a non-routable RFC-5737 address (timeout, not refused)
-  * a port we are actively listening on (success)
+这些测试不启动真实 Postgres。而是将探针指向：
+  * 显式关闭的回环端口（TCP 拒绝连接）
+  * 不可路由的 RFC-5737 地址（超时而非拒绝）
+  * 正在监听的端口（成功）
 
-The third case uses an ephemeral ``socket.bind((127.0.0.1, 0))`` so
-the test cannot collide with anything else on the host.
+第三种情况使用临时 ``socket.bind((127.0.0.1, 0))``，因此测试不会与主机上的任何其他服务冲突。
 """
 
 from __future__ import annotations
@@ -31,11 +26,9 @@ from research_agent.memory._pg_reachability import (
 
 @contextmanager
 def _listening_socket() -> Iterator[int]:
-    """Yield a random free TCP port that has a real listener attached.
+    """yield 一个附带真实监听器的随机空闲 TCP 端口。
 
-    We bind, listen with backlog=1, and yield the port. The socket
-    stays open for the duration of the test so the probe will see
-    a SYN-ACK rather than a RST.
+    绑定、以 backlog=1 监听并 yield 该端口。socket 在测试期间保持打开，因此探针会看到 SYN-ACK 而非 RST。
     """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind(("127.0.0.1", 0))
@@ -66,8 +59,8 @@ class TestParseHostPort:
         assert _parse_host_port("") is None
 
     def test_no_host_returns_none(self) -> None:
-        # ``postgresql:///dbname`` is libpq's "use Unix socket"
-        # syntax — no TCP host to probe, so we deliberately punt.
+        # ``postgresql:///dbname`` 是 libpq 的"使用 Unix socket"
+        # 语法 — 无 TCP 主机可探测，因此我们有意跳过。
         assert _parse_host_port("postgresql:///mydb") is None
 
 
@@ -81,17 +74,14 @@ class TestIsPostgresReachable:
             assert is_postgres_reachable(uri) is True
 
     def test_closed_loopback_port_returns_false(self) -> None:
-        # Port 1 is the TCPMUX well-known port and is essentially
-        # never listening on a developer machine. Using a port we
-        # *expect* to be closed gives us a deterministic ECONNREFUSED.
+        # 端口 1 是 TCPMUX 知名端口，开发机器上基本不会监听。
+        # 使用一个我们*预期*已关闭的端口可获得确定性的 ECONNREFUSED。
         uri = "postgresql://u:p@127.0.0.1:1/x"
         assert is_postgres_reachable(uri, timeout_s=0.5) is False
 
     def test_unroutable_address_times_out_quickly(self) -> None:
-        """RFC-5737 documentation block 192.0.2.0/24 is guaranteed
-        not to route on the public Internet. The probe should
-        return False *within* the configured timeout, proving the
-        fast-fail behavior callers depend on."""
+        """RFC-5737 文档块 192.0.2.0/24 保证不会在公网路由。
+        探针应在配置的超时时间内返回 False，证明调用者所依赖的快速失败行为。"""
         import time
 
         uri = "postgresql://u:p@192.0.2.1:5432/x"
@@ -100,6 +90,5 @@ class TestIsPostgresReachable:
         elapsed = time.monotonic() - start
 
         assert result is False
-        # Allow generous slack for slow CI; the point is "well below
-        # the 30-second default that ConnectionPool would block on".
+        # 为慢速 CI 留出充裕余量；关键是"远低于 ConnectionPool 会阻塞的 30 秒默认值"。
         assert elapsed < 2.0, f"probe took {elapsed:.2f}s, expected <2s"

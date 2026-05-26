@@ -1,4 +1,4 @@
-"""Unit tests for rag.query_rewriter — QueryRewriter."""
+"""rag.query_rewriter 单元测试 — QueryRewriter。"""
 
 from __future__ import annotations
 

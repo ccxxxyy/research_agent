@@ -1,4 +1,4 @@
-"""Unit tests — config.py model defaults and LLMConfig shape."""
+"""单元测试 — config.py 模型默认值和 LLMConfig 形状。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from research_agent.config import LLMConfig
 
 
 def _make_llm_cfg() -> LLMConfig:
-    """Hermetic LLMConfig so the developer's `.env` does not leak in."""
+    """密封的 LLMConfig，防止开发者的 `.env` 泄漏进来。"""
     return LLMConfig(
         _env_file=None,  # type: ignore[arg-type]
         openai_api_key="x",
@@ -17,7 +17,7 @@ def _make_llm_cfg() -> LLMConfig:
 class TestLLMConfigDefaults:
     def test_default_light_model(self) -> None:
         cfg = _make_llm_cfg()
-        assert cfg.light_model == "qwen3-max-2026-01-23"
+        assert cfg.light_model == "deepseek-v4-flash"
 
     def test_default_medium_model(self) -> None:
         cfg = _make_llm_cfg()

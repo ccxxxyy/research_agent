@@ -1,15 +1,10 @@
-"""Agent definitions — system prompts, tools, model tiers, and builders.
+"""Agent 定义 — system prompt、工具、模型层级与构建器。
 
-Two layers are exported:
+导出两层内容：
 
-1. The Phase-1 generic ``AgentConfig`` / ``build_agent`` pair, used by
-   the original node-based research graph (``graph/supervisor.py``).
-2. The Phase-3/4 specialist builders consumed by the supervisor
-   graphs (``graph/minimal_supervisor.py`` and
-   ``graph/research_supervisor.py``). Re-exporting them here means
-   downstream code never has to spell out
-   ``research_agent.agents.specialists`` — a small ergonomic win that
-   keeps the supervisor wiring readable.
+1. 通用的 ``AgentConfig`` / ``build_agent`` 组合，供原始的基于节点的研究图（``graph/supervisor.py``）使用。
+2. 专家构建器，供 supervisor 图（``graph/minimal_supervisor.py`` 和``graph/research_supervisor.py``）消费。
+    在此处重新导出意味着下游代码无需拼写完整路径``research_agent.agents.specialists`` — 一个小的易用性改进，使 supervisor 的接线代码更具可读性。
 """
 
 from research_agent.agents.base import AgentConfig, build_agent

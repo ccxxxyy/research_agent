@@ -1,45 +1,30 @@
-"""Phase-4.4 end-to-end demo — research supervisor over real MCP tools.
+"""Phase-4.4 端到端演示 — 研究 supervisor 调度真实 MCP 工具。
 
-This script is the **production flow-of-the-day**: it spawns the two
-MCP subprocesses that matter for A-share research (``fin_data_server``
-and ``pdf_report_server``) plus the sandboxed ``code_server``, wires
-their tools into the three Phase-4 specialists, compiles the
-research supervisor, and then sends the graph a composite research
-question that is deliberately crafted to exercise multi-specialist
-routing.
+本脚本是 **日常生产流程**：它启动两个与 A 股研究相关的 MCP 子进程（``fin_data_server`` 和 ``pdf_report_server``）以及沙箱化的``code_server``，
+将它们的工具接入三个专家，编译研究supervisor，然后向图发送一个复合研究问题，该问题经过精心设计以测试多专家路由。
 
-Run::
+运行::
 
     uv run python scripts/demo_financial_research.py
 
-Requirements:
-  - Network access (akshare → 东财/新浪, and cninfo for disclosures).
-  - A working LLM config in ``.env`` (same file used by Phase-1 / 3 smoke).
+前置条件:
+  - 网络连接（akshare → 东财/新浪，cninfo 获取披露）。
+  - ``.env`` 中已配置可用的 LLM（与 Phase-1 / 3 冒烟测试相同）。
 
-Exit codes:
-    0 → supervisor produced a final answer that passes soft sanity
-        checks.
-    1 → any configuration / MCP / LLM error, or the supervisor failed
-        to route to the expected specialists.
+退出码:
+    0 → supervisor 的最终回答通过了宽松合理性校验。
+    1 → 任何配置 / MCP / LLM 错误，或 supervisor 未路由到预期的专家。
 
-Soft checks (intentionally lenient — we do NOT pin exact LLM wording):
-  * final answer is non-empty
-  * final answer references the company (name or ticker)
-  * supervisor issued ``transfer_to_data_expert`` AND
-    ``transfer_to_report_expert`` at least once each (verifying that
-    routing reached both MCP-backed specialists, not just one).
+宽松校验（故意不固定 LLM 措辞）：
+  * 最终回答非空
+  * 最终回答引用了目标公司（名称或代码）
+  * supervisor 至少各发出一次 ``transfer_to_data_expert`` 和 ``transfer_to_report_expert``（验证路由到达了两个 MCP 支持的专家，而非只到达一个）。
 
-Why we DON'T check for ``fin_*`` / ``pdf_*`` calls directly
-----------------------------------------------------------
-``build_research_supervisor`` compiles with ``output_mode="last_message"``,
-which is the right production setting (compact state, cheap token
-usage). A consequence is that each specialist's *internal*
-``ToolMessage``/``AIMessage`` traffic stays inside its own subgraph
-and never appears in the parent ``result["messages"]`` — only the
-specialist's final summary message bubbles up, along with the
-supervisor's ``transfer_to_*`` hand-off records. So we verify
-routing via the hand-off records and verify correctness via the
-content of the final answer.
+为何 **不** 直接检查 ``fin_*`` / ``pdf_*`` 调用
+------------------------------------------------
+``build_research_supervisor`` 使用``output_mode="last_message"`` 编译，这是正确的生产设置（紧凑状态、低 token 开销）。
+其结果是每个专家的 *内部*``ToolMessage``/``AIMessage`` 通信保留在其子图中，
+不会出现在父级 ``result["messages"]`` 里 — 只有专家的最终摘要消息和supervisor 的 ``transfer_to_*`` 移交记录会冒泡上来。因此通过移交记录验证路由，通过最终回答内容验证正确性。
 """
 
 from __future__ import annotations
@@ -64,12 +49,11 @@ from research_agent.mcp_servers.client_factory import (
 COMPANY_NAME = "宁德时代"
 COMPANY_TICKER = "300750"
 
-# A composite prompt that forces multi-hop routing:
-#   data_expert   → basic info + recent price
-#   report_expert → most recent annual/quarterly disclosure & key excerpt
-#   coder_expert  → (optional) simple derived stat
-# We DO NOT tell the supervisor which specialist to use; the whole
-# point of the demo is that it plans the hand-offs itself.
+# 复合提示词，强制多跳路由：
+#   data_expert   → 基本信息 + 近期价格
+#   report_expert → 最近年报/季报披露及关键摘录
+#   coder_expert  → （可选）简单衍生统计
+# 不告诉 supervisor 使用哪个专家；要点正是让它自行规划移交。
 QUESTION = (
     f"我想快速了解 {COMPANY_NAME}（股票代码 {COMPANY_TICKER}）最新的基本面与披露信息。\n"
     "请完成以下三件事，并在最终答复中用小标题区分：\n"
@@ -85,7 +69,7 @@ QUESTION = (
 
 
 def _last_plain_assistant(messages: list) -> str:
-    """Return the last assistant message that is NOT a tool call."""
+    """返回最后一条非工具调用的 assistant 消息。"""
     for m in reversed(messages):
         if isinstance(m, AIMessage):
             tc = getattr(m, "tool_calls", None) or []
@@ -95,16 +79,13 @@ def _last_plain_assistant(messages: list) -> str:
 
 
 def _trace_tool_calls(messages: list) -> list[str]:
-    """Collect every tool name observable in the outer supervisor state.
+    """收集外层 supervisor 状态中可观测到的所有工具名称。
 
-    With ``output_mode="last_message"``, only the supervisor's own
-    ``transfer_to_*`` calls appear here — specialists' internal MCP
-    tool calls stay inside their subgraphs.
+    使用 ``output_mode="last_message"`` 时，此处只会出现supervisor 自身的 ``transfer_to_*`` 调用 — 专家内部的 MCP 工具调用保留在其子图中。
 
-    Each ``transfer_to_*`` hand-off typically produces TWO entries:
-      * an ``AIMessage.tool_calls`` record from the supervisor,
-      * a ``ToolMessage`` response echoing the same name.
-    We collect both without deduping; callers can count or ``set()``.
+    每个 ``transfer_to_*`` 移交通常产生 **两条** 记录：
+      * supervisor 的 ``AIMessage.tool_calls`` 记录，
+      * 回声的 ``ToolMessage`` 响应。两者均保留不去重；调用方可自行计数或 ``set()``。
     """
     names: list[str] = []
     for m in messages:
@@ -121,12 +102,9 @@ def _trace_tool_calls(messages: list) -> list[str]:
 
 
 def _transfers_reached(calls: list[str]) -> set[str]:
-    """Return the set of distinct specialists the supervisor routed to.
+    """返回 supervisor 路由到的不同专家集合。
 
-    ``transfer_back_to_supervisor`` (automatically injected by
-    ``langgraph_supervisor``) is intentionally stripped — we care
-    about which specialists were *invoked*, not how many times the
-    supervisor regained control.
+    ``transfer_back_to_supervisor``（由 ``langgraph_supervisor``自动注入）被故意排除 — 我们关心的是哪些专家被 *调用* 了，而非 supervisor 重获控制了多少次。
     """
     reached: set[str] = set()
     for n in calls:
@@ -136,11 +114,9 @@ def _transfers_reached(calls: list[str]) -> set[str]:
 
 
 async def _load_all_tools() -> dict[str, Any]:
-    """Spawn the three MCP servers in parallel and collect their tools.
+    """并行启动三个 MCP 服务器并收集其工具。
 
-    Running the three loads concurrently shaves roughly 1 second off
-    cold-start. Each call to ``load_*_tools`` spawns its own
-    subprocess; the subprocesses are independent.
+    并发运行三个加载器可在冷启动时节省约 1 秒。每次调用``load_*_tools`` 都会启动独立的子进程。
     """
     data_tools, report_tools, coder_tools = await asyncio.gather(
         load_fin_data_server_tools(),
@@ -177,10 +153,10 @@ async def main() -> int:
     try:
         result = await graph.ainvoke(
             {"messages": [HumanMessage(content=QUESTION)]},
-            # Recursion-limit budget:
-            #   supervisor plans (≥3 hand-offs) + each specialist's
-            #   ReAct loop (≤4 tool calls) + supervisor synthesis.
-            # 50 is comfortable headroom.
+            # 递归预算：
+            #   supervisor 规划（≥3 次移交）+ 每个专家的
+            #   ReAct 循环（≤4 次工具调用）+ supervisor 综合。
+            # 50 是舒适的余量。
             config={"recursion_limit": 50},
         )
     except Exception as exc:  # noqa: BLE001
@@ -192,27 +168,27 @@ async def main() -> int:
     calls = _trace_tool_calls(messages)
     reached = _transfers_reached(calls)
 
-    print("\n=== Final supervisor answer ===\n")
-    print(final if final else "<empty>")
-    print("\n=== Trace summary ===")
-    print(f"  total messages        : {len(messages)}")
-    print(f"  specialists reached   : {sorted(reached) or ['<none>']}")
-    print(f"  total tool-name events: {len(calls)}")
+    print("\n=== Supervisor 最终回答 ===\n")
+    print(final if final else "<空>")
+    print("\n=== 跟踪摘要 ===")
+    print(f"  消息总数          : {len(messages)}")
+    print(f"  已到达的专家      : {sorted(reached) or ['<无>']}")
+    print(f"  工具调用事件总数  : {len(calls)}")
 
-    print("\n=== Heuristic verification ===")
+    print("\n=== 启发式校验 ===")
     ok_answer = bool(final.strip())
     ok_subject = (COMPANY_NAME in final) or (COMPANY_TICKER in final)
     ok_data = "data_expert" in reached
     ok_report = "report_expert" in reached
-    print(f"  non-empty final answer      : {ok_answer}")
-    print(f"  company mentioned in answer : {ok_subject}")
-    print(f"  data_expert was routed to   : {ok_data}")
-    print(f"  report_expert was routed to : {ok_report}")
+    print(f"  最终回答非空              : {ok_answer}")
+    print(f"  回答中提及目标公司        : {ok_subject}")
+    print(f"  已路由到 data_expert      : {ok_data}")
+    print(f"  已路由到 report_expert    : {ok_report}")
 
     if ok_answer and ok_subject and ok_data and ok_report:
-        print("\n  [PASS] Supervisor routed to data_expert + report_expert.")
+        print("\n  [PASS] Supervisor 路由到了 data_expert + report_expert。")
         return 0
-    print("\n  [WARN] Heuristic checks failed — inspect trace above.")
+    print("\n  [WARN] 启发式校验失败 — 请检查上方跟踪信息。")
     return 1
 
 

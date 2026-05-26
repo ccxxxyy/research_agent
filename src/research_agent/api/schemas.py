@@ -1,4 +1,4 @@
-"""Pydantic request/response schemas for all API endpoints."""
+"""所有 API 端点的 Pydantic 请求/响应模型。"""
 
 from __future__ import annotations
 
@@ -8,22 +8,22 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-# ---------- Supervisor (minimal) ----------
+# ---------- Supervisor（最小化版） ----------
 
 
 class SupervisorChatRequest(BaseModel):
-    """Request body for the minimal multi-agent supervisor."""
+    """最小化多 Agent supervisor 的请求体。"""
 
     message: str = Field(..., min_length=1, max_length=4000)
     thread_id: str | None = Field(
         None,
-        description="Conversation thread; omit to start a new isolated session.",
+        description="会话线程；省略则开启新的独立会话。",
     )
     recursion_limit: int | None = Field(
         None,
         ge=4,
         le=50,
-        description="Optional LangGraph recursion cap (defaults to framework default).",
+        description="可选的 LangGraph 递归上限（默认使用框架默认值）。",
     )
 
 
@@ -33,38 +33,35 @@ class SupervisorChatResponse(BaseModel):
     message_count: int = 0
 
 
-# ---------- Research Supervisor (Phase 4.5) ----------
+# ---------- 研究 Supervisor----------
 
 
 class ResearchSupervisorRequest(BaseModel):
-    """Request body for the financial-research supervisor.
+    """金融研究 supervisor 的请求体。
 
-    Accepts a free-form Chinese or English question. The supervisor
-    decides internally which specialists (``data_expert``,
-    ``report_expert``, ``coder_expert``) to route the subtasks to.
+    接受自由格式的中文或英文问题。supervisor 内部决定将子任务路由到哪些 specialist（``data_expert``、``report_expert``、``coder_expert``）。
     """
 
     query: str = Field(
         ...,
         min_length=1,
         max_length=4000,
-        description="Natural-language research question.",
+        description="自然语言研究问题。",
     )
     user_id: str = Field(
         default="anonymous",
         min_length=1,
         max_length=64,
         description=(
-            "User identifier for long-term memory isolation. "
-            "Omit for anonymous (no cross-session persistence)."
+            "用于长期记忆隔离的用户标识。省略则为匿名"
+            "（无跨会话持久化）。"
         ),
     )
     thread_id: str | None = Field(
         None,
         description=(
-            "Conversation thread; omit to start a new isolated "
-            "session. Reusing the same thread_id across calls "
-            "resumes the prior conversation from its checkpoint."
+            "会话线程；省略则开启新的独立会话。跨调用复用同一"
+            " thread_id 可从检查点恢复之前的对话。"
         ),
     )
     recursion_limit: int | None = Field(
@@ -72,56 +69,43 @@ class ResearchSupervisorRequest(BaseModel):
         ge=4,
         le=80,
         description=(
-            "Optional LangGraph recursion cap. The default (framework "
-            "value of 25) is already generous for 3-specialist routes; "
-            "raise only if you need >5 sequential hand-offs."
+            "可选的 LangGraph 递归上限。默认值（框架值 25）对 3 个 specialist"
+            " 路由已足够宽裕；仅在需要 >5 次连续交接时提高。"
         ),
     )
 
 
 class ResearchSupervisorResponse(BaseModel):
-    """JSON response for the non-streaming research endpoint.
+    """非流式研究端点的 JSON 响应。
 
-    ``specialists_reached`` is derived from the outer-state
-    ``transfer_to_*`` hand-off trace. Because the graph compiles with
-    ``output_mode="last_message"``, specialists' internal
-    ``fin_*``/``pdf_*``/``code_*`` tool calls stay inside their
-    subgraphs and are NOT surfaced here; the reply content itself is
-    the canonical evidence that specialists did their work.
+    ``specialists_reached`` 来源于外层状态的 ``transfer_to_*`` 交接轨迹。
+    由于图编译时使用 ``output_mode="last_message"``，specialist 内部的``fin_*``/``pdf_*``/``code_*`` 工具调用停留在其子图中，不会暴露于此；
+    回复内容本身就是 specialist 完成工作的权威证据。
     """
 
-    reply: str = Field(..., description="Final supervisor answer.")
+    reply: str = Field(..., description="Supervisor 的最终回答。")
     thread_id: str
     specialists_reached: list[str] = Field(
         default_factory=list,
-        description="Distinct specialists the supervisor routed to.",
+        description="Supervisor 路由到的不同 specialist 列表。",
     )
     message_count: int = 0
 
 
 class ResearchSupervisorSSEPhase(str, Enum):
-    """Phase tags for SSE events emitted during streaming.
+    """流式传输期间发出的 SSE 事件阶段标签。
 
-    * ``handoff``           — supervisor called ``transfer_to_<specialist>``.
-    * ``update``            — a node produced a state update (specialist or
-                              supervisor). Content is the most recent
-                              assistant message from that update, truncated.
-    * ``final``             — the supervisor produced its final user-visible
-                              answer. Full content included.
-    * ``review_requested``  — HITL interrupt: the graph paused for human
-                              review. Content is the draft; metadata
-                              carries ``thread_id`` and
-                              ``action_required``.
-    * ``tool_call``         — a specialist called one of its MCP tools.
-                              ``metadata.specialist`` identifies the agent;
-                              ``metadata.tool`` names the tool;
-                              ``content`` has a short args preview.
-    * ``error``             — graph invocation raised. Content is the short
-                              error message; the client should stop consuming.
-    * ``heartbeat``         — synthetic keep-alive emitted when no graph news
-                              has arrived within the configured idle window
-                              so reverse proxies retain the SSE connection.
-    * ``done``              — stream terminator. Always emitted last.
+    * ``handoff``           — supervisor 调用了 ``transfer_to_<specialist>``。
+    * ``update``            — 某节点产生了状态更新（specialist 或 supervisor）。内容为该更新中最新的 assistant 消息（已截断）。
+    * ``final``             — supervisor 产生了最终面向用户的回答。包含完整内容。
+    * ``review_requested``  — HITL 中断：图暂停等待人工审核。内容为草稿；metadata 携带 ``thread_id`` 和 ``action_required``。
+    * ``tool_call``         — specialist 调用了其 MCP 工具之一。
+                              ``metadata.specialist`` 标识 Agent；
+                              ``metadata.tool`` 为工具名称；
+                              ``content`` 为参数的简短预览。
+    * ``error``             — 图调用抛出异常。内容为简短错误消息；客户端应停止消费。
+    * ``heartbeat``         — 合成保活事件，当图在配置的空闲窗口内无新消息时发出，以便反向代理保持 SSE 连接。
+    * ``done``              — 流终止符。始终最后发出。
     """
 
     HANDOFF = "handoff"
@@ -135,19 +119,19 @@ class ResearchSupervisorSSEPhase(str, Enum):
 
 
 class ResearchSupervisorSSEEvent(BaseModel):
-    """Single SSE event payload for research-supervisor streaming."""
+    """研究 supervisor 流式传输的单条 SSE 事件负载。"""
 
     phase: ResearchSupervisorSSEPhase
     node: str = Field(
         "",
-        description="Graph node that produced the update (e.g. supervisor / data_expert).",
+        description="产生该更新的图节点（如 supervisor / data_expert）。",
     )
     content: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 
-# ---------- Health ----------
+# ---------- 健康检查 ----------
 
 class HealthResponse(BaseModel):
     status: str = "ok"
@@ -155,36 +139,32 @@ class HealthResponse(BaseModel):
     services: dict[str, str] = {}
 
 
-# ---------- Resume / Approve (HITL) ----------
+# ---------- 恢复 / 批准（HITL）----------
 
 
 class ApproveRequest(BaseModel):
-    """Approve a HITL-paused research draft and resume execution.
+    """批准 HITL 暂停的研究草稿并恢复执行。
 
-    If ``feedback`` is non-empty, it is injected as a
-    ``HumanMessage`` so downstream nodes (reflection / writer) can
-    incorporate the reviewer's notes.  An empty feedback string
-    means "ship the draft as-is".
+    若 ``feedback`` 非空，会作为 ``HumanMessage`` 注入，使下游节点（反思/写作者）可以纳入审阅者的意见。空字符串表示"照原样发布"。
     """
 
     feedback: str = Field(
         default="",
         max_length=4000,
-        description="Optional refinement notes; empty = approve as-is.",
+        description="可选的修改意见；空值 = 照原样批准。",
     )
 
 
 class ResumeRequest(BaseModel):
-    """Resume a HITL-paused research task with revision feedback.
+    """带修订反馈恢复 HITL 暂停的研究任务。
 
-    Unlike ``ApproveRequest``, ``feedback`` is expected to contain
-    actionable revision instructions.  The graph treats this as a
-    ``revise`` action — the human_review node injects the feedback
-    and the downstream reflection/writer loop rewrites accordingly.
+    与 ``ApproveRequest`` 不同，``feedback`` 应包含可操作的修订指令。
+    图将此视为 ``revise`` 操作 — human_review 节点注入反馈，
+    下游反思/写作者循环据此改写。
     """
 
     feedback: str = Field(
         default="",
         max_length=4000,
-        description="Revision feedback for the supervisor's draft.",
+        description="对 supervisor 草稿的修订反馈。",
     )

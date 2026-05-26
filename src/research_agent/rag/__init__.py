@@ -1,18 +1,14 @@
-"""RAG building blocks — retrieval, grading, rewriting, and reranking.
+"""RAG 构建模块 — 检索、评分、查询重写与重排序。
 
-This package exports the core Corrective-RAG pipeline components as
-independently testable classes:
+本包将 Corrective-RAG 流水线的核心组件导出为可独立测试的类：
 
-* ``BM25Index`` — sparse BM25 index over tokenized documents.
-* ``hybrid_rrf_fuse`` — weighted Reciprocal-Rank Fusion of dense +
-  sparse retrieval lists.
-* ``RetrievalGrader`` — three-bucket quality classifier
-  (high / medium / low) driving the corrective loop.
-* ``QueryRewriter`` — LLM-based query rewriter for low-quality hits.
-* ``CrossEncoderReranker`` — local cross-encoder for result reranking.
+* ``BM25Index`` — 基于分词文档的稀疏 BM25 索引。
+* ``hybrid_rrf_fuse`` — 稠密检索 + 稀疏检索结果的加权 RRF（Reciprocal-Rank Fusion）融合。
+* ``RetrievalGrader`` — 三档质量分类器（high / medium / low），驱动纠正循环。
+* ``QueryRewriter`` — 基于 LLM 的查询重写器，用于低质量命中场景。
+* ``CrossEncoderReranker`` — 本地交叉编码器，用于结果重排序。
 
-The ``knowledge_server`` MCP tool module delegates to these classes
-for its retrieval pipeline.
+``knowledge_server`` MCP 工具模块将检索流水线委托给这些类。
 """
 
 from research_agent.rag.grader import RetrievalGrader

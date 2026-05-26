@@ -1,8 +1,6 @@
-"""Offline unit tests for the LangSmith evaluation scorers.
+"""LangSmith 评估评分器的离线单元测试。
 
-These tests validate the evaluator logic with synthetic inputs —
-no LLM calls, no LangSmith API, no network. They run under the
-normal ``pytest -m "not network"`` gate.
+这些测试使用合成输入验证评估器逻辑 —无 LLM 调用、无 LangSmith API、无网络。它们在常规的``pytest -m "not network"`` 门控下运行。
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ def _make_example(inputs: dict[str, Any]) -> SimpleNamespace:
 
 
 # ---------------------------------------------------------------------------
-# routing_accuracy
+# routing_accuracy（路由准确率）
 # ---------------------------------------------------------------------------
 
 
@@ -48,7 +46,7 @@ class TestRoutingAccuracy:
         run = _make_run({"specialists_reached": ["data_expert", "coder_expert"]})
         example = _make_example({"expected_specialists": ["data_expert", "report_expert"]})
         result = routing_accuracy(run, example)
-        # Jaccard: {data_expert} / {data_expert, report_expert, coder_expert} = 1/3
+        # Jaccard 相似度: {data_expert} / {data_expert, report_expert, coder_expert} = 1/3
         assert abs(result["score"] - 1 / 3) < 0.01
 
     def test_no_overlap(self) -> None:
@@ -79,7 +77,7 @@ class TestRoutingAccuracy:
 
 
 # ---------------------------------------------------------------------------
-# reply_quality (with mock LLM)
+# reply_quality（回复质量，使用模拟 LLM）
 # ---------------------------------------------------------------------------
 
 
@@ -108,7 +106,7 @@ class TestReplyQuality:
         run = _make_run({"reply": "some text"})
         example = _make_example({"query": "q", "expected_reply_keywords": []})
         result = await evaluator(run, example)
-        # avg = (3+2+3)/3 = 2.667; normalized = (2.667-1)/4 = 0.417
+        # 均值 = (3+2+3)/3 = 2.667; 归一化 = (2.667-1)/4 = 0.417
         assert 0.4 <= result["score"] <= 0.45
 
     @pytest.mark.asyncio
@@ -148,7 +146,7 @@ class TestReplyQuality:
 
 
 # ---------------------------------------------------------------------------
-# memory_persistence
+# memory_persistence（记忆持久化）
 # ---------------------------------------------------------------------------
 
 

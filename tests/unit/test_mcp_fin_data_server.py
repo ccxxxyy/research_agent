@@ -1,28 +1,19 @@
-"""Phase-4.1: MCP ``fin_data_server`` round-trip tests.
+"""MCP ``fin_data_server`` 往返测试。
 
-Why this test file is shaped the way it is
+为什么此测试文件如此组织
 ------------------------------------------
-``fin_data_server`` is the data plane for every Phase-4 specialist.
-Each MCP tool invocation ordinarily spawns a **fresh subprocess**,
-and that subprocess pays a non-trivial startup cost before it can
-answer anything:
+``fin_data_server`` 是所有专家的数据平面。
+每次 MCP 工具调用通常会启动一个全新子进程，而该子进程在能够响应之前需要支付不小的启动开销：
 
-- ``pandas`` top-level import: ~1.5 s
-- ``akshare`` lazy import on first tool call: ~3-5 s
-- One-off ``stock_info_a_code_name()`` roster fetch (used by
-  ``search_stock_by_name``): ~6 s
+- ``pandas`` 顶层导入：约 1.5 秒
+- ``akshare`` 首次工具调用时的懒加载导入：约 3-5 秒
+- 一次性 ``stock_info_a_code_name()`` 股票花名册获取（用于 ``search_stock_by_name``）：约 6 秒
 
-If each test method created its own client and its own subprocess we
-would easily blow past 60 s just on startup overhead. Instead every
-test opens **one** ``client.session(...)`` context, then exercises as
-many tools as it needs to cover a contract inside that single
-subprocess. This pins the total cost to roughly one akshare warm-up
-per test function (~10 s), and the whole file completes in under
-40 s even over a slow link.
+如果每个测试方法都创建自己的客户端和子进程，仅启动开销就会轻松超过 60 秒
+。因此每个测试打开*个``client.session(...)``上下文，然后在该单一子进程中执行所有需要覆盖的工具契约。
+这将总开销固定在每个测试函数大约一次 akshare 预热（约 10 秒），整个文件即使在慢速链路上也能在 40 秒内完成。
 
-All tests hit live HTTP endpoints (akshare mirrors of 东财/雪球/新浪),
-so they are tagged ``network``; offline CI should run with
-``pytest -m 'not network'``.
+所有测试访问实时 HTTP 端点（akshare 镜像的东财/雪球/新浪），因此标记为 ``network``；离线 CI 应使用 ``pytest -m 'not network'`` 运行。
 """
 
 from __future__ import annotations
@@ -44,14 +35,11 @@ from research_agent.mcp_servers.client_factory import (
 
 pytestmark = pytest.mark.network
 
-# Tool names as returned by ``load_mcp_tools(session)`` — i.e. RAW,
-# without the ``fin_`` prefix that ``MultiServerMCPClient.get_tools()``
-# would add via ``tool_name_prefix=True``. Prefixing is a client-layer
-# concern, not a server-layer one, and we bypass the client here so a
-# single session can be reused across tool calls. The Agent-facing
-# ``load_fin_data_server_tools()`` helper keeps the ``fin_`` prefix for
-# supervisor disambiguation — that path is exercised separately by the
-# end-to-end smoke test in ``scripts/smoke_test_fin_data_mcp.py``.
+# 工具名称由 ``load_mcp_tools(session)`` 返回——即原始名称，
+# 不带 ``MultiServerMCPClient.get_tools()`` 通过 ``tool_name_prefix=True`` 添加的 ``fin_`` 前缀。
+# 前缀是客户端层的关注点，而非服务器层的，在此绕过客户端以便在多次工具调用间复用同一会话。
+# 面向 Agent z ``load_fin_data_server_tools()`` 辅助函数保留 ``fin_`` 前缀用于 supervisor 消歧——
+# 该路径由端到端冒烟测试 ``scripts/smoke_test_fin_data_mcp.py`` 单独验证。
 EXPECTED_TOOL_NAMES: set[str] = {
     "get_stock_basic_info",
     "get_stock_price_history",
@@ -60,20 +48,16 @@ EXPECTED_TOOL_NAMES: set[str] = {
     "search_stock_by_name",
 }
 
-# 宁德时代 is a large, liquid, long-listed ticker; its financial
-# history is stable enough that tests remain deterministic even if
-# akshare upgrades its upstream scrape targets.
+# 宁德时代是一只大盘、高流动性、上市时间长的股票；其财务历史足够稳定，即使 akshare 升级上游抓取目标，测试仍保持确定性。
 SAMPLE_SYMBOL = "300750"
 SAMPLE_NAME_KEYWORD = "宁德"
 
 
 @asynccontextmanager
 async def _open_session() -> AsyncIterator[dict[str, BaseTool]]:
-    """Launch one ``fin_data_server`` subprocess and yield its tools.
+    """启动一个 ``fin_data_server`` 子进程并 yield 其工具。
 
-    The tools returned here are bound to the open session, so any
-    number of ``ainvoke(...)`` calls inside the ``async with`` block
-    reuse the *same* subprocess. This is the fast path.
+    此处返回的工具绑定到已打开的会话，因此 ``async with`` 块内任意数量的 ``ainvoke(...)`` 调用都复用*同一个*子进程。这是快速路径。
     """
     client = MultiServerMCPClient(
         {
@@ -86,7 +70,7 @@ async def _open_session() -> AsyncIterator[dict[str, BaseTool]]:
         tool_name_prefix=True,
     )
     async with client.session("fin") as session:
-        # Lazy import to avoid paying this cost at collection time.
+        # 延迟导入以避免在收集阶段支付此开销。
         from langchain_mcp_adapters.tools import load_mcp_tools
 
         tools = await load_mcp_tools(session)
@@ -94,20 +78,20 @@ async def _open_session() -> AsyncIterator[dict[str, BaseTool]]:
 
 
 def _parse(raw: object) -> dict[str, Any]:
-    """Decode the JSON content block an MCP tool returns."""
+    """解码 MCP 工具返回的 JSON 内容块。"""
     return json.loads(extract_text_content(raw))
 
 
 # ---------------------------------------------------------------------
-# Test 1: discovery + the cheap filter-style tool (no akshare HTTP)
+# 测试 1：发现 + 轻量级过滤工具（无 akshare HTTP 请求）
 # ---------------------------------------------------------------------
 async def test_discovery_and_search() -> None:
-    """All five tools are advertised and ``search_stock_by_name`` works.
+    """所有五个工具均已发布且 ``search_stock_by_name`` 正常工作。
 
-    Consolidates:
-      - MCP handshake + tool schema round-trip
-      - Keyword search against the in-memory A-share roster
-      - Input validation on empty keyword
+    整合验证：
+      - MCP 握手 + 工具 schema 往返
+      - 基于内存中 A 股花名册的关键词搜索
+      - 空关键词的输入校验
     """
     async with _open_session() as tools:
         assert EXPECTED_TOOL_NAMES.issubset(tools.keys()), (
@@ -134,14 +118,12 @@ async def test_discovery_and_search() -> None:
 
 
 # ---------------------------------------------------------------------
-# Test 2: financial-statement contracts (no flaky push2 endpoints)
+# 测试 2：财务报表契约（不涉及不稳定的 push2 端点）
 # ---------------------------------------------------------------------
 async def test_financial_statement_tools() -> None:
-    """``get_financial_abstract`` and ``get_financial_indicators`` contracts.
+    """``get_financial_abstract`` 和 ``get_financial_indicators`` 契约测试。
 
-    These tools hit 新浪 and 东财 *report* endpoints (NOT push2), which
-    are stable, so we can assert on shape + value sanity without
-    flakiness.
+    这些工具访问新浪和东财的*报表*端点（不是 push2），这些端点是稳定的，因此可以对返回结构和数值合理性进行断言而不会产生不稳定性。
     """
     async with _open_session() as tools:
         abs_payload = _parse(
@@ -186,19 +168,16 @@ async def test_financial_statement_tools() -> None:
 
 
 # ---------------------------------------------------------------------
-# Test 3: multi-source fallback contract (push2 endpoints)
+# 测试 3：多源降级契约（push2 端点）
 # ---------------------------------------------------------------------
 async def test_basic_info_and_price_history_fallback() -> None:
-    """Both push2-backed tools return structured data OR a structured failure.
+    """两个基于 push2 的工具返回结构化数据或结构化失败。
 
-    The two endpoints that sit on ``push2*.eastmoney.com`` are
-    unreliable; we cascade to 雪球/新浪 on failure. This test does NOT
-    require the primary to succeed — it only requires that:
-      1. A successful response carries a ``source`` tag in the
-         documented allow-list.
-      2. A complete outage surfaces as ``{error, attempts}``, not a
-         Python exception bubbling out of the subprocess.
-      3. Out-of-range ``days`` is rejected at the tool boundary.
+    位于 ``push2*.eastmoney.com`` 的两个端点不可靠；失败时级联到雪球/新浪。此测试不要求主数据源成功——
+    只要求：
+      1. 成功响应携带文档允许列表中的 ``source`` 标签。
+      2. 完全中断以 ``{error, attempts}`` 形式呈现，而非 Python 异常从子进程中冒泡。
+      3. 超出范围的 ``days`` 在工具边界被拒绝。
     """
     async with _open_session() as tools:
         basic = _parse(

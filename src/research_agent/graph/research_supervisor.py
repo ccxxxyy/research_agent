@@ -1,18 +1,12 @@
-"""Phase-4.4 research supervisor — the financial-research workflow.
+"""研究 supervisor — 金融研究工作流。
 
-Why a SEPARATE graph from ``minimal_supervisor.py``?
-----------------------------------------------------
-``minimal_supervisor.py`` is a teaching scaffold: three toy
-``@tool``-backed specialists plus an optional MCP coder. It exists to
-demonstrate the supervisor pattern itself, in isolation, with no
-network dependencies.
+为什么要与 ``minimal_supervisor.py`` 分离成独立图？
+``minimal_supervisor.py`` 是一个教学脚手架：三个简单的``@tool`` 支持的专家加上一个可选的 MCP 编程专家。它的存在是为了在隔离环境中、无需网络依赖地演示 supervisor 模式本身。
 
-This graph is the **real product**. It orchestrates three
-MCP-delivered specialists that share the same A-share / 巨潮资讯
-data surface the Agent will hit in production:
+本图是真正的产品。它编排了多个 MCP 交付的专家，共享智能体在生产环境中使用的 A 股 / 巨潮资讯数据接口：
 
-              ┌───────────────────────────────────────────────────┐
-              │              research_supervisor                     │ ← HEAVY tier LLM
+              ┌─────────────────────────────────────────────────────┐
+              │              research_supervisor                    │ ← HEAVY 级 LLM
               └─┬────────┬───────────┬─────────┬───────┬──────────┬─┘
                 │        │           │         │       │          │
                 ▼        ▼           ▼         ▼       ▼          ▼
@@ -20,38 +14,21 @@ data surface the Agent will hit in production:
           (fin_data)  (pdf_report)  _expert (news_srv) _expert   _expert
                                    (code)              (knowledge)(sentiment)
 
-Typical flow for "分析 宁德时代 2023 年业绩 + ESG 披露中提到的碳中和承诺":
+"分析 宁德时代 2023 年业绩 + ESG 披露中提到的碳中和承诺"的典型流程：
 
-  1. supervisor → data_expert : pull financial abstract + indicators
-  2. supervisor → report_expert: locate 2023 annual-report PDF and
-     extract the 经营情况 / 风险因素 sections
-  3. supervisor → coder_expert: compute derived ratios or sanity-
-     check numbers from the two previous outputs
-  4. supervisor → knowledge_expert: search the user's previously
-     ingested ESG library for "碳中和" mentions (corrective-RAG:
-     the agent reads the per-call ``quality`` signal and rewrites
-     the query if hits are weak, up to 3 attempts)
-  5. supervisor writes a final synthesis.
+  1. supervisor → data_expert：拉取财务摘要 + 财务指标
+  2. supervisor → report_expert：定位 2023 年报 PDF 并提取经营情况 / 风险因素章节
+  3. supervisor → coder_expert：计算衍生比率或交叉验证前两个输出中的数字
+  4. supervisor → knowledge_expert：在用户之前导入的 ESG 知识库中搜索"碳中和"相关内容（纠正式 RAG：智能体读取每次调用的``quality`` 信号，如果命中结果较弱则重写查询，最多 3 次尝试）
+  5. supervisor 撰写最终综合报告。
 
-Design choices that matter for interview-grade storytelling
+重要的设计选择
 -----------------------------------------------------------
-- Each specialist owns a **disjoint** toolset. No overlap means the
-  supervisor's routing choice is unambiguous — a common failure mode
-  in naive "one agent with all tools" designs.
-- Specialists run on :class:`ModelTier.MEDIUM` (via
-  :attr:`AgentName.ANALYST`), supervisor on HEAVY. The supervisor
-  does the hard reasoning (planning + synthesis); specialists do
-  targeted tool-calling only.
-- The supervisor prompt lists **exactly** the tools each specialist
-  owns. This is critical: the supervisor decides routing by reading
-  its own system prompt, not by peeking at specialist toolbelts.
-- ``output_mode="last_message"`` keeps the shared state compact.
-  Switch to ``full_history`` only when debugging a routing loop.
-- Building a specialist is lazy — if the caller didn't supply its
-  MCP tools, that specialist is simply left out of the team and the
-  supervisor prompt is trimmed accordingly. This lets unit tests
-  compile a 1- or 2-specialist graph without spawning the full
-  subprocess fleet.
+- 每个专家拥有不相交的工具集。无重叠意味着 supervisor 的路由选择是明确的 — 这是朴素"一个智能体拥有所有工具"设计中的常见失败模式。
+- 专家运行在 :class:`ModelTier.MEDIUM`（通过:attr:`AgentName.ANALYST`），只做定向工具调用。；supervisor 运行在 HEAVY。Supervisor 负责困难的推理（规划 + 综合）。
+- supervisor 提示词中精确地列出每个专家拥有的工具。supervisor 通过阅读自己的系统提示词来决定路由，而非窥探专家的工具列表。
+- ``output_mode="last_message"`` 使共享状态保持紧凑。仅在调试路由循环时切换到 ``full_history``。
+- 专家的构建是惰性的 — 如果调用者未提供某专家的 MCP 工具，该专家将被排除在团队之外，supervisor 提示词也会相应裁剪。这使得单元试可以编译仅含 1-2 个专家的图，而无需启动完整的子进程集群。
 """
 
 from __future__ import annotations
@@ -83,178 +60,110 @@ from research_agent.llm.tier import ModelTier
 
 
 SUPERVISOR_PROMPT_BASE = """\
-You are the Financial Research Supervisor. You coordinate a small
-team of specialists to produce concise, cited answers about
-A-share-listed companies. Your default language follows the user's —
-if the user writes in Chinese, answer in Chinese.
+你是金融研究 Supervisor（主管）。你协调一个小型专家团队，为用户提供
+关于 A 股上市公司的简明、有引用来源的回答。你的默认语言跟随用户 —
+如果用户使用中文，则用中文回答。
 
-Team roster:
+团队成员：
 """
 
 SUPERVISOR_PROMPT_DATA = """\
-  - data_expert   : A-share market & fundamentals via akshare MCP.
-      Toolbelt (tool names may be prefixed by the MCP server key):
-        * fin_search_stock_by_name    — name → 6-digit ticker lookup
-        * fin_get_stock_basic_info    — company profile / latest price
-        * fin_get_stock_price_history — OHLCV + summary stats
-        * fin_get_financial_abstract  — revenue / profit / cash flow
-        * fin_get_financial_indicators — ROE / margins / leverage
-      Delegate when the user asks for: latest price / market cap /
-      industry classification, OHLCV history, quarterly/annual
-      financials, key ratios, or name→ticker resolution.
+  - data_expert   ：通过 akshare MCP 获取 A 股市场数据和基本面。
+    工具集（工具名可能带有 MCP 服务器前缀）：
+        * fin_search_stock_by_name    — 名称 → 6 位股票代码查询
+        * fin_get_stock_basic_info    — 公司简介 / 最新股价
+        * fin_get_stock_price_history — OHLCV 行情 + 汇总统计
+        * fin_get_financial_abstract  — 营收 / 利润 / 现金流
+        * fin_get_financial_indicators — ROE / 利润率 / 杠杆率
+    当用户询问以下内容时委派给该专家：最新股价 / 市值 / 行业分类、OHLCV 历史行情、季度/年度财务数据、关键比率、或名称→代码解析。
 """
 
 SUPERVISOR_PROMPT_REPORT = """\
-  - report_expert : 巨潮资讯 disclosure PDFs.
-      Toolbelt:
-        * pdf_search_announcements    — list annual / quarterly /
-                                        disclosure filings in a date range
-        * pdf_download_pdf            — cache-aware fetch
-        * pdf_extract_pdf_metadata    — num_pages / title / author
-        * pdf_parse_pdf_pages         — page-windowed text extraction
-                                        (max 20 pages per call)
-      Delegate when the user asks for: annual/quarterly report
-      content, 经营情况讨论与分析, 风险因素, 业绩预告 / 预增 / 预减,
-      or any excerpt from a 巨潮资讯 PDF.
+  - report_expert ：巨潮资讯披露 PDF。
+      工具集：
+        * pdf_search_announcements    — 列出指定日期范围内的年报 / 季报 / 公告文件
+        * pdf_download_pdf            — 带缓存的文件获取
+        * pdf_extract_pdf_metadata    — 页数 / 标题 / 作者
+        * pdf_parse_pdf_pages         — 按页窗口提取文本（每次最多 20 页）
+      当用户询问以下内容时委派给该专家：年报/季报内容、经营情况讨论与分析、风险因素、业绩预告 / 预增 / 预减、或巨潮资讯 PDF 中的任何摘录。
 """
 
 SUPERVISOR_PROMPT_CODER = """\
-  - coder_expert  : sandboxed Python execution via MCP. Safe builtins
-      only (math / statistics / json / collections pre-imported).
-      Delegate when the user needs a derived metric (mean / std /
-      growth rate), a sort / filter over returned rows, or any other
-      computation that the other specialists did not pre-compute.
+  - coder_expert  ：通过 MCP 的沙箱化 Python 执行环境。仅可使用安全内置库（math / statistics / json / collections 已预导入）。
+      当用户需要衍生指标（均值 / 标准差 / 增长率）、对返回行进行排序 /筛选、或其他专家未预先计算的任何运算时，委派给该专家。
 """
 
 SUPERVISOR_PROMPT_NEWS = """\
-  - news_expert   : A-share news & sentiment via 东方财富 / 财联社 /
-      百度财经 / 雪球. Toolbelt:
-        * news_get_stock_news        — recent news for a 6-digit
-                                       ticker (东方财富 individual feed)
-        * news_get_market_telegraph  — real-time market flashes from
-                                       财联社 (filter category: only
-                                       "全部" or "重点" are supported)
-        * news_get_hot_keywords      — trending themes / keywords
-                                       co-occurring with a ticker
-        * news_get_economic_news     — daily macro / policy digest
-                                       (百度财经 早晚报)
+  - news_expert   ：通过东方财富 / 财联社 / 百度财经 / 雪球获取 A 股新闻与舆情。
+    工具集：
+        * news_get_stock_news        — 获取指定 6 位代码个股的近期新闻（东方财富个股资讯）
+        * news_get_market_telegraph  — 财联社实时市场快讯（筛选类别：仅支持"全部"或"重点"）
+        * news_get_hot_keywords      — 与某只个股共现的热门主题 / 关键词
+        * news_get_economic_news     — 每日宏观 / 政策摘要（百度财经早晚报）
         * news_get_xueqiu_discussion_hot_rank — 雪球讨论热度个股榜
-                                       (``ranking``: ``"最热门"`` or
-                                       ``"本周新增"``; wraps
-                                       ``stock_hot_tweet_xq`` — rows
-                                       are stocks, not post threads)
-      Delegate when the user asks: "<公司>最近的新闻 / 舆情 / 热度",
-      "今天 A 股有什么大事 / 重要快讯", "市场对 <公司> 的情绪如何",
-      "最近的宏观 / 政策 / 央行新闻", "雪球讨论榜 / 雪球最热标的".
-      Do NOT route here for raw numerical / fundamentals data, or
-      for official disclosures like 年报 / 公告 — those belong to
-      other specialists.
+                                       （``ranking``：``"最热门"`` 或``"本周新增"``；封装 ``stock_hot_tweet_xq`` — 行为个股维度，非帖子维度）
+    当用户询问以下内容时委派给该专家："<公司>最近的新闻 / 舆情 / 热度"、
+    "今天 A 股有什么大事 / 重要快讯"、"市场对 <公司> 的情绪如何"、"最近的宏观 / 政策 / 央行新闻"、"雪球讨论榜 / 雪球最热标的"。
+    不要将原始数值 / 基本面数据请求路由到此专家，也不要将年报 / 公告等官方披露文件路由到此 — 它们属于其他专家。
 """
 
 SUPERVISOR_PROMPT_KNOWLEDGE = """\
-  - knowledge_expert : the USER's private PDF library, indexed in a
-      persistent FAISS vector store with hybrid (vector + BM25 +
-      cross-encoder rerank) retrieval. Toolbelt:
-        * knowledge_list_collections — enumerate user collections
-        * knowledge_ingest_pdf       — chunk + embed a local PDF
-                                       into a collection
-        * knowledge_search           — hybrid search with reranking;
-                                       returns a ``quality`` label
-                                       and per-hit ``rerank_score``
-                                       so the expert runs an internal
-                                       corrective-RAG loop
+  - knowledge_expert ：用户的私有 PDF 知识库，使用持久化 FAISS 向量存储，支持混合检索（向量 + BM25 + 交叉编码器重排序）。
+    工具集：
+        * knowledge_list_collections — 列举用户的知识集合
+        * knowledge_ingest_pdf       — 将本地 PDF 分块 + 嵌入到某个集合中
+        * knowledge_search           — 带重排序的混合检索；返回``quality`` 标签和每条结果的``rerank_score``，专家据此执行内部纠正式 RAG 循环
         * knowledge_delete_collection
-      Delegate when the user asks something only the user's own
-      uploaded documents could answer: "我之前上传的 ESG 报告里
-      关于碳中和怎么写的"、"我那份招股说明书里的募投项目"、
-      或追问"把这份报告灌进我的知识库并按xx检索". Do NOT route
-      generic A-share market or public-disclosure questions here —
-      this expert only sees what the user has personally uploaded.
+    当用户询问只有其个人上传文档才能回答的问题时委派给该专家：
+    "我之前上传的 ESG 报告里关于碳中和怎么写的"、"我那份招股说明书里的募投项目"、或追问"把这份报告灌进我的知识库并按xx检索"。
+    不要将通用 A 股市场或公开披露文件的问题路由到此 —该专家只能看到用户个人上传的内容。
 """
 
 SUPERVISOR_PROMPT_SENTIMENT = """\
-  - sentiment_expert : 结构化新闻情感量化分析（SnowNLP + 金融关键词
-      词典，确定性模型，不走大模型打分）。Toolbelt:
+  - sentiment_expert ：结构化新闻情感量化分析（SnowNLP + 金融关键词词典，确定性模型，不走大模型打分）。
+    工具集：
         * sentiment_get_stock_sentiment_report — 一站式个股舆情报告：
-            拉东财新闻 → 逐条打分 → 聚合。返回每条新闻的
-            ``sentiment_score ∈ [-1, 1]``、标签（正面/中性/负面）、
-            命中关键词、文本指纹 + 聚合统计（正/负/中性比例、均分、
-            样本量）+ 审计元数据（模型版本 + 时间戳）。
-        * sentiment_analyze_text_sentiment — 纯文本批量打分。传入
-            任意中文文本列表，返回逐条分数 + 聚合。可用于对其他
-            专家返回的文本做二次情感标注。
-      Delegate when the user asks for: 个股舆情量化（"宁德时代最近
-      舆情如何 / 市场情绪"）、新闻情感打分（"帮我分析这几条新闻的
-      情绪"）、批量文本情感标注。与 news_expert 的区别：news_expert
-      获取原始新闻文本，sentiment_expert 对文本做可复现的量化评分。
-      二者配合使用效果最佳。
+            拉东财新闻 → 逐条打分 → 聚合。返回每条新闻的``sentiment_score ∈ [-1, 1]``、标签（正面/中性/负面）、
+            命中关键词、文本指纹 + 聚合统计（正/负/中性比例、均分、样本量）+ 审计元数据（模型版本 + 时间戳）。
+        * sentiment_analyze_text_sentiment — 纯文本批量打分。传入任意中文文本列表，返回逐条分数 + 聚合。
+            可用于对其他专家返回的文本做二次情感标注。
+    当用户询问以下内容时委派给该专家：个股舆情量化（"宁德时代最近舆情如何 / 市场情绪"）、新闻情感打分（"帮我分析这几条新闻的情绪"）、批量文本情感标注。
+    与 news_expert 的区别：news_expert获取原始新闻文本，sentiment_expert 对文本做可复现的量化评分。二者配合使用效果最佳。
 """
 
-# NOTE: These rules are *invariant* across team compositions. They
-# must NEVER mention a specific specialist by name, because the team
-# is assembled at runtime and absent specialists would otherwise leak
-# into the prompt as phantom routing targets — causing failing
-# ``transfer_to_<missing>`` tool calls. Per-specialist guidance lives
-# in the ``*_PROMPT_*`` sections above.
+# 注意：这些规则在所有团队组合中不变。它们绝不能按名称提及某个特定专家，
+# 因为团队在运行时动态组装，缺席的专家否则会作为幽灵路由目标泄露进提示词 — 导致 ``transfer_to_<missing>`` 工具调用失败。
+# 针对特定专家的指导写在上面的 ``*_PROMPT_*`` 部分中。
 SUPERVISOR_PROMPT_RULES = """\
-Your job
+你的职责
 --------
-1. READ the user's request carefully. Identify every distinct
-   sub-question it contains (e.g. "基本资料 + 最近披露 + 算均值"
-   is three sub-questions, not one). A user request that uses
-   numbered steps (1) (2) (3) ... or bullet points is GIVING YOU
-   the decomposition explicitly — every numbered step counts as
-   ONE distinct sub-question and DEMANDS ITS OWN hand-off.
-2. PLAN a minimal sequence of hand-offs. For each sub-question,
-   pick the single specialist whose toolbelt (described above) is
-   the best fit. If the user gave a company name but a subsequent
-   step needs a 6-digit ticker, resolve the ticker FIRST via the
-   specialist that owns the name-lookup tool.
-3. HAND OFF ONE SUBTASK AT A TIME by calling the appropriate
-   ``transfer_to_<name>`` tool. Wait for that specialist's result
-   before routing the next subtask. Never issue two hand-offs in
-   parallel — the shared state assumes serial turns.
-4. WRITE the final answer yourself ONLY AFTER every sub-question
-   has been delegated and answered. A useful self-check before
-   you produce the final answer: re-read the user's original
-   request and verify that EACH numbered / bullet sub-task was
-   handled by an actual ``transfer_to_<name>`` hand-off (not by
-   you). If any sub-task was skipped, route it now.
-   Required structure for multi-step research requests:
-     - ### 核心发现 / Key findings  (3-5 bullet points, with concrete
-       numbers and short quotations from the PDF where relevant)
-     - ### 数据来源 / Sources (list the specialists called and what
-       each contributed)
-5. Never invent numbers or quotes. If a specialist returned a dict
-   with an ``"error"`` key, say so plainly and do NOT fabricate a
-   substitute.
-6. Do NOT call specialist tools yourself. You have no direct access
-   to ``fin_*``, ``pdf_*``, ``code_*``, ``news_*``, ``knowledge_*``,
-   or ``sentiment_*`` — only to the ``transfer_to_*`` hand-off tools.
+1. 仔细阅读用户的请求。识别其中包含的每个独立子问题
+   （例如"基本资料 + 最近披露 + 算均值"是三个子问题，不是一个）。
+   如果用户请求使用了编号步骤 (1) (2) (3) ... 或项目符号，说明用户已明确给出了分解 — 每个编号步骤都算作一个独立子问题，且必须有对应的独立移交。
+2. 规划一个最小化的移交序列。对于每个子问题，选择工具集（如上所述）
+   最匹配的那一位专家。如果用户给了公司名称但后续步骤需要 6 位股票代码，请先通过拥有名称查询工具的专家解析代码。
+3. 每次只移交一个子任务，调用对应的 ``transfer_to_<name>`` 工具。
+   等待该专家的结果后再路由下一个子任务。不要同时发起两个移交 —共享状态假定串行轮次。
+4. 只有在所有子问题都已委派并得到回答后，才自己撰写最终回答。
+   在生成最终回答前做一个有用的自检：重新阅读用户的原始请求，
+   验证每个编号 / 项目符号子任务是否都通过实际的``transfer_to_<name>`` 移交处理过（而非由你自己处理）。
+   如果有任何子任务被跳过，现在就路由它。
+   多步骤研究请求的必需结构：
+     - ### 核心发现 / Key findings  （3-5 个要点，包含具体数据，并在相关处附上 PDF 的简短引文）
+     - ### 数据来源 / Sources（列出调用了哪些专家，以及每个专家贡献了什么）
+5. 不要编造数据或引文。如果某专家返回的字典中包含 ``"error"`` 键，请如实说明，不要捏造替代内容。
+6. 不要自己调用专家工具。你无法直接访问 ``fin_*``、``pdf_*``、 ``code_*``、``news_*``、``knowledge_*`` 或 ``sentiment_*`` —你只能使用 ``transfer_to_*`` 移交工具。
 
-CRITICAL anti-hallucination rules
+关键反幻觉规则
 ---------------------------------
-A. NEVER claim a tool, specialist, or capability is "unavailable",
-   "tool-restricted", "无法访问", "由于工具限制", "暂不支持", or
-   any equivalent. Every specialist enumerated in the team roster
-   above IS available right now. If you catch yourself writing
-   such a phrase, STOP — re-read the roster and issue the correct
-   ``transfer_to_<name>`` hand-off instead.
-B. NEVER substitute your own knowledge for a specialist's output.
-   If the user asks for content from a PDF, the user's knowledge
-   base, the latest stock price, or a numerical computation, you
-   MUST route to the specialist that owns that capability — even
-   if you "could answer it yourself". Routing IS the deliverable;
-   the specialists' outputs are what the user is paying for.
-C. NEVER perform arithmetic / statistics / data transformations
-   yourself when a coder specialist is on the team. Even simple
-   means and standard deviations go through the coder via a
-   ``transfer_to_<coder>`` hand-off — that is how we guarantee
-   reproducibility.
-D. If a sub-task SHOULD have a hand-off but you find yourself
-   reaching for self-generated text, that is the bug — fix it by
-   issuing the missing ``transfer_to_<name>`` call BEFORE writing
-   any prose for that sub-task.
+A. 绝不声称某个工具、专家或功能"不可用"、"受工具限制"、"无法访问"、"由于工具限制"、"暂不支持"或任何等价表述。
+   上面团队名单中列举的每个专家此刻都是可用的。如果你发现自己在写这类措辞，请停下来 —重新阅读名单并发起正确的 ``transfer_to_<name>`` 移交。
+B. 绝不用你自己的知识替代专家的输出。如果用户要求 PDF 中的内容、用户知识库中的内容、最新股价或数值计算，
+   你必须路由到拥有该能力的专家 — 即使你"自己也能回答"。路由本身就是交付物；专家的输出才是用户需要的。
+C. 当团队中有 coder 专家时，绝不自己做算术 / 统计 / 数据转换。
+   即使是简单的均值和标准差也要通过 ``transfer_to_<coder>`` 移交给coder — 这是保证可复现性的方式。
+D. 如果某个子任务应该有移交但你发现自己在自行生成文本，那就是 bug —
+   在为该子任务撰写任何文字之前，先发起缺失的 ``transfer_to_<name>``调用来修复它。
 """
 
 
@@ -267,12 +176,9 @@ def _build_supervisor_prompt(
     has_news: bool,
     has_sentiment: bool,
 ) -> str:
-    """Assemble the supervisor prompt to match the actual team roster.
+    """组装 supervisor 提示词，使其与实际团队成员匹配。
 
-    Listing a specialist the graph does NOT contain would produce
-    ``transfer_to_<missing>`` tool calls that fail at runtime. The
-    prompt therefore enumerates only the specialists we actually
-    compiled.
+    如果在图中列出不存在的专家，将导致运行时 ``transfer_to_<missing>``工具调用失败。因此提示词仅列举实际编译的专家。
     """
     parts = [SUPERVISOR_PROMPT_BASE]
     if has_data:
@@ -292,39 +198,31 @@ def _build_supervisor_prompt(
 
 
 class _ResearchState(TypedDict, total=False):
-    """Parent-graph state for the supervisor + reflection wrapper.
+    """supervisor + 反思包装器的父图状态。
 
-    Single field that matters: the message stream. The ``add_messages``
-    reducer dedupes by message id, so when the inner supervisor
-    returns its full transcript (input + new messages), only the
-    newly produced messages actually get appended to parent state —
-    which is the behaviour we want for clean SSE streaming.
+    唯一重要的字段：消息流。
+    ``add_messages`` 归约器按消息 id 去重，因此当内部 supervisor 返回完整对话记录（输入 + 新消息）时，
+    只有新产生的消息会真正追加到父状态中 — 这正是实现干净 SSE 流式传输所需的行为。
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
 
 
 # ---------------------------------------------------------------------------
-# Human-in-the-Loop review node
+# HITL 人工审核节点
 # ---------------------------------------------------------------------------
 
 def _build_human_review_node():
-    """Create a graph node that pauses execution for human review.
+    """创建一个暂停执行以进行人工审核的图节点。
 
-    The node extracts the supervisor's draft from the message stream
-    and calls ``interrupt()`` — LangGraph persists the graph state to
-    the checkpointer and halts execution.  The SSE layer detects the
-    pause and emits a ``review_requested`` event.
+    该节点从消息流中提取 supervisor 的草稿并调用 ``interrupt()`` — LangGraph 将图状态持久化到 checkpointer 并暂停执行。
+    SSE 层检测到暂停后发出 ``review_requested`` 事件。
 
-    When the reviewer calls ``/approve`` or ``/resume``, the graph is
-    resumed with ``Command(resume=value)``.  The ``interrupt()`` call
-    returns that value:
+    当审核者调用 ``/approve`` 或 ``/resume`` 时，图通过``Command(resume=value)`` 恢复执行。
+    ``interrupt()`` 调用返回该值：
 
-    * ``{"action": "approve", ...}`` — node passes through; draft
-      proceeds to reflection / END unchanged.
-    * ``{"action": "revise", "feedback": "..."}`` — node injects the
-      feedback as a ``HumanMessage`` so downstream nodes (reflection
-      or a potential supervisor re-run) can incorporate it.
+    * ``{"action": "approve", ...}`` — 节点直接通过；草稿原样进入反思 / END。
+    * ``{"action": "revise", "feedback": "..."}`` — 节点将反馈注入为 ``HumanMessage``，以便下游节点（反思或可能的 supervisor 重新运行）可以采纳。
     """
 
     async def human_review_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
@@ -363,7 +261,7 @@ def _wrap_with_hitl_only(
     *,
     checkpointer: BaseCheckpointSaver | None,
 ) -> CompiledStateGraph:
-    """Wrap supervisor with a human-review interrupt (no reflection)."""
+    """用人工审核中断包装 supervisor（不含反思）。"""
 
     async def supervisor_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
         result = await supervisor.ainvoke(
@@ -391,26 +289,15 @@ def _wrap_with_reflection(
     checkpointer: BaseCheckpointSaver | None,
     enable_hitl: bool = False,
 ) -> CompiledStateGraph:
-    """Wrap a compiled supervisor in a parent graph that runs reflection.
+    """将已编译的 supervisor 包装在运行反思的父图中。
 
-    Why a parent graph instead of inline post-processing?
+    为什么用父图而不是内联后处理？
     -----------------------------------------------------
-    We could simply call ``supervisor.ainvoke`` and then run
-    ``reflection.ainvoke`` on its output in pure Python. We don't,
-    because:
+    可以简单地调用 ``supervisor.ainvoke``，然后对其输出运行 ``reflection.ainvoke``。没有这样做的原因是：
 
-      1. LangGraph's tracing / LangSmith integration loses the
-         per-node visualisation if part of the pipeline runs
-         outside the graph. Keeping reflection as a graph node
-         keeps the full DAG visible in studio.
-      2. The checkpointer is attached to the OUTER graph, so the
-         supervisor + reflection are atomic with respect to
-         resume-after-crash: a thread that crashed mid-reflection
-         picks up at the critic node, not by re-running the whole
-         specialist team.
-      3. Adding more post-supervisor stages later (e.g. fact-
-         checking against a citation index) is a 1-node graph edit
-         rather than a Python orchestration rewrite.
+      1. 如果流水线的一部分在图外运行，LangGraph 的追踪 / LangSmith集成会丢失逐节点的可视化。将反思作为图节点保留可使完整 DAG 在 studio 中可见。
+      2. checkpointer 附加在外层图上，因此 supervisor + 反思在崩溃恢复方面是原子性的：在反思过程中崩溃的线程会从 critic 节点恢复，而不是重新运行整个专家团队。
+      3. 日后添加更多 supervisor 后置阶段（如基于引用索引的事实核查）只需编辑一个图节点，而非重写编排代码。
     """
     reflection = build_reflection_subgraph(
         model_router=model_router,
@@ -419,14 +306,14 @@ def _wrap_with_reflection(
     )
 
     async def supervisor_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
-        """Run the inner supervisor graph and pipe its output upward."""
+        """运行内部 supervisor 图并将输出向上传递。"""
         result = await supervisor.ainvoke(
             {"messages": state.get("messages", [])},
         )
         return {"messages": result.get("messages", [])}
 
     async def reflection_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
-        """Run the reflection subgraph over the supervisor's output."""
+        """在 supervisor 输出上运行反思子图。"""
         result = await reflection.ainvoke(
             {"messages": state.get("messages", [])},
         )
@@ -474,43 +361,27 @@ def build_research_supervisor(
     reflection_max_iterations: int = 2,
     enable_hitl: bool = False,
 ) -> CompiledStateGraph:
-    """Compile the Phase-4.7 financial-research supervisor graph.
+    """金融研究 supervisor 图。
 
-    The graph includes exactly the specialists whose tool lists were
-    supplied (non-empty). A supervisor with zero specialists would be
-    useless, so at least one tool list must be non-empty — we fail
-    loudly otherwise.
+    图中仅包含工具列表非空的 specialist。
+    零 specialist 的 supervisor 毫无用处，因此至少须有一个工具列表非空 — 否则显式失败。
 
     Args:
-        model_router: Shared router (supervisor uses
-            ``supervisor_tier``; specialists use MEDIUM via the
-            ``ANALYST`` / ``RETRIEVER`` agent-name mapping inside
-            their builders).
-        data_tools: ``fin_*`` tools. Omit/empty → no ``data_expert``.
-        report_tools: ``pdf_*`` tools. Omit/empty → no ``report_expert``.
-        coder_tools: ``code_*`` tools. Omit/empty → no ``coder_expert``.
-        knowledge_tools: ``knowledge_*`` tools. Omit/empty → no ``knowledge_expert``.
-        news_tools: ``news_*`` tools. Omit/empty → no ``news_expert``.
-        sentiment_tools: ``sentiment_*`` tools. Omit/empty → no ``sentiment_expert``.
-        checkpointer: Optional LangGraph checkpointer.
-        supervisor_tier: Defaults to HEAVY.
-        enable_reflection: When True, wraps the supervisor in a parent
-            graph that runs a critic+writer reflection loop over the
-            supervisor's final synthesis. The loop terminates as soon
-            as the critic scores the draft at or above
-            ``reflection_pass_threshold`` OR after
-            ``reflection_max_iterations`` rewrites — whichever comes
-            first. The wrapper preserves the supervisor's
-            ``ainvoke`` / ``astream`` contract; the only difference
-            visible to callers is one extra ``AIMessage`` at the end
-            of the transcript whose ``additional_kwargs['reflection']``
-            carries the audit trail.
-        reflection_pass_threshold: Passed to ``build_reflection_subgraph``.
-        reflection_max_iterations: Passed to ``build_reflection_subgraph``.
-        enable_hitl: When True, inserts a ``human_review`` node that
-            calls ``interrupt()`` after the supervisor draft is
-            produced. The graph pauses for human approval; callers
-            resume via ``Command(resume=...)``.
+        model_router: 共享路由器（supervisor 使用 ``supervisor_tier``；specialist 通过其构建器内的 ``ANALYST`` / ``RETRIEVER`` Agent 名称映射使用 MEDIUM）。
+        data_tools: ``fin_*`` 工具。省略/空 → 无 ``data_expert``。
+        report_tools: ``pdf_*`` 工具。省略/空 → 无 ``report_expert``。
+        coder_tools: ``code_*`` 工具。省略/空 → 无 ``coder_expert``。
+        knowledge_tools: ``knowledge_*`` 工具。省略/空 → 无 ``knowledge_expert``。
+        news_tools: ``news_*`` 工具。省略/空 → 无 ``news_expert``。
+        sentiment_tools: ``sentiment_*`` 工具。省略/空 → 无 ``sentiment_expert``。
+        checkpointer: 可选的 LangGraph checkpointer。
+        supervisor_tier: 默认 HEAVY。
+        enable_reflection: 为 True 时，将 supervisor 包装在父图中，对其最终综合运行批评者+写作者反思循环。循环在批评者评分达到或
+        超过 ``reflection_pass_threshold`` 或 ``reflection_max_iterations``次改写后终止（以先到者为准）。
+        包装器保持 supervisor 的 ``ainvoke`` / ``astream`` 契约；调用者可见的唯一区别是对话记录末尾多了一条 ``AIMessage``，其 ``additional_kwargs['reflection']``携带审计轨迹。
+        reflection_pass_threshold: 传递给 ``build_reflection_subgraph``。
+        reflection_max_iterations: 传递给 ``build_reflection_subgraph``。
+        enable_hitl: 为 True 时，插入一个 ``human_review`` 节点，在 supervisor 草稿生成后调用 ``interrupt()``。图暂停等待人工审批；调用者通过 ``Command(resume=...)`` 恢复。
 
     Returns:
         A compiled LangGraph app.
@@ -527,8 +398,8 @@ def build_research_supervisor(
 
     if not (has_data or has_report or has_coder or has_knowledge or has_news or has_sentiment):
         raise ValueError(
-            "build_research_supervisor needs at least one specialist's "
-            "tools. All six were empty."
+            "build_research_supervisor 至少需要一个专家的工具列表非空，"
+            "但六组工具全部为空。"
         )
 
     agents: list = []
@@ -570,11 +441,8 @@ def build_research_supervisor(
         output_mode="last_message",
     )
 
-    # When reflection is enabled, the parent (wrapper) graph holds the
-    # checkpointer — the inner supervisor compiles statelessly so we
-    # don't get two layers fighting over the same thread_id. When
-    # reflection is OFF, the supervisor itself holds the checkpointer
-    # exactly as before (zero behavioural change).
+    # 启用反思时，父（包装器）图持有 checkpointer —— 内部 supervisor 无状态编译，避免两层争夺同一 thread_id。
+    # 反思关闭时，supervisor 自身持有 checkpointer，行为与之前完全相同。
     if enable_reflection:
         inner = workflow.compile()
         compiled = _wrap_with_reflection(

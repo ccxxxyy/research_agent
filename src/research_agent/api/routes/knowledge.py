@@ -1,27 +1,18 @@
-"""Knowledge base management endpoints — ingest, search, list, delete.
+"""知识库管理端点 —— 导入、搜索、列举、删除。
 
-These endpoints expose the **same** FAISS + BM25 + cross-encoder
-pipeline the ``knowledge_expert`` agent uses, but as a direct REST
-surface. This lets a frontend operate the knowledge base without
-routing every action through the supervisor:
+这些端点暴露了与 ``knowledge_expert`` 智能体使用的相同 FAISS + BM25+ 交叉编码器流水线，但以直接 REST 接口的形式提供。这使前端可以直接操作知识库，而无需将每个操作路由到主管：
 
-- ``POST /api/knowledge/ingest`` — upload a PDF → chunk → embed → FAISS.
-- ``POST /api/knowledge/search`` — hybrid search over a collection.
-- ``GET  /api/knowledge/collections`` — enumerate collections + stats.
-- ``DELETE /api/knowledge/collections/{name}`` — drop a collection.
+- ``POST /api/knowledge/ingest`` —— 上传 PDF → 分块 → 向量化 → FAISS。
+- ``POST /api/knowledge/search`` —— 在集合上执行混合检索。
+- ``GET  /api/knowledge/collections`` —— 枚举集合及其统计信息。
+- ``DELETE /api/knowledge/collections/{name}`` —— 删除集合。
 
-All four endpoints delegate to the coroutines defined in
-``research_agent.mcp_servers.knowledge_server`` (the canonical
-implementation). The FastAPI layer handles HTTP concerns (file
-upload, JSON serialisation, status codes) and nothing else — no
-business logic is duplicated.
+全部四个端点均委托给 ``research_agent.mcp_servers.knowledge_server`` 中定义的协程（规范实现）。
+FastAPI 层仅处理 HTTP 关注点（文件上传、JSON序列化、状态码），不复制任何业务逻辑。
 
-User isolation
---------------
-Every endpoint requires a ``X-User-ID`` header. Collections are
-namespaced per user on disk via a ``{user_id}__{collection}`` naming
-convention. This ensures users cannot see or modify each other's
-knowledge bases through the REST surface.
+用户隔离
+--------
+每个端点均要求 ``X-User-ID`` 头。集合在磁盘上通过``{user_id}__{collection}`` 命名约定按用户隔离，确保用户无法通过REST 接口查看或修改他人的知识库。
 """
 
 from __future__ import annotations
@@ -48,12 +39,12 @@ _USER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,61}[a-zA-Z0-9]$")
 
 
 def _scoped_collection(user_id: str, collection: str) -> str:
-    """Prefix collection name with user_id for on-disk isolation."""
+    """为集合名添加 user_id 前缀以实现磁盘级隔离。"""
     return f"{user_id}__{collection}"
 
 
 def _validate_user_id(user_id: str) -> str:
-    """Validate and return a cleaned user_id."""
+    """校验并返回清理后的 user_id。"""
     uid = user_id.strip()
     if not uid or not _USER_ID_PATTERN.match(uid):
         raise HTTPException(
@@ -64,12 +55,12 @@ def _validate_user_id(user_id: str) -> str:
 
 
 # =====================================================================
-# Request / Response models (co-located: only this route uses them)
+# 请求 / 响应模型（就近定义：仅本路由使用）
 # =====================================================================
 
 
 class SearchRequest(BaseModel):
-    """Body for ``POST /api/knowledge/search``."""
+    """``POST /api/knowledge/search`` 的请求体。"""
 
     query: str = Field(..., min_length=1, max_length=4000)
     collection: str = "default"
@@ -112,7 +103,7 @@ class DeleteCollectionResponse(BaseModel):
 
 
 # =====================================================================
-# Endpoints
+# 端点
 # =====================================================================
 
 
@@ -124,12 +115,11 @@ async def ingest_pdf(
     chunk_overlap: int = 120,
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> IngestResponse:
-    """Upload a PDF and ingest it into a FAISS knowledge-base collection.
+    """上传 PDF 并导入到 FAISS 知识库集合。
 
-    The file is written to a temporary path, then passed to the
-    ``knowledge_server.ingest_pdf`` pipeline (load → chunk → embed →
-    write). On success the temp file is cleaned up; on failure it is
-    left for debugging and the error is surfaced as a 422.
+    文件先写入临时路径，再传给 ``knowledge_server.ingest_pdf`` 流水线
+    （加载 → 分块 → 向量化 → 写入）。
+    成功后清理临时文件；失败时保留以便调试，并将错误以 422 返回。
     """
     user_id = _validate_user_id(x_user_id)
 
@@ -167,13 +157,13 @@ async def ingest_pdf(
             detail=result["error"],
         )
 
-    # Clean up temp file on success
+    # 成功后清理临时文件
     try:
         Path(tmp_path).unlink(missing_ok=True)
     except OSError:
         pass
 
-    # Return the user-facing collection name (without internal prefix)
+    # 返回面向用户的集合名（不含内部前缀）
     result["collection"] = collection
     return IngestResponse(**result)
 
@@ -183,11 +173,9 @@ async def search_knowledge(
     body: SearchRequest,
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> SearchResponse:
-    """Hybrid (vector + BM25 + rerank) search over a knowledge-base collection.
+    """在知识库集合上执行混合检索（向量 + BM25 + 重排序）。
 
-    Returns up to ``top_k`` hits with per-hit scores and a top-level
-    ``quality`` label (high / medium / low) that a frontend can use
-    to display confidence indicators.
+    返回最多 ``top_k`` 条命中结果及每条的分数，以及顶层 ``quality``标签（high / medium / low），前端可据此展示置信度指示器。
     """
     user_id = _validate_user_id(x_user_id)
     scoped = _scoped_collection(user_id, body.collection)
@@ -212,7 +200,7 @@ async def search_knowledge(
 async def list_collections(
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> ListCollectionsResponse:
-    """List FAISS collections belonging to the authenticated user."""
+    """列出当前认证用户拥有的 FAISS 集合。"""
     user_id = _validate_user_id(x_user_id)
     prefix = f"{user_id}__"
 
@@ -224,7 +212,7 @@ async def list_collections(
             detail=result["error"],
         )
 
-    # Filter to only this user's collections and strip the prefix
+    # 仅保留当前用户的集合并去除前缀
     user_collections = [
         {"name": c["name"][len(prefix):], "chunk_count": c["chunk_count"]}
         for c in result.get("collections", [])
@@ -242,8 +230,7 @@ async def delete_collection(
     collection_name: str,
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> DeleteCollectionResponse:
-    """Delete a knowledge-base collection. Idempotent — missing collections
-    return ``existed=False`` with a 200.
+    """删除知识库集合。幂等操作 —— 不存在的集合返回 ``existed=False``及 200 状态码。
     """
     user_id = _validate_user_id(x_user_id)
     scoped = _scoped_collection(user_id, collection_name)

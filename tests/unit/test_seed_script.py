@@ -1,10 +1,10 @@
-"""Unit tests — seed_real_research_reports.py logic.
+"""单元测试 — seed_real_research_reports.py 逻辑。
 
-All network + embedding calls are mocked. Tests exercise:
-  * ticker fallback through preferred categories
-  * idempotent re-run (skip already-ingested PDFs)
-  * graceful handling when cninfo returns no results
-  * CLI argument parsing
+所有网络 + embedding 调用均被 mock。测试覆盖：
+  * 通过首选分类的股票代码降级
+  * 幂等重跑（跳过已摄入的 PDF）
+  * cninfo 无结果时的优雅处理
+  * CLI 参数解析
 """
 
 from __future__ import annotations
@@ -187,7 +187,7 @@ class TestIngestedSourcesForCollection:
 class TestAmainIdempotency:
     @pytest.mark.asyncio
     async def test_skips_already_ingested_pdf(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """If a PDF path is already in the collection, ingest is NOT called."""
+        """如果 PDF 路径已存在于集合中，则不调用 ingest。"""
         ingest_called = {"n": 0}
 
         async def fake_search_ann(**kw: Any) -> dict:
@@ -237,8 +237,7 @@ class TestAmainIdempotency:
             ):
                 pass
 
-            # Simpler approach: directly test the idempotency logic
-            # by checking _ingested_sources_for_collection
+            # 更简单的方法：直接通过检查 _ingested_sources_for_collection 来测试幂等逻辑
             sources = await _ingested_sources_for_collection(
                 list_collections=fake_list,
                 collection="prod_reports",

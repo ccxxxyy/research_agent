@@ -1,18 +1,12 @@
-"""Integration tests for Phase-2 stateful agent functionality.
+"""有状态 Agent 功能的集成测试。
 
-These tests exercise the checkpointer layer and its interaction with
-``build_simple_agent`` using a **scripted stub LLM**, so they run fully
-offline (no API calls, no API keys required) and deterministically.
+这些测试通过预设脚本的桩 LLM 来验证 checkpointer 层及其与``build_simple_agent`` 的交互，因此完全离线运行（无 API 调用、无需 API 密钥）且行为确定。
 
-The three concerns tested here are exactly the three that Phase 2 adds
-on top of Phase 1's stateless single agent:
+此处测试的三个关注点是无状态单 Agent 之上新增的内容：
 
-1. The ``init_checkpointer`` factory picks the right backend given the
-   environment (memory / sqlite / postgres-with-fallback).
-2. A LangGraph agent with a checkpointer accumulates message history
-   under a ``thread_id`` across multiple invocations.
-3. Two different ``thread_id``s remain fully isolated inside the same
-   process and the same checkpointer instance.
+1. ``init_checkpointer`` 工厂根据环境选择正确的后端（内存 / SQLite / Postgres 带回退）。
+2. 带有 checkpointer 的 LangGraph Agent 在同一 ``thread_id`` 下 跨多次调用累积消息历史。
+3. 两个不同的 ``thread_id`` 在同一进程和同一 checkpointer 实例中保持完全隔离。
 """
 
 from __future__ import annotations
@@ -33,15 +27,13 @@ from research_agent.memory.checkpointer import init_checkpointer
 
 
 # ---------------------------------------------------------------------------
-# Scripted stub chat model
+# 预设脚本的桩聊天模型
 # ---------------------------------------------------------------------------
 
 class _ScriptedChatModel(BaseChatModel):
-    """Deterministic chat model that pops pre-scripted ``AIMessage`` answers.
+    """确定性聊天模型，依次弹出预设的 ``AIMessage`` 回答。
 
-    The agent under test treats this model identically to a real one,
-    so the rest of the LangGraph plumbing — message accumulation,
-    checkpointing, state isolation — can be exercised without any API.
+    被测 Agent 对待此模型与真实模型完全相同，因此 LangGraph 的其余管道 — 消息累积、checkpoint、状态隔离 — 可以在不调用任何 API 的情况下进行验证。
     """
 
     answers: list[str]
@@ -59,7 +51,7 @@ class _ScriptedChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=reply))])
 
     def bind_tools(self, tools: list[Any], **kwargs: Any) -> "_ScriptedChatModel":  # noqa: ARG002
-        """create_react_agent probes for this method; we just ignore tools."""
+        """create_react_agent 会探测此方法；直接忽略工具。"""
         return self
 
     @property
@@ -69,13 +61,12 @@ class _ScriptedChatModel(BaseChatModel):
 
 def _build_agent_with(checkpointer, answers: list[str]):
     model = _ScriptedChatModel(answers=list(answers))
-    # Zero tools: the stub never emits tool_calls, so the ReAct loop
-    # completes after a single LLM step per turn.
+    # 零工具：桩模型从不发出 tool_calls，因此 ReAct 循环每轮在单次 LLM 步骤后即完成。
     return create_react_agent(model=model, tools=[], checkpointer=checkpointer)
 
 
 # ---------------------------------------------------------------------------
-# init_checkpointer
+# init_checkpointer 测试
 # ---------------------------------------------------------------------------
 
 class TestInitCheckpointer:
@@ -94,8 +85,8 @@ class TestInitCheckpointer:
         saver = await init_checkpointer(sqlite_path=db_path)
 
         assert isinstance(saver, AsyncSqliteSaver)
-        assert db_path.exists(), "sqlite file should be created on disk"
-        assert db_path.parent.is_dir(), "parent dirs should be auto-created"
+        assert db_path.exists(), "SQLite 文件应在磁盘上创建"
+        assert db_path.parent.is_dir(), "父目录应被自动创建"
 
     @pytest.mark.asyncio
     async def test_unreachable_postgres_falls_back_to_sqlite(
@@ -107,7 +98,7 @@ class TestInitCheckpointer:
             postgres_uri="postgresql://bad:bad@127.0.0.1:1/definitely_not_there",
             sqlite_path=tmp_path / "fallback.sqlite",
         )
-        # Postgres fails → sqlite path is tried → AsyncSqliteSaver returned.
+        # Postgres 失败 → 尝试 SQLite 路径 → 返回 AsyncSqliteSaver。
         assert isinstance(saver, AsyncSqliteSaver)
 
     @pytest.mark.asyncio
@@ -119,7 +110,7 @@ class TestInitCheckpointer:
 
 
 # ---------------------------------------------------------------------------
-# Multi-turn memory with MemorySaver
+# 使用 MemorySaver 的多轮记忆
 # ---------------------------------------------------------------------------
 
 class TestMemorySaverMultiTurn:
@@ -133,7 +124,7 @@ class TestMemorySaverMultiTurn:
         r2 = await agent.ainvoke({"messages": [HumanMessage(content="q2")]}, config=cfg)
         r3 = await agent.ainvoke({"messages": [HumanMessage(content="q3")]}, config=cfg)
 
-        # Turn 1: Human + AI = 2. Turn 2 adds Human + AI = 4. Turn 3 → 6.
+        # 第 1 轮：Human + AI = 2。第 2 轮新增 Human + AI = 4。第 3 轮 → 6。
         assert len(r1["messages"]) == 2
         assert len(r2["messages"]) == 4
         assert len(r3["messages"]) == 6
@@ -163,12 +154,12 @@ class TestMemorySaverMultiTurn:
 
         assert alice_contents == ["a1", "alice-1", "a2", "alice-2"]
         assert bob_contents == ["b1", "bob-1"]
-        # The returned messages from alice's second turn must not contain bob's state.
+        # alice 第二轮返回的消息不应包含 bob 的状态。
         assert "b1" not in [m.content for m in r_alice2["messages"]]
 
 
 # ---------------------------------------------------------------------------
-# Persistence with AsyncSqliteSaver across savers on the same file
+# 使用 AsyncSqliteSaver 在同一文件上跨 saver 持久化
 # ---------------------------------------------------------------------------
 
 class TestSqlitePersistence:
@@ -177,14 +168,14 @@ class TestSqlitePersistence:
         db = tmp_path / "persist.sqlite"
         cfg = {"configurable": {"thread_id": "p1"}}
 
-        # --- first "process": write state then close ---
+        # --- 第一个"进程"：写入状态然后关闭 ---
         saver_a = await init_checkpointer(sqlite_path=db)
         agent_a = _build_agent_with(saver_a, answers=["hello-from-A"])
         await agent_a.ainvoke({"messages": [HumanMessage(content="write-me")]}, config=cfg)
-        # simulate process end: release resources
+        # 模拟进程结束：释放资源
         await saver_a.conn.close()
 
-        # --- second "process": fresh saver, same file, same thread id ---
+        # --- 第二个"进程"：新 saver、相同文件、相同 thread id ---
         saver_b = await init_checkpointer(sqlite_path=db)
         agent_b = _build_agent_with(saver_b, answers=[])
         snapshot = await agent_b.aget_state(cfg)
@@ -195,11 +186,11 @@ class TestSqlitePersistence:
 
 
 # ---------------------------------------------------------------------------
-# build_simple_agent integration shape
+# build_simple_agent 集成外形
 # ---------------------------------------------------------------------------
 
 def test_build_simple_agent_exposes_checkpointer_param() -> None:
-    """Signature-level check: Phase-2 parameter surface is stable."""
+    """签名级别检查：Phase-2 参数表面保持稳定。"""
     import inspect
 
     from research_agent.agents.simple import build_simple_agent
@@ -211,7 +202,7 @@ def test_build_simple_agent_exposes_checkpointer_param() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Helpers for pytest's async support
+# pytest 异步支持的辅助函数
 # ---------------------------------------------------------------------------
 
 def _ensure_event_loop() -> asyncio.AbstractEventLoop:  # pragma: no cover

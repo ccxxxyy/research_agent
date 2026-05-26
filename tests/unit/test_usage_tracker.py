@@ -1,4 +1,4 @@
-"""Tests for token usage tracking, cost estimation, and LangChain callback."""
+"""token 用量追踪、费用估算及 LangChain 回调的测试。"""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from research_agent.llm.usage_tracker import UsageCallbackHandler, UsageTracker
 class TestUsageTracker:
     def test_record_and_summary(self):
         tracker = UsageTracker()
-        tracker.record("retriever", "deepseek-chat", prompt_tokens=100, completion_tokens=50)
-        tracker.record("writer", "gpt-4o", prompt_tokens=500, completion_tokens=200)
+        tracker.record("retriever", "qwen-plus", prompt_tokens=100, completion_tokens=50)
+        tracker.record("writer", "deepseek-v4-pro", prompt_tokens=500, completion_tokens=200)
 
         summary = tracker.summary()
 
@@ -21,50 +21,50 @@ class TestUsageTracker:
         assert "writer" in summary["by_agent"]
         assert summary["by_agent"]["retriever"]["call_count"] == 1
         assert summary["by_agent"]["writer"]["total_tokens"] == 700
-        assert summary["total_cost_usd"] > 0
+        assert summary["total_cost_cny"] > 0
 
     def test_reset(self):
         tracker = UsageTracker()
-        tracker.record("test", "gpt-4o", prompt_tokens=100, completion_tokens=50)
+        tracker.record("test", "deepseek-v4-pro", prompt_tokens=100, completion_tokens=50)
         tracker.reset()
         summary = tracker.summary()
-        assert summary["total_cost_usd"] == 0
+        assert summary["total_cost_cny"] == 0
 
-    def test_cost_estimation_gpt4o(self):
-        tracker = UsageTracker()
-        tracker.record("test", "gpt-4o", prompt_tokens=1_000_000, completion_tokens=1_000_000)
-        summary = tracker.summary()
-        assert abs(summary["total_cost_usd"] - 12.50) < 0.01
-
-    def test_cost_estimation_qwen(self):
-        tracker = UsageTracker()
-        tracker.record("test", "qwen3-max-2026-01-23", prompt_tokens=1_000_000, completion_tokens=1_000_000)
-        summary = tracker.summary()
-        assert summary["total_cost_usd"] > 0
-        assert summary["by_model"]["qwen3-max-2026-01-23"]["call_count"] == 1
-
-    def test_cost_estimation_deepseek_v4(self):
+    def test_cost_estimation_deepseek_v4_pro(self):
         tracker = UsageTracker()
         tracker.record("test", "deepseek-v4-pro", prompt_tokens=1_000_000, completion_tokens=1_000_000)
         summary = tracker.summary()
-        assert abs(summary["total_cost_usd"] - (0.55 + 2.19)) < 0.01
+        assert abs(summary["total_cost_cny"] - 36.00) < 0.01
+
+    def test_cost_estimation_qwen(self):
+        tracker = UsageTracker()
+        tracker.record("test", "qwen3-max", prompt_tokens=1_000_000, completion_tokens=1_000_000)
+        summary = tracker.summary()
+        assert abs(summary["total_cost_cny"] - 12.50) < 0.01
+        assert summary["by_model"]["qwen3-max"]["call_count"] == 1
+
+    def test_cost_estimation_qwen36_plus(self):
+        tracker = UsageTracker()
+        tracker.record("test", "qwen3.6-plus", prompt_tokens=1_000_000, completion_tokens=1_000_000)
+        summary = tracker.summary()
+        assert abs(summary["total_cost_cny"] - 14.00) < 0.01
 
     def test_unknown_model_zero_cost(self):
         tracker = UsageTracker()
         tracker.record("test", "some-unknown-model", prompt_tokens=500, completion_tokens=500)
         summary = tracker.summary()
-        assert summary["total_cost_usd"] == 0.0
+        assert summary["total_cost_cny"] == 0.0
         assert summary["by_model"]["some-unknown-model"]["call_count"] == 1
 
 
 class TestUsageCallbackHandler:
-    """Tests for the LangChain callback that pipes on_llm_end into UsageTracker."""
+    """测试将 on_llm_end 事件转发到 UsageTracker 的 LangChain 回调。"""
 
     @staticmethod
     def _make_llm_result(
         prompt_tokens: int = 100,
         completion_tokens: int = 50,
-        model_name: str = "gpt-4o",
+        model_name: str = "deepseek-v4-pro",
     ) -> LLMResult:
         return LLMResult(
             generations=[[]],
@@ -132,7 +132,7 @@ class TestUsageCallbackHandler:
         assert summary["by_model"]["qwen3.6-plus"]["total_tokens"] == 450
 
     def test_callback_uses_usage_key(self):
-        """Some providers put token counts under 'usage' instead of 'token_usage'."""
+        """部分供应商将 token 计数放在 'usage' 而非 'token_usage' 键下。"""
         tracker = UsageTracker()
         handler = UsageCallbackHandler(tracker, tier_label="light")
 

@@ -1,1 +1,1 @@
-"""FastAPI routes and schemas."""
+"""FastAPI 路由与请求/响应模型。"""

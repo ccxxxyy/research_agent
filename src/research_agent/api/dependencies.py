@@ -1,4 +1,4 @@
-"""FastAPI dependency injection — provides shared resources to route handlers."""
+"""FastAPI 依赖注入 - 为路由处理器提供共享资源。"""
 
 from __future__ import annotations
 
@@ -17,14 +17,10 @@ def get_supervisor_graph(request: Request) -> CompiledStateGraph:
 
 
 def get_research_supervisor_graph(request: Request) -> CompiledStateGraph:
-    """Return the Phase-4.5 financial-research supervisor graph.
+    """返回金融研究 supervisor 图。
 
-    The lifespan tries to compile this graph eagerly; if MCP tool
-    discovery fails (e.g. network is down, ``uv`` is missing, etc.)
-    the attribute is left unset and we surface a 503 here rather
-    than an opaque ``AttributeError`` inside the route handler. A
-    503 (vs. 500) signals to clients that the server is reachable
-    but the downstream MCP dependency is not ready.
+    lifespan 会尽早编译此图；若 MCP 工具发现失败（如网络断开、``uv``未安装等），该属性将保持未设置状态，此处返回 503 而非路由处理器内部不透明的 ``AttributeError``。
+    503（非 500）向客户端表明服务器可达但下游 MCP 依赖尚未就绪。
     """
     graph = getattr(request.app.state, "research_supervisor_graph", None)
     if graph is None:

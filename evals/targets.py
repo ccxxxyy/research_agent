@@ -1,11 +1,8 @@
-"""Evaluation target: run the real supervisor graph and return structured outputs.
+"""评估目标：运行真实的 supervisor 图并返回结构化输出。
 
-The target bypasses FastAPI entirely — it calls ``graph.ainvoke`` directly
-so evaluation runs are not affected by auth, rate limiting, or HTTP overhead.
+目标完全绕过 FastAPI — 直接调用 ``graph.ainvoke``，因此评估运行不受认证、速率限制或 HTTP 开销影响。
 
-A single ``build_eval_environment`` call initialises the graph + memory once
-per evaluation session; ``supervisor_target`` is the per-example callable
-that ``langsmith.evaluate`` invokes.
+单次 ``build_eval_environment`` 调用在每个评估会话中初始化图 + 记忆一次；``supervisor_target`` 是 ``langsmith.evaluate`` 逐样本调用的可调用对象。
 """
 
 from __future__ import annotations
@@ -28,11 +25,9 @@ _MEMORY: MemoryManager | None = None
 
 
 async def build_eval_environment() -> None:
-    """One-time setup: compile the research supervisor and memory manager.
+    """一次性初始化：编译研究 supervisor 和记忆管理器。
 
-    Must be called before the first ``supervisor_target`` invocation.
-    Uses the same ``_try_build_research_supervisor`` path as the
-    production lifespan so the graph topology is identical.
+    必须在首次 ``supervisor_target`` 调用之前执行。使用与生产 lifespan 相同的 ``_try_build_research_supervisor`` 路径，以确保图拓扑完全一致。
     """
     global _GRAPH, _MEMORY  # noqa: PLW0603
 
@@ -60,11 +55,11 @@ async def build_eval_environment() -> None:
 
 
 async def supervisor_target(inputs: dict[str, Any]) -> dict[str, Any]:
-    """Run one evaluation example through the supervisor.
+    """通过 supervisor 运行一个评估样本。
 
     Args:
-        inputs: A dict matching the dataset schema —
-            ``{"query": str, "user_id": str, ...}``.
+        inputs: 匹配数据集 schema 的字典 —
+            ``{"query": str, "user_id": str, ...}``。
 
     Returns:
         ``{"reply": str, "specialists_reached": list[str],

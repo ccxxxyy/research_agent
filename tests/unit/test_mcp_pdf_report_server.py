@@ -1,20 +1,14 @@
-"""Phase-4.2: MCP ``pdf_report_server`` round-trip tests.
+"""Phase-4.2：MCP ``pdf_report_server`` 往返测试。
 
-Why this file is shaped the way it is
+为什么此文件如此组织
 -------------------------------------
-``pdf_report_server`` is the document plane of the Phase-4 financial
-agent. Every tool on it ultimately does I/O: ``search_announcements``
-hits the 巨潮资讯 listing endpoint via ``akshare``; ``download_pdf``
-hits ``static.cninfo.com.cn``; ``parse_pdf_pages`` and
-``extract_pdf_metadata`` are local-only but still need a PDF on disk
-that one of the first two calls produced.
+``pdf_report_server`` 是 Phase-4 金融 Agent 的文档平面。其上的每个工具最终都涉及 I/O：``search_announcements`` 通过``akshare`` 访问巨潮资讯的列表端点；
+``download_pdf`` 访问``static.cninfo.com.cn``；
+``parse_pdf_pages`` 和``extract_pdf_metadata`` 仅在本地执行，但仍需要前两个调用生成的磁盘上的 PDF 文件。
 
-Each test therefore opens **one** MCP session and chains as many tool
-calls as it needs to verify a contract, reusing the same subprocess
-across them — same pattern as ``test_mcp_fin_data_server.py``.
+因此每个测试打开一个MCP 会话，并链式调用所有需要验证契约的工具，跨调用复用同一子进程——与 ``test_mcp_fin_data_server.py``模式相同。
 
-All tests hit live HTTP endpoints, so they are tagged ``network``;
-offline CI should run with ``pytest -m 'not network'``.
+所有测试访问实时 HTTP 端点，因此标记为 ``network``；离线 CI 应使用 ``pytest -m 'not network'`` 运行。
 """
 
 from __future__ import annotations
@@ -36,12 +30,9 @@ from research_agent.mcp_servers.client_factory import (
 
 pytestmark = pytest.mark.network
 
-# Tools as returned by ``load_mcp_tools(session)`` — RAW names, without
-# the ``pdf_`` prefix that ``MultiServerMCPClient.get_tools()`` adds
-# via ``tool_name_prefix=True``. Prefixing is a client-layer concern,
-# not a server-layer one; the Agent-facing ``load_pdf_report_server_tools()``
-# helper keeps the ``pdf_`` prefix for supervisor disambiguation, and
-# that path is exercised separately by ``scripts/smoke_test_pdf_report_mcp.py``.
+# 工具名称由 ``load_mcp_tools(session)`` 返回——原始名称，不带 ``MultiServerMCPClient.get_tools()`` 通过 ``tool_name_prefix=True``添加的 ``pdf_`` 前缀。
+# 前缀是客户端层的关注点，而非服务器层的；
+# 面向 Agent 的 ``load_pdf_report_server_tools()`` 辅助函数保留``pdf_`` 前缀用于 supervisor 消歧，该路径由``scripts/smoke_test_pdf_report_mcp.py`` 单独验证。
 EXPECTED_TOOL_NAMES: set[str] = {
     "search_announcements",
     "download_pdf",
@@ -49,10 +40,7 @@ EXPECTED_TOOL_NAMES: set[str] = {
     "extract_pdf_metadata",
 }
 
-# 300750 宁德时代 reliably publishes an annual report each March. The
-# 2024-published disclosures (covering fiscal year 2023) are stable
-# historical data that akshare serves without session cookies — the
-# tests remain deterministic even a year after the publish date.
+# 300750 宁德时代每年 3 月可靠地发布年报。2024 年发布的披露（涵盖 2023 财年）是稳定的历史数据，akshare 无需会话 cookie即可提供——即使在发布日期一年后，测试仍保持确定性。
 SAMPLE_SYMBOL = "300750"
 SAMPLE_START = "20240101"
 SAMPLE_END = "20241231"
@@ -60,11 +48,9 @@ SAMPLE_END = "20241231"
 
 @asynccontextmanager
 async def _open_session() -> AsyncIterator[dict[str, BaseTool]]:
-    """Launch one ``pdf_report_server`` subprocess and yield its tools.
+    """启动一个 ``pdf_report_server`` 子进程并 yield 其工具。
 
-    Tools returned here are bound to the open session, so any number
-    of ``ainvoke(...)`` calls inside the ``async with`` block reuse
-    the same subprocess. This is the fast path.
+    此处返回的工具绑定到已打开的会话，因此 ``async with`` 块内 任意数量的 ``ainvoke(...)`` 调用都复用同一个子进程。这是快速路径。
     """
     client = MultiServerMCPClient(
         {
@@ -84,17 +70,15 @@ async def _open_session() -> AsyncIterator[dict[str, BaseTool]]:
 
 
 def _parse(raw: object) -> dict[str, Any]:
-    """Decode the JSON content block an MCP tool returns."""
+    """解码 MCP 工具返回的 JSON 内容块。"""
     return json.loads(extract_text_content(raw))
 
 
 async def _first_pdf_url(tools: dict[str, BaseTool]) -> str:
-    """Run a known-good search and return the first derivable pdf_url.
+    """执行一次已知可用的搜索并返回第一个可派生的 pdf_url。
 
-    Kept as a helper rather than a fixture because pytest-asyncio
-    fixtures across session-scoped contextmanagers would force us to
-    share one subprocess across every test in the module, and we'd
-    rather fail fast per test than entangle their lifecycles.
+    保持为辅助函数而非 fixture，因为跨会话作用域上下文管理器的 pytest-asyncio fixture 会迫使模块内所有测试共享同一子进程，
+    更希望每个测试独立快速失败，而非耦合它们的生命周期。
     """
     hits = _parse(
         await tools["search_announcements"].ainvoke(
@@ -114,17 +98,16 @@ async def _first_pdf_url(tools: dict[str, BaseTool]) -> str:
 
 
 # ---------------------------------------------------------------------
-# Test 1: tool discovery + search contract + input validation
+# 测试 1：工具发现 + 搜索契约 + 输入校验
 # ---------------------------------------------------------------------
 async def test_discovery_and_search() -> None:
-    """All four tools advertised; ``search_announcements`` works end-to-end.
+    """所有四个工具均已发布；``search_announcements`` 端到端正常工作。
 
-    Consolidates:
-      - MCP handshake + tool-schema round-trip
-      - Happy-path search (2023 年报 for 宁德时代, 2 stable records)
-      - Each record exposes a derivable ``pdf_url``
-      - Bad category rejected at the tool boundary (before hitting
-        cninfo) with a structured error.
+    整合验证：
+      - MCP 握手 + 工具 schema 往返
+      - 正常路径搜索（宁德时代 2023 年报，2 条稳定记录）
+      - 每条记录暴露一个可派生的 ``pdf_url``
+      - 无效分类在工具边界（访问 cninfo 之前）被拒绝并返回结构化错误。
     """
     async with _open_session() as tools:
         assert EXPECTED_TOOL_NAMES.issubset(tools.keys()), (
@@ -148,7 +131,7 @@ async def test_discovery_and_search() -> None:
         assert len(announcements) == hits["count"]
 
         row = announcements[0]
-        # Contract: every row has the six fields agent prompts rely on.
+        # 契约：每行包含 Agent 提示词依赖的六个字段。
         for key in ("code", "name", "title", "publish_date", "detail_url", "pdf_url"):
             assert key in row, f"missing {key!r} in {row!r}"
         assert row["code"] == SAMPLE_SYMBOL
@@ -171,18 +154,15 @@ async def test_discovery_and_search() -> None:
 
 
 # ---------------------------------------------------------------------
-# Test 2: download + on-disk cache + URL validation
+# 测试 2：下载 + 磁盘缓存 + URL 校验
 # ---------------------------------------------------------------------
 async def test_download_and_cache() -> None:
-    """``download_pdf`` writes a valid PDF and is idempotent on re-call.
+    """``download_pdf`` 写入有效 PDF 且重复调用具有幂等性。
 
-    Verifies:
-      - First call actually downloads and writes a %PDF-magic file,
-        returning ``from_cache=False`` and a positive ``size_bytes``.
-      - Second call with the same URL hits the cache
-        (``from_cache=True``) and returns the identical path.
-      - An absolute non-http URL fails at the tool boundary with a
-        structured error, never hitting the wire.
+    验证：
+      - 首次调用实际下载并写入 %PDF-magic 文件， 返回 ``from_cache=False`` 和正数 ``size_bytes``。
+      - 相同 URL 的第二次调用命中缓存 （``from_cache=True``）并返回相同路径。
+      - 非 http 的绝对 URL 在工具边界以结构化错误失败，不会触达网络。
     """
     async with _open_session() as tools:
         pdf_url = await _first_pdf_url(tools)
@@ -190,7 +170,7 @@ async def test_download_and_cache() -> None:
         first = _parse(await tools["download_pdf"].ainvoke({"pdf_url": pdf_url}))
         assert "error" not in first, first
         assert first["pdf_url"] == pdf_url
-        assert first["size_bytes"] > 10_000, first  # even the shortest summary is >10 KB
+        assert first["size_bytes"] > 10_000, first  # 即使最短的摘要也 >10 KB
         assert isinstance(first["from_cache"], bool)
         local_path_first = first["local_path"]
 
@@ -208,22 +188,17 @@ async def test_download_and_cache() -> None:
 
 
 # ---------------------------------------------------------------------
-# Test 3: parse + metadata + page-window guard
+# 测试 3：解析 + 元数据 + 页面窗口限制
 # ---------------------------------------------------------------------
 async def test_parse_and_metadata() -> None:
-    """Page-range extraction and metadata are consistent for one PDF.
+    """单个 PDF 的页面范围提取与元数据一致性验证。
 
-    Chain: search → download → parse_pdf_pages → extract_pdf_metadata.
+    调用链：search → download → parse_pdf_pages → extract_pdf_metadata。
 
-    Verifies:
-      - ``extract_pdf_metadata`` reports a positive ``num_pages`` and
-        a ``metadata`` dict with lowercase keys.
-      - ``parse_pdf_pages`` returns text for pages ``[1, N]`` where
-        ``N <= total_pages``, with correct 1-indexed page numbers and
-        non-trivial ``char_count`` for at least one page (cninfo
-        annual reports are text-layered, not scanned images).
-      - Requesting a window larger than ``MAX_PAGE_WINDOW`` is
-        rejected at the tool boundary.
+    验证：
+      - ``extract_pdf_metadata`` 报告正数 ``num_pages``  含小写键的 ``metadata`` 字典。
+      - ``parse_pdf_pages`` 返回页面 ``[1, N]``（``N <= total_pages``）的文本，使用正确的 1 索引页码，且至少一页有非零的 ``char_count``（巨潮年报是文本层而非扫描图像）。
+      - 请求超过 ``MAX_PAGE_WINDOW`` 的窗口在工具边界被拒绝。
     """
     async with _open_session() as tools:
         pdf_url = await _first_pdf_url(tools)
@@ -240,8 +215,7 @@ async def test_parse_and_metadata() -> None:
         assert meta["num_pages"] >= 1
         assert meta["size_bytes"] == dl["size_bytes"]
         assert isinstance(meta["metadata"], dict)
-        # PDF metadata keys, when present, should be the lowercase form
-        # produced by our ``key_map`` normalization — not raw ``/Title``.
+        # PDF 元数据键（如果存在）应为我们 ``key_map`` 规范化后的 小写形式 — 而非原始的 ``/Title``。
         for k in meta["metadata"]:
             assert not k.startswith("/"), (
                 f"metadata key {k!r} should have been stripped of its leading slash"

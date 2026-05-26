@@ -1,1 +1,1 @@
-"""Observability — structured logging and LangSmith tracing."""
+"""可观测性 — 结构化日志与 LangSmith 链路追踪。"""

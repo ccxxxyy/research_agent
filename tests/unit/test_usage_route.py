@@ -1,4 +1,4 @@
-"""Unit tests for GET /api/usage and GET /metrics."""
+"""GET /api/usage 和 GET /metrics 的单元测试。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ async def test_usage_returns_tracker_summary() -> None:
     sample = {
         "by_agent": {"light": {"prompt_tokens": 1, "call_count": 1}},
         "by_model": {"gpt-test": {}},
-        "total_cost_usd": 0.01,
+        "total_cost_cny": 0.01,
     }
     mr = MagicMock()
     mr.usage.summary.return_value = sample
@@ -51,10 +51,10 @@ async def test_metrics_returns_prometheus_text() -> None:
                 "completion_tokens": 80,
                 "total_tokens": 200,
                 "call_count": 3,
-                "total_cost_usd": 0.0003,
+                "total_cost_cny": 0.0003,
             },
         },
-        "total_cost_usd": 0.0003,
+        "total_cost_cny": 0.0003,
     }
 
     app = FastAPI()

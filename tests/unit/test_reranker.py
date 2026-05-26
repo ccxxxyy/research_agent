@@ -1,12 +1,9 @@
-"""Unit tests for the cross-encoder reranker.
+"""cross-encoder reranker 的单元测试。
 
-Two tiers:
+两个层级：
 
-1. **Fast tier** (default): mock the underlying CrossEncoder so we
-   exercise the reranker's ordering / fallback logic without
-   downloading the ~280 MB ``BAAI/bge-reranker-base`` weights.
-2. **Slow tier** (``-m slow``): one real round-trip against the
-   actual model. Skipped by default; opt in for full validation.
+1. 快速层（默认）：mock 底层 CrossEncoder，以便在不下载 约 280 MB ``BAAI/bge-reranker-base`` 权重的情况下测试 reranker 的排序/降级逻辑。
+2. 慢速层（``-m slow``）：针对真实模型的一次实际往返。默认跳过；选择性加入以进行完整验证。
 """
 
 from __future__ import annotations
@@ -20,11 +17,9 @@ from research_agent.rag.reranker import CrossEncoderReranker
 
 
 class _FakeCrossEncoder:
-    """Predictable stand-in for ``sentence_transformers.CrossEncoder``.
+    """``sentence_transformers.CrossEncoder`` 的可预测替身。
 
-    Returns one score per (query, document) pair. The default scoring
-    function rewards documents whose content shares more whitespace
-    tokens with the query — enough determinism for ordering tests.
+    每个 (query, document) 对返回一个分数。默认评分函数奖励与查询共享更多空格分词的文档内容 — 足够的确定性用于排序测试。
     """
 
     def __init__(self, score_fn=None) -> None:
@@ -42,10 +37,9 @@ class _FakeCrossEncoder:
 
 @pytest.fixture(autouse=True)
 def _reset_reranker_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make sure the module-level singleton never leaks across tests.
+    """确保模块级单例不会在测试间泄漏。
 
-    Without this, a test that installed a fake encoder would poison
-    later tests that wanted to install a different one.
+    如果没有此 fixture，安装了伪造编码器的测试会污染后续想要安装不同编码器的测试。
     """
     monkeypatch.setattr(reranker_module, "_CROSS_ENCODER", None)
 
@@ -53,12 +47,12 @@ def _reset_reranker_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
 def _install_fake_encoder(
     monkeypatch: pytest.MonkeyPatch, encoder: _FakeCrossEncoder
 ) -> None:
-    """Pin the fake encoder as the singleton for the duration of a test."""
+    """在测试持续期间将伪造编码器固定为单例。"""
     monkeypatch.setattr(reranker_module, "_CROSS_ENCODER", encoder)
 
 
 # ---------------------------------------------------------------------
-# Trivial cases — short-circuit paths must not touch the model
+# 简单情况 — 短路路径不得接触模型
 # ---------------------------------------------------------------------
 
 
@@ -72,8 +66,7 @@ class TestTrivialCases:
     async def test_single_doc_returns_single_doc_unchanged(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Single-doc path must short-circuit BEFORE touching the model:
-        # install a fake that would crash if predict() ran.
+        # 单文档路径必须在接触模型之前短路：安装一个如果 predict() 执行就会崩溃的伪造对象。
         class _Boom:
             def predict(self, _pairs: Any) -> list[float]:
                 raise AssertionError("predict() should not be called for n=1")
@@ -87,7 +80,7 @@ class TestTrivialCases:
 
 
 # ---------------------------------------------------------------------
-# Ordering — the central guarantee
+# 排序 — 核心保证
 # ---------------------------------------------------------------------
 
 
@@ -106,11 +99,11 @@ class TestOrdering:
             "carbon neutrality scope", docs
         )
         contents = [d["content"] for d in out]
-        # Highest-overlap doc must come first, then medium, then zero.
+        # 重叠度最高的文档必须排第一，然后是中等，最后是零。
         assert contents[0] == "carbon neutrality scope two emissions"
         assert contents[1] == "carbon neutrality"
         assert contents[-1] == "totally unrelated content"
-        # rerank_score is attached, monotonic non-increasing.
+        # rerank_score 已附加，单调非递增。
         scores = [d["rerank_score"] for d in out]
         assert scores == sorted(scores, reverse=True)
 
@@ -124,13 +117,13 @@ class TestOrdering:
             {"content": "alpha", "metadata": {"source": "b.pdf", "page": 3}},
         ]
         out = await CrossEncoderReranker().rerank("alpha beta", docs)
-        # Caller should be able to look up metadata after rerank.
+        # 调用者应能在重排序后查找元数据。
         assert out[0]["metadata"]["source"] == "a.pdf"
         assert out[0]["metadata"]["page"] == 7
 
 
 # ---------------------------------------------------------------------
-# Fallback — predict() failure must NOT break the caller
+# 降级 — predict() 失败不得中断调用者
 # ---------------------------------------------------------------------
 
 
@@ -150,15 +143,14 @@ class TestFallback:
             {"content": "doc three"},
         ]
         out = await CrossEncoderReranker().rerank("query", docs)
-        # Order preserved verbatim.
+        # 顺序原样保留。
         assert [d["content"] for d in out] == ["doc one", "doc two", "doc three"]
-        # rerank_score field is present-but-None on every doc — the
-        # response shape must stay stable for downstream code.
+        # 每个文档的 rerank_score 字段存在但为 None ——响应形状必须对下游代码保持稳定。
         assert all(d["rerank_score"] is None for d in out)
 
 
 # ---------------------------------------------------------------------
-# max_pairs ceiling — items past the cap stay (with score=None)
+# max_pairs 上限 — 超出上限的项保留（score=None）
 # ---------------------------------------------------------------------
 
 
@@ -169,16 +161,13 @@ class TestMaxPairs:
     ) -> None:
         _install_fake_encoder(monkeypatch, _FakeCrossEncoder())
         docs = [{"content": f"doc {i}"} for i in range(10)]
-        # Cap at 4 — the remaining 6 must NOT lose their slot but
-        # their rerank_score should be None and they should sort last.
+        # 上限为 4 — 剩余 6 个不得丢失位置，但其 rerank_score应为 None 且排在最后。
         ranker = CrossEncoderReranker(max_pairs=4)
         out = await ranker.rerank("doc 0", docs)
         assert len(out) == 10
-        # The first ``max_pairs`` items (0..3) all share the "doc"
-        # token with the query so they get a positive score; doc 0
-        # wins the tiebreak by also matching "0".
+        # 前 ``max_pairs`` 个项（0..3）都与查询共享 "doc" 词元，因此获得正分数；doc 0 通过同时匹配 "0" 赢得平局。
         assert out[0]["content"] == "doc 0"
-        # The unranked items (5..9) settle at the tail with None.
+        # 未排序的项（5..9）以 None 分数落在尾部。
         unscored = [d for d in out if d["rerank_score"] is None]
         assert len(unscored) == 6
         unscored_contents = {d["content"] for d in unscored}
@@ -186,21 +175,20 @@ class TestMaxPairs:
 
 
 # ---------------------------------------------------------------------
-# knowledge_server._maybe_rerank — env-var gate + fallback contract
+# knowledge_server._maybe_rerank — 环境变量门控 + 降级契约
 # ---------------------------------------------------------------------
 
 
 class TestMaybeRerankIntegration:
-    """The ``_maybe_rerank`` adapter inside ``knowledge_server`` is the
-    seam between the FAISS / BM25 retriever and the cross-encoder.
-    These tests pin its three invariants:
+    """``knowledge_server`` 内的 ``_maybe_rerank`` 适配器是 FAISS / BM25
+    检索器与 cross-encoder 之间的接缝。这些测试固定其三个不变量：
 
-      1. ``KNOWLEDGE_RERANKER_ENABLED=0`` short-circuits with stable
-         response shape (``rerank_score: None``).
-      2. With reranker on, items get positive ``rerank_score`` and
-         the order reflects the cross-encoder.
-      3. Any exception inside the reranker leaves the candidate
-         list usable (no crash, ``rerank_score: None``).
+      1. ``KNOWLEDGE_RERANKER_ENABLED=0`` 以稳定的响应形状
+         （``rerank_score: None``）短路。
+      2. 启用 reranker 时，项获得正的 ``rerank_score``，
+         且顺序反映 cross-encoder 的结果。
+      3. reranker 内的任何异常都使候选列表保持可用
+         （不崩溃，``rerank_score: None``）。
     """
 
     @pytest.mark.asyncio
@@ -210,8 +198,7 @@ class TestMaybeRerankIntegration:
         from research_agent.mcp_servers import knowledge_server as ks
 
         monkeypatch.setenv("KNOWLEDGE_RERANKER_ENABLED", "0")
-        # Even if a singleton happened to be installed, the env-var
-        # branch must run first and never touch it.
+        # 即使已安装了单例，环境变量分支也必须先运行且不接触它。
         ks._RERANKER = object()  # type: ignore[assignment]
 
         candidates = [
@@ -229,12 +216,10 @@ class TestMaybeRerankIntegration:
         from research_agent.mcp_servers import knowledge_server as ks
 
         monkeypatch.setenv("KNOWLEDGE_RERANKER_ENABLED", "1")
-        # Pre-install a fake reranker on the module-level slot so we
-        # don't load the real model.
+        # 在模块级槽位预装伪造 reranker，避免加载真实模型。
         fake_inner = _FakeCrossEncoder()
         monkeypatch.setattr(reranker_module, "_CROSS_ENCODER", fake_inner)
-        # Force a fresh lazy-init of the wrapper so it picks up our
-        # injected encoder rather than any cached instance.
+        # 强制包装器的新惰性初始化，以拾取我们注入的编码器 而非任何缓存实例。
         ks._RERANKER = None
 
         candidates = [
@@ -242,8 +227,7 @@ class TestMaybeRerankIntegration:
             {"content": "totally unrelated", "rrf_score": 0.9},
         ]
         out = await ks._maybe_rerank("carbon neutrality", candidates)
-        # Reranker promotes the carbon-neutrality doc DESPITE its
-        # lower RRF score — that promotion is the whole point.
+        # reranker 将碳中和文档提升到前面，尽管其 RRF 分数更低 — 这种提升正是其意义所在。
         assert "carbon" in out[0]["content"]
         assert all(d["rerank_score"] is not None for d in out)
 
@@ -267,32 +251,28 @@ class TestMaybeRerankIntegration:
             {"content": "second"},
         ]
         out = await ks._maybe_rerank("query", candidates)
-        # Order preserved, scores set to None — exactly what the
-        # ``_search`` consumer counts on.
+        # 顺序保留，分数设为 None — 正是 ``_search``消费者所依赖的行为。
         assert [d["content"] for d in out] == ["first", "second"]
         assert all(d["rerank_score"] is None for d in out)
 
 
 # ---------------------------------------------------------------------
-# Slow tier — real model
+# 慢速层 — 真实模型
 # ---------------------------------------------------------------------
 
 
 @pytest.mark.slow
 class TestRealModel:
-    """One real round-trip against ``BAAI/bge-reranker-base``.
+    """针对 ``BAAI/bge-reranker-base`` 的一次真实往返。
 
-    First run downloads ~280 MB into ``~/.cache/huggingface``;
-    subsequent runs are sub-second on warm cache. Run with
-    ``pytest -m slow``.
+    首次运行下载约 280 MB 到 ``~/.cache/huggingface``；后续运行在预热缓存上不到一秒。使用 ``pytest -m slow`` 运行。
     """
 
     @pytest.mark.asyncio
     async def test_real_reranker_promotes_relevant_doc(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Force-reset any module-level state so this test exercises
-        # the actual ``_get_cross_encoder`` lazy-load path.
+        # 强制重置所有模块级状态，以便此测试执行实际的 ``_get_cross_encoder`` 惰性加载路径。
         monkeypatch.setattr(reranker_module, "_CROSS_ENCODER", None)
         docs = [
             {"content": "Annual dividend payout is 0.12 USD per share."},
@@ -308,8 +288,6 @@ class TestRealModel:
             "carbon neutrality 2030 target", docs
         )
         assert len(out) == 3
-        # The carbon-neutrality doc must rank #1 — if it doesn't,
-        # something is structurally wrong with our integration
-        # (model name, max_pairs, scoring direction).
+        # 碳中和文档必须排第 1 — 如果没有，说明集成 存在结构性问题（模型名称、max_pairs、评分方向）。
         assert "scope" in out[0]["content"].lower()
         assert all(d["rerank_score"] is not None for d in out)

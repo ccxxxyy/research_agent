@@ -1,10 +1,10 @@
 [project]
 name = "research-agent"
 version = "0.1.0"
-description = "Multi-agent deep research system powered by LangGraph, MCP, and Agentic RAG"
+description = "基于 LangGraph、MCP 和 Agentic RAG 的多 Agent 深度研究系统"
 requires-python = ">=3.12"
 dependencies = [
-    # === LangGraph / LangChain Core ===
+    # === LangGraph / LangChain 核心 ===
     "langgraph>=0.3",
     "langgraph-supervisor",
     "langgraph-checkpoint-postgres",
@@ -18,39 +18,35 @@ dependencies = [
     "mcp",
     "fastmcp",
     # === RAG ===
-    # NOTE: We deliberately use FAISS (faiss-cpu) instead of Chroma. On
-    # Windows, importing chromadb inside an MCP-stdio subprocess corrupts
-    # the JSON-RPC channel between the parent client and the FastMCP
-    # server (see docs/adr/0001-faiss-over-chroma.md).
-    # FAISS has no telemetry, no background threads, and a much simpler
-    # persistence model (single .faiss file + sidecar pickle), which is
-    # both more reliable and a better fit for the 10s-1000s-of-chunks
-    # personal-knowledge scale we target.
+    # 注意: 我们故意使用 FAISS (faiss-cpu) 而非 Chroma。
+    # 在 Windows 上，在 MCP-stdio 子进程中导入 chromadb 会破坏父客户端与 FastMCP 服务器之间的 JSON-RPC 通道（见 docs/adr/0001-faiss-over-chroma.md）。
+    # FAISS 无遥测、无后台线程，持久化模型更简单（单个 .faiss 文件 +辅助 pickle 文件），这对目标的 10-1000 分块级个人知识库规模更可靠且更合适。
     "faiss-cpu",
     "sentence-transformers",
     "unstructured[md,pdf]",
     "rank-bm25",
-    # === LLM Providers ===
+    # === LLM 提供商 ===
     "openai",
     "litellm",
-    # === Web Framework ===
+    # === Web 框架 ===
     "fastapi>=0.115",
     "uvicorn[standard]",
     "sse-starlette",
     "pydantic>=2.0",
     "pydantic-settings",
-    # === Database ===
+    # === 数据库 ===
     "sqlalchemy>=2.0",
     "asyncpg",
     "psycopg[binary,pool]",
     "psycopg-pool",
     "redis",
-    # === Observability ===
+    # === 可观测性 ===
     "langsmith",
     "loguru",
     "rich",
     "langchain-huggingface>=1.2.2",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "aiosqlite>=0.20",
     "akshare>=1.18.56",
     "snownlp",
 ]
@@ -66,10 +62,9 @@ dev = [
     "pre-commit",
     "fakeredis",
 ]
-# Optional: only needed to run ``modelscope.snapshot_download(...)`` when
-# priming ``~/.cache/modelscope/...`` for the reranker on networks where
-# HuggingFace Hub is slow. Runtime reranking uses ``sentence-transformers``
-# only; it does not import the ``modelscope`` package.
+# 可选: 仅在 HuggingFace Hub 较慢的网络上运行
+# ``modelscope.snapshot_download(...)`` 预热 ``~/.cache/modelscope/...`` 中的重排序器时需要。运行时重排序仅使用 ``sentence-transformers``；
+# 不导入 ``modelscope`` 包。
 modelscope = [
     "modelscope>=1.36.3",
 ]
@@ -109,8 +104,8 @@ warn_unused_configs = true
 testpaths = ["tests", "evals"]
 asyncio_mode = "auto"
 markers = [
-    "network: tests that hit live third-party HTTP endpoints (akshare, xueqiu, sina). Skip in offline CI with ``pytest -m 'not network'``.",
-    "slow: tests that load heavy ML model weights (e.g. HuggingFace embedders) or run multi-second pipelines end-to-end. Opt-in via ``pytest -m slow``; skipped by default with ``pytest -m 'not slow'``.",
-    "integration: end-to-end / cross-component tests that bring up FastAPI, MCP subprocesses, or a full graph. Run with ``pytest -m integration``; routinely skipped in unit-only flows.",
-    "eval: LangSmith evaluation suite — requires live LLM + LANGSMITH_API_KEY. Run with ``python -m evals.eval_supervisor`` or ``pytest -m eval``.",
+    "network: 访问第三方实时 HTTP 端点的测试（akshare、雪球、新浪）。离线 CI 中用 ``pytest -m 'not network'`` 跳过。",
+    "slow: 加载重量级 ML 模型权重（如 HuggingFace embedder）或端到端运行多秒流水线的测试。通过 ``pytest -m slow`` 启用；默认用 ``pytest -m 'not slow'`` 跳过。",
+    "integration: 端到端 / 跨组件测试，启动 FastAPI、MCP 子进程或完整图。用 ``pytest -m integration`` 运行；纯单元测试流程中常规跳过。",
+    "eval: LangSmith 评估套件 — 需要实时 LLM + LANGSMITH_API_KEY。用 ``python -m evals.eval_supervisor`` 或 ``pytest -m eval`` 运行。",
 ]

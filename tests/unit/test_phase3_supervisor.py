@@ -1,4 +1,4 @@
-"""Phase-3: minimal supervisor graph compiles without live LLM calls."""
+"""最小 supervisor 图在无实际 LLM 调用的情况下正确编译。"""
 
 from __future__ import annotations
 

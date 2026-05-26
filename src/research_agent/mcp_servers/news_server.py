@@ -1,71 +1,50 @@
-"""MCP Server — A-share financial news / sentiment via ``akshare``.
+"""MCP Server — 通过 ``akshare`` 获取 A 股金融新闻 / 情感数据。
 
-This is the **news plane** of the financial research pipeline. Where
-``fin_data_server`` delivers structured market / fundamentals data and
-``pdf_report_server`` delivers official disclosure PDFs, this server
-delivers timely **textual** signal: company news, real-time market
-flashes, trending topics, and macro digests.
+本服务器是金融研究管道的 新闻层。
+``fin_data_server`` 提供结构化的行情 / 基本面数据，
+``pdf_report_server`` 提供官方披露 PDF，
+而本服务器提供及时的 文本 信号：公司新闻、实时市场快讯、热搜话题和宏观摘要。
 
-Tools exposed
--------------
-1. ``get_stock_news`` — recent news articles for a specific A-share
-   ticker (东方财富 individual-stock feed).
-2. ``get_market_telegraph`` — real-time market-wide news flashes
-   (财联社 telegraph, refreshed every few minutes).
-3. ``get_hot_keywords`` — trending keywords / topics surrounding a
-   ticker (东方财富 hot-keyword endpoint), useful as a fast sentiment-
-   signal proxy.
-4. ``get_economic_news`` — daily macro / economic news digest from
-   百度财经 (财经早晚报 format).
-5. ``get_xueqiu_discussion_hot_rank`` — 雪球沪深「讨论」热度排行榜
-   (个股维度). Wraps ``akshare.stock_hot_tweet_xq`` from
-   ``stock_feature/stock_hot_xq.py``. Returns **stocks** ranked by
-   discussion-activity metrics on xueqiu.com/hq — **not** individual
-   forum post titles/bodies.
+提供的工具
+----------
+1. ``get_stock_news`` — 特定 A 股代码的近期新闻文章（东方财富个股新闻流）。  东方财富 / 某只股票的近期新闻（标题+摘要+链接） / "宁德时代最近有什么新闻"
+2. ``get_market_telegraph`` — 实时全市场新闻快讯（财联社电报，每隔数分钟刷新）。 财联社 / 全市场实时快讯（短消息） / "今天 A 股有什么大事"
+3. ``get_hot_keywords`` — 围绕某个代码的热搜关键词/话题（东方财富热搜词端点），可作为快速情感信号代理。 东方财富 / 某只股票的热搜概念词（如"固态电池"） / "蔚来目前大家在讨论什么"
+4. ``get_economic_news`` — 来自百度财经的每日宏观/经济新闻摘要（财经早晚报格式）。 百度财经 / 当日宏观/政策新闻摘要 / "最近有什么宏观政策"
+5. ``get_xueqiu_discussion_hot_rank`` — 雪球沪深「讨论」热度排行榜（个股维度）。 雪球 / 讨论最火的股票排行榜 / "雪球上哪些票讨论最多"
+     封装 ``akshare.stock_hot_tweet_xq``（来自``stock_feature/stock_hot_xq.py``）。
+     返回按 xueqiu.com/hq 上讨论活跃度指标排序的个股 — 不是论坛帖子的标题/正文。
 
-Why a separate server (vs. extending ``fin_data_server``)?
-----------------------------------------------------------
-``fin_data_server``'s tools all return numeric / tabular data. The
-news tools here return **free-text** payloads at ~10× the size, with
-different latency characteristics (no caching is needed — news is
-inherently fresh) and a different failure mode (an empty news feed is
-NORMAL when nothing happened, whereas an empty K-line is a bug). The
-LLM also needs different prompt rules for news vs. price data — see
-``NEWS_EXPERT_PROMPT`` in ``agents/specialists.py``.
+akshare 是一个统一的数据接口。它把各个网站的 API 都封装成了 Python 函数。news_server 通过调 akshare 来间接调各个网站。
 
-Multi-source / fallback strategy
---------------------------------
-Each tool primarily talks to ONE provider; we do not cascade through
-backups the way price endpoints do. Rationale: news payloads are
-qualitative, so a missing source is better surfaced honestly to the
-agent ("provider X is down, no news available right now") than papered
-over with stale data from a fallback. The agent can then decide
-whether the user's question demands news or can be answered from the
-data / report planes.
+akshare（Python 第三方库，统一封装） 和各数据源的关系
+  ├── 东方财富 API → 个股新闻、热搜关键词
+  ├── 财联社 API   → 实时市场快讯
+  ├── 百度财经 API → 宏观经济摘要
+  └── 雪球 API     → 讨论热度排行榜
 
-Sentiment as the agent's job, not the tool's
---------------------------------------------
-We deliberately do NOT ship an ``analyze_sentiment`` tool. Lightweight
-keyword-based sentiment is too crude for the financial domain (a
-phrase like "毛利率下滑但费用率改善" defies a single positive/negative
-label), and an LLM-based sentiment tool would duplicate what the
-``news_expert`` agent already does on top of these raw feeds. The
-agent reads the news content and reasons about sentiment in its
-synthesis — this keeps the tool surface lean and reproducibility high.
+为什么单独成服务器（而不扩展 ``fin_data_server``）？
+----------------------------------------------------
+``fin_data_server`` 的工具全部返回数值 / 表格数据。
+此处的新闻工具返回约 10 倍大小的自由文本负载，具有不同的延迟特征（不需要缓存 — 新闻天然是新鲜的）和不同的失败模式（空新闻流在无事发生时是正常的，而空 K 线是个 bug）。
+LLM 对新闻与行情数据也需要不同的提示规则 — 见``agents/specialists.py`` 中的 ``NEWS_EXPERT_PROMPT``。
 
-Design notes
-------------
-- ``akshare`` is synchronous and I/O-bound. Each tool wraps it in
-  ``asyncio.to_thread`` so a slow upstream does not block the MCP
-  stdio event loop.
-- Errors are returned as ``{"error": "...", "context": "..."}`` —
-  raising would kill the stdio subprocess.
-- All upstream column names are kept in Chinese. The LLM tier we
-  target (DeepSeek / Qwen / etc.) reads Chinese fluently; translating
-  to English would lose information the agent might cite verbatim.
-- We bound returned rows by an explicit ``limit`` parameter (default
-  modest) to keep individual tool responses comfortably under the
-  LLM context window. ``limit`` is capped to ``MAX_LIMIT=100``.
+多源 / 回退策略
+----------------
+每个工具主要与一个提供方通信；不像行情端点那样级联备份。理由：新闻负载是定性的，因此缺失的数据源最好如实告知 Agent（"提供方 X 宕机，当前无新闻可用"），
+而非用回退源的陈旧数据掩盖。Agent 可自行判断用户问题是否必须依赖新闻，还是可以从数据 / 研报层回答。
+
+情感分析是 Agent 的工作，而非工具的
+------------------------------------
+刻意不提供 ``analyze_sentiment`` 工具。基于关键词的轻量情感分析对金融领域来说过于粗糙（如"毛利率下滑但费用率改善"无法归为单一正/负标签），
+而基于 LLM 的情感工具会与 ``news_expert`` Agent 在原始新闻流上已做的工作重复。Agent 阅读新闻内容并在其综合分析中推理情感 — 这使工具接口保持精简，复现性保持高水平。
+
+设计说明
+--------
+- ``akshare`` 是同步且 I/O 密集的。每个工具用 ``asyncio.to_thread``包装，确保上游慢响应不会阻塞 MCP stdio 事件循环。
+- 错误以 ``{"error": "...", "context": "..."}`` 形式返回 —抛出异常会终止 stdio 子进程。
+- 所有上游列名保持中文。目标的 LLM 层（DeepSeek / Qwen 等）能流畅阅读中文；翻译为英文会丢失 Agent 可能逐字引用的信息。
+- 通过显式 ``limit`` 参数（默认值适中）限制返回行数，确保单个工具响应在 LLM 上下文窗口内。``limit`` 上限为 ``MAX_LIMIT=100``。
 """
 
 from __future__ import annotations
@@ -80,31 +59,26 @@ from fastmcp import FastMCP
 mcp = FastMCP("FinNewsAShare")
 
 # ---------------------------------------------------------------------
-# Configuration
+# 配置
 # ---------------------------------------------------------------------
 MAX_LIMIT = 100
-"""Hard ceiling on ``limit`` for any tool. Beyond this the LLM context
-window starts to suffer (a single ``stock_news_em`` row can be ~500
-chars including title + summary).
+"""任何工具的 ``limit`` 硬性上限。超过此值 LLM 上下文窗口会开始受影响（单条 ``stock_news_em`` 记录含标题+摘要可达约 500 字符）。
 """
 
 _SHANGHAI_TZ = timezone(timedelta(hours=8))
 
 
 def _fmt_error(exc: Exception, *, context: str) -> dict[str, Any]:
-    """Canonical error shape — LLM-readable, no stack traces."""
+    """标准错误格式 — LLM 可读，无堆栈跟踪。"""
     return {"error": f"{type(exc).__name__}: {exc}", "context": context}
 
 
 def _df_to_records(
     df: pd.DataFrame, *, limit: int | None = None
 ) -> list[dict[str, Any]]:
-    """Convert a DataFrame to a list of JSON-safe dicts.
+    """将 DataFrame 转换为 JSON 安全的字典列表。
 
-    Mirrors the helper in ``fin_data_server`` so news payloads keep
-    the same wire shape (Chinese keys, ``None`` for NaN, ISO-format
-    dates) — agents can switch between the data / news planes
-    without learning two response conventions.
+    与 ``fin_data_server`` 中的辅助函数保持一致的线上格式（中文键名、NaN 为 ``None``、ISO 格式日期）— Agent 可在数据 / 新闻层之间切换而无需学习两种响应约定。
     """
     if limit is not None:
         df = df.head(limit)
@@ -125,36 +99,34 @@ def _df_to_records(
 
 
 def _today_shanghai_yyyymmdd() -> str:
-    """Return today's date in Asia/Shanghai as ``YYYYMMDD``.
+    """返回亚洲/上海时区今日日期，格式为 ``YYYYMMDD``。
 
-    News digests publish on Shanghai-local schedules; using UTC would
-    yield an off-by-one date for any call before 08:00 CST.
+    新闻摘要按上海本地时间发布，因此以上海时间为基准计算"今天"。
     """
     return datetime.now(tz=_SHANGHAI_TZ).strftime("%Y%m%d")
 
 
 def _coerce_limit(limit: int) -> int:
-    """Normalise ``limit`` into ``[1, MAX_LIMIT]``."""
+    """将 ``limit`` 规范化到 ``[1, MAX_LIMIT]`` 范围。"""
     return max(1, min(int(limit), MAX_LIMIT))
 
 
 # ---------------------------------------------------------------------
-# Tool 0 (listed fifth in module doc): 雪球讨论热度榜（个股）
+# 工具 0（模块文档中列为第五个）: 雪球讨论热度榜（个股）
 # ---------------------------------------------------------------------
 XUEQIU_DISCUSSION_RANKINGS = frozenset({"最热门", "本周新增"})
-"""Passed verbatim to ``akshare.stock_hot_tweet_xq(symbol=...)``.
+"""原样传递给 ``akshare.stock_hot_tweet_xq(symbol=...)``。
 
-* ``最热门`` — total discussion-intensity rank (API ``order_by=tweet``).
-* ``本周新增`` — last-7-day discussion rank (API ``order_by=tweet7d``).
+* ``最热门`` — 总讨论强度排名（API ``order_by=tweet``）。
+* ``本周新增`` — 最近 7 天讨论排名（API ``order_by=tweet7d``）。
 
-The upstream DataFrame labels the metric column ``关注``; that name is
-misleading — akshare maps ``tweet``/``tweet7d`` into it. We rename to
-``讨论量`` in the JSON we return.
+akshare 从雪球拉回来的 DataFrame，有一列叫"关注"——但这列实际存的不是关注数，而是讨论量； akshare 将 ``tweet``/``tweet7d`` 映射到其中。
+在返回的 JSON 中重命名为 ``讨论量``。
 """
 
 
 def _xueqiu_discussion_hot_rank(ranking: str, limit: int) -> dict[str, Any]:
-    """Synchronous body for ``get_xueqiu_discussion_hot_rank``."""
+    """``get_xueqiu_discussion_hot_rank`` 的同步执行体。"""
     import akshare as ak
 
     df = ak.stock_hot_tweet_xq(symbol=ranking)
@@ -164,9 +136,9 @@ def _xueqiu_discussion_hot_rank(ranking: str, limit: int) -> dict[str, Any]:
             "count": 0,
             "stocks": [],
             "source": "xueqiu",
-            "warning": "no rows returned from stock_hot_tweet_xq",
+            "warning": "stock_hot_tweet_xq 未返回数据",
         }
-    # akshare re-uses the column name ``关注`` for tweet / tweet7d counts.
+    # akshare 对 tweet / tweet7d 计数复用了列名 ``关注``。
     if "关注" in df.columns:
         df = df.rename(columns={"关注": "讨论量"})
     return {
@@ -179,40 +151,31 @@ def _xueqiu_discussion_hot_rank(ranking: str, limit: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_xueqiu_discussion_hot_rank(ranking: str = "最热门", limit: int = 30) -> dict:
-    """雪球沪深「讨论」热度排行榜 — **个股**按讨论活跃度排序。
+    """雪球沪深「讨论」热度排行榜 — 个股按讨论活跃度排序。
 
-    Thin wrapper around ``akshare.stock_hot_tweet_xq`` (see
-    ``akshare/stock_feature/stock_hot_xq.py``). Each row is **one
-    listed stock** (代码 / 简称 / **讨论量** / 最新价), not a user
-    post with title and URL. Use it when the user wants "雪球上哪些票
-    讨论最火" / "讨论榜"; for Eastmoney headline news use
-    ``get_stock_news``; for Cailian flashes use
-    ``get_market_telegraph``.
+    对 ``akshare.stock_hot_tweet_xq``（见 ``akshare/stock_feature/stock_hot_xq.py``）的轻量封装。
+    每行是一只上市个股（代码 / 简称 / **讨论量** / 最新价），而非用户帖子的标题和链接。
+    当用户想了解"雪球上哪些票讨论最火"/"讨论榜"时使用此工具；
+    东方财富新闻请用 ``get_stock_news``；财联社快讯请用 ``get_market_telegraph``。
 
-    **Performance:** the upstream implementation paginates through the
-    full screener result set — the **first** call can take tens of
-    seconds. Subsequent calls in the same MCP subprocess reuse a warm
-    ``requests`` session inside akshare but still re-fetch all pages.
+    性能说明： 上游实现会分页遍历完整的筛选结果集 — 首次调用可能耗时数十秒。
+    同一 MCP 子进程内的后续调用复用 akshare 内部预热的 ``requests`` 会话，但仍需重新拉取所有分页。
 
     Args:
-        ranking: Exactly ``\"最热门\"`` (all-time discussion rank) or
-            ``\"本周新增\"`` (last-7-day discussion rank). Any other
-            string returns ``{\"error\": ...}`` without calling the
-            network.
-        limit: Max stocks to return after sorting (default 30, capped at
-            ``MAX_LIMIT``=100).
+        ranking: 仅接受 ``"最热门"``（总讨论量排名）或``"本周新增"``（近 7 天讨论排名）。
+        其他值直接返回 ``{"error": ...}``，不发起网络请求。
+        limit: 排序后返回的最大股票数（默认 30，上限 ``MAX_LIMIT``=100）。
 
     Returns:
-        Dict with ``ranking``, ``count``, ``stocks`` (list of records
-        with Chinese keys including ``讨论量``), ``source`` =
-        ``\"xueqiu\"``. On failure ``{\"error\": ..., \"context\": ...}``.
+        包含 ``ranking``、``count``、``stocks``（含中文键名的记录列表，包括 ``讨论量``）、``source``（``"xueqiu"``）的字典。
+        失败时返回 ``{"error": ..., "context": ...}``。
     """
     limit = _coerce_limit(limit)
     if ranking not in XUEQIU_DISCUSSION_RANKINGS:
         return _fmt_error(
             ValueError(
-                f"ranking must be one of {sorted(XUEQIU_DISCUSSION_RANKINGS)}, "
-                f"got {ranking!r}"
+                f"ranking 必须是 {sorted(XUEQIU_DISCUSSION_RANKINGS)} 之一，"
+                f"收到 {ranking!r}"
             ),
             context=f"get_xueqiu_discussion_hot_rank(ranking={ranking!r})",
         )
@@ -228,7 +191,7 @@ async def get_xueqiu_discussion_hot_rank(ranking: str = "最热门", limit: int 
 
 
 # ---------------------------------------------------------------------
-# Tool 1: Individual stock news (东方财富)
+# 工具 1: 个股新闻（东方财富）
 # ---------------------------------------------------------------------
 def _stock_news_em(symbol: str, limit: int) -> dict[str, Any]:
     import akshare as ak
@@ -240,7 +203,7 @@ def _stock_news_em(symbol: str, limit: int) -> dict[str, Any]:
             "count": 0,
             "news": [],
             "source": "eastmoney",
-            "warning": "no recent news for this ticker",
+            "warning": "该代码近期无新闻",
         }
     return {
         "symbol": symbol,
@@ -252,48 +215,38 @@ def _stock_news_em(symbol: str, limit: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_stock_news(symbol: str, limit: int = 20) -> dict:
-    """Fetch recent news articles for a specific A-share ticker.
+    """获取特定 A 股代码的近期新闻文章。
 
-    Backed by 东方财富's individual-stock news feed. Each row typically
-    carries: ``关键词`` (the ticker we searched), ``新闻标题``,
-    ``新闻内容`` (short summary), ``发布时间``, ``文章来源``,
-    ``新闻链接``.
+    由东方财富个股新闻流支撑。每行通常包含：``关键词``（搜索的代码）、 ``新闻标题``、``新闻内容``（简短摘要）、``发布时间``、``文章来源``、 ``新闻链接``。
 
     Args:
-        symbol: 6-digit ticker, e.g. ``"300750"`` for 宁德时代. Do NOT
-            include exchange prefixes like ``sh`` or ``sz``.
-        limit: Max news rows to return (default 20, capped at
-            ``MAX_LIMIT``=100). Most tickers have 50–200 news items
-            in the feed; the upstream pages internally and we slice
-            after the fact.
+        symbol: 6 位代码，如 ``"300750"`` 代表宁德时代。请勿包含 ``sh`` 或 ``sz`` 等交易所前缀。
+        limit: 最大返回新闻行数（默认 20，上限 ``MAX_LIMIT``=100）。大多数代码在新闻流中有 50-200 条；东方财富的新闻 API 一次可能返回 200 条新闻。akshare 内部会自动分页把所有新闻都拉回来。然后再用 limit 参数从这 200 条里截取前 20 条返回。
 
     Returns:
-        Dictionary with ``symbol``, ``count``, ``news`` (list of news
-        records), ``source`` (always ``"eastmoney"``). On failure
-        returns ``{"error": ..., "context": ...}``.
+        包含 ``symbol``、``count``、``news``（新闻记录列表）、``source``（始终为 ``"eastmoney"``）的字典。
+        失败时返回``{"error": ..., "context": ...}``。
     """
     limit = _coerce_limit(limit)
     try:
         return await asyncio.to_thread(_stock_news_em, symbol, limit)
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
-            e, context=f"get_stock_news(symbol={symbol!r}, limit={limit})"
+            e, context=f"get_stock_news(symbol={symbol!r}, limit={limit})",
         )
 
 
 # ---------------------------------------------------------------------
-# Tool 2: Real-time market telegraph (财联社)
+# 工具 2: 实时市场电报（财联社）
 # ---------------------------------------------------------------------
 TELEGRAPH_CATEGORIES = {"全部", "重点"}
-"""Allowed values for ``get_market_telegraph(category=...)``.
+"""``get_market_telegraph(category=...)`` 的允许值。
 
-The upstream ``akshare.stock_info_global_cls`` endpoint only supports
-two filters — ``全部`` (firehose) and ``重点`` (flagged-as-important).
-Older akshare releases exposed a richer category set under the name
-``stock_telegraph_cls`` but it was retired in 1.18+; we keep the
-constraint loud here so an LLM-generated call with ``A股`` / ``宏观``
-fails fast with a helpful error rather than silently returning an
-empty frame.
+以前（1.18 之前）有一个函数 stock_telegraph_cls，支持按"A股"、"宏观"等类别过滤。但 1.18 版本之后这个函数被废弃了，新函数 stock_info_global_cls 只支持"全部"和"重点"两个选项。
+如果 LLM 生成了 get_market_telegraph(category="A股")（用了不支持的类别），立刻返回错误告诉 LLM "只能用全部或重点"。如果不做这个检查，akshare 会返回一个空的 DataFrame，LLM 就会以为"今天没有新闻"——但实际上是参数写错了。快速失败会比静默返回空数据好，因为 LLM 能看到错误信息并修正调用。
+上游 ``akshare.stock_info_global_cls`` 端点仅支持两个过滤器 — ``全部``（全量）和 ``重点``（标记为重要的）。
+旧版 akshare 曾以``stock_telegraph_cls`` 名称暴露更丰富的分类集，但在 1.18+ 中已废弃；
+在此显式约束，使 LLM 生成的 ``A股`` / ``宏观`` 调用能快速失败并给出有用错误，而非静默返回空数据帧。
 """
 
 
@@ -307,7 +260,7 @@ def _telegraph_cls(symbol: str, limit: int) -> dict[str, Any]:
             "count": 0,
             "telegraph": [],
             "source": "cls",
-            "warning": f"no recent flashes in category {symbol!r}",
+            "warning": f"类别 {symbol!r} 近期无快讯",
         }
     return {
         "category": symbol,
@@ -319,36 +272,30 @@ def _telegraph_cls(symbol: str, limit: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_market_telegraph(category: str = "全部", limit: int = 30) -> dict:
-    """Fetch real-time market news flashes from 财联社 (Cailianpress).
+    """从财联社获取实时市场新闻快讯。
 
-    Cailianpress is the Chinese-market analogue of Bloomberg's
-    "FIRST WORD" terminal — short timestamped flashes (~50-300 chars
-    each) about market-moving events. The feed updates every few
-    minutes during trading hours.
+    财联社是中国市场版的彭博"FIRST WORD"终端 — 关于市场动向事件的短时间戳快讯（每条约 50-300 字符）。交易时段内每隔数分钟更新。
 
     Args:
-        category: Filter for upstream feed. Only two values are
-            supported by the akshare endpoint we call:
-              - ``"全部"`` (default) — all flashes (firehose)
-              - ``"重点"``           — only flagged-as-important
-            Any other value returns ``{"error": ...}``.
-        limit: Max flashes to return (default 30, capped at
-            ``MAX_LIMIT``=100). Older items beyond ``limit`` are
-            silently dropped.
+        category: 上游数据流的过滤器。调用的 akshare 端点仅支持
+            两个值：
+              - ``"全部"``（默认） — 所有快讯（全量）
+              - ``"重点"``         — 仅标记为重要的
+            其他值返回 ``{"error": ...}``。
+        limit: 最大返回快讯数（默认 30，上限 ``MAX_LIMIT``=100）。
+            超出 ``limit`` 的旧条目被静默丢弃。
 
     Returns:
-        Dictionary with ``category``, ``count``, ``telegraph``
-        (list of flash records, each typically with ``标题``,
-        ``内容``, ``发布日期``, ``发布时间``), and ``source``
-        (always ``"cls"``). On failure returns
-        ``{"error": ..., "context": ...}``.
+        包含 ``category``、``count``、``telegraph``（快讯记录列表，每条通常含 ``标题``、``内容``、``发布日期``、``发布时间``）和
+        ``source``（始终为 ``"cls"``）的字典。
+        失败时返回``{"error": ..., "context": ...}``。
     """
     limit = _coerce_limit(limit)
     if category not in TELEGRAPH_CATEGORIES:
         return _fmt_error(
             ValueError(
-                f"category must be one of {sorted(TELEGRAPH_CATEGORIES)}, "
-                f"got {category!r}"
+                f"category 必须是 {sorted(TELEGRAPH_CATEGORIES)} 之一，"
+                f"收到 {category!r}"
             ),
             context=f"get_market_telegraph(category={category!r})",
         )
@@ -362,7 +309,7 @@ async def get_market_telegraph(category: str = "全部", limit: int = 30) -> dic
 
 
 # ---------------------------------------------------------------------
-# Tool 3: Hot keywords / trending topics (东方财富)
+# 工具 3: 热搜关键词 / 热门话题（东方财富）
 # ---------------------------------------------------------------------
 def _hot_keywords_em(symbol: str, limit: int) -> dict[str, Any]:
     import akshare as ak
@@ -374,7 +321,7 @@ def _hot_keywords_em(symbol: str, limit: int) -> dict[str, Any]:
             "count": 0,
             "keywords": [],
             "source": "eastmoney",
-            "warning": "no trending keywords for this ticker",
+            "warning": "该代码无热搜关键词",
         }
     return {
         "symbol": symbol,
@@ -386,35 +333,25 @@ def _hot_keywords_em(symbol: str, limit: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_hot_keywords(symbol: str, limit: int = 10) -> dict:
-    """Fetch trending keywords / topics around an A-share ticker.
+    """获取某个 A 股代码周围的热搜关键词 / 话题。
 
-    Backed by 东方财富's stock_hot_keyword endpoint. The keyword list
-    is a fast sentiment / topic-of-conversation proxy: which themes
-    (e.g. ``"碳中和"``, ``"业绩预增"``, ``"高管减持"``) are currently
-    co-occurring with the ticker on retail forums and analyst feeds.
+    由东方财富的 stock_hot_keyword 端点支撑。关键词列表是快速的情感 / 讨论话题代理：
+    当前有哪些主题（如 ``"碳中和"``、``"业绩预增"``、 ``"高管减持"``）正与该代码在散户论坛和分析师动态中共现。
 
-    Use cases
-    ---------
-    - "What's currently being discussed about NIO?" → call this first,
-      then drill down with ``get_stock_news`` on the keyword that
-      stands out.
-    - "Has the chip-shortage narrative cooled around SMIC?" → compare
-      keyword frequencies across periods (will need multiple calls).
+    使用场景
+    --------
+    - "蔚来目前在讨论什么？" → 先调用此工具，然后对突出的关键词用 ``get_stock_news`` 深入查看。
+    - "中芯国际的芯片短缺叙事是否降温？" → 比较跨时段的关键词频率（需要多次调用）。
 
     Args:
-        symbol: Exchange-prefixed ticker. UNLIKE the other tools in
-            this server, ``stock_hot_keyword_em`` requires an
-            ``SH``/``SZ``-prefixed UPPER-CASE form, e.g.
-            ``"SZ300750"``. We normalise here so callers can still
-            pass plain 6-digit tickers — we add the prefix
-            automatically.
-        limit: Max keyword rows (default 10, capped at
-            ``MAX_LIMIT``=100). Each row typically has ``时间``,
-            ``概念名称``, ``概念代码``, ``热度``.
+        symbol: 带交易所前缀的代码。
+            与本服务器其他工具不同，``stock_hot_keyword_em`` 需要 ``SH``/``SZ`` 前缀的大写形式，如 ``"SZ300750"``。
+            在此进行规范化，调用者仍可传入纯 6 位代码 — 前缀会自动添加。
+        limit: 最大关键词行数（默认 10，上限 ``MAX_LIMIT``=100）。 每行通常包含 ``时间``、``概念名称``、``概念代码``、``热度``。
 
     Returns:
-        Dictionary with ``symbol``, ``count``, ``keywords``, and
-        ``source``. On failure returns ``{"error": ..., "context": ...}``.
+        包含 ``symbol``、``count``、``keywords`` 和 ``source`` 的字典。
+        失败时返回 ``{"error": ..., "context": ...}``。
     """
     limit = _coerce_limit(limit)
     bare = symbol.strip().upper()
@@ -433,7 +370,7 @@ async def get_hot_keywords(symbol: str, limit: int = 10) -> dict:
 
 
 # ---------------------------------------------------------------------
-# Tool 4: Economic news digest (百度财经早晚报)
+# 工具 4: 经济新闻摘要（百度财经早晚报）
 # ---------------------------------------------------------------------
 def _economic_news_baidu(date: str, limit: int) -> dict[str, Any]:
     import akshare as ak
@@ -445,7 +382,7 @@ def _economic_news_baidu(date: str, limit: int) -> dict[str, Any]:
             "count": 0,
             "news": [],
             "source": "baidu",
-            "warning": f"no economic news digest for {date}",
+            "warning": f"{date} 无经济新闻摘要",
         }
     return {
         "date": date,
@@ -457,33 +394,26 @@ def _economic_news_baidu(date: str, limit: int) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_economic_news(date: str = "", limit: int = 30) -> dict:
-    """Fetch the daily macro / economic news digest (百度财经早晚报).
+    """获取每日宏观 / 经济新闻摘要（百度财经早晚报）。
 
-    The 早晚报 format is a curated digest of macro-policy, central-bank,
-    GDP, CPI, exchange-rate, and major-company announcements published
-    by 百度财经 twice daily. Compared to ``get_market_telegraph`` it is
-    LESS real-time but MORE editorial (each item is hand-picked rather
-    than firehosed).
+    早晚报格式是百度财经每日两次发布的精选摘要，涵盖宏观政策、央行、 GDP、CPI、汇率和大公司公告。
+    与 ``get_market_telegraph`` 相比，实时性较低但编辑性更强（每条都是人工挑选而非全量推送）。
 
     Args:
-        date: ``YYYYMMDD`` string, e.g. ``"20260508"``. Empty
-            (default) → today (Asia/Shanghai). Most recent ~30 days
-            are reliably available; older dates may return empty.
-        limit: Max news rows (default 30, capped at ``MAX_LIMIT``=100).
+        date: ``YYYYMMDD`` 字符串，如 ``"20260508"``。留空（默认）→今天（亚洲/上海）。最近约 30 天的数据可靠可用；更早日期可能返回空。
+        limit: 最大新闻行数（默认 30，上限 ``MAX_LIMIT``=100）。
 
     Returns:
-        Dictionary with ``date`` (the date actually queried), ``count``,
-        ``news`` (each typically ``发布日期``, ``发布时间``,
-        ``内容``), and ``source`` (``"baidu"``). On failure returns
-        ``{"error": ..., "context": ...}``.
+        包含 ``date``（实际查询的日期）、``count``、``news``（每条通常含 ``发布日期``、``发布时间``、``内容``）和 ``source``（``"baidu"``）的字典。
+        失败时返回 ``{"error": ..., "context": ...}``。
     """
     limit = _coerce_limit(limit)
     use_date = date.strip() or _today_shanghai_yyyymmdd()
     if not use_date.isdigit() or len(use_date) != 8:
         return _fmt_error(
             ValueError(
-                f"date must be YYYYMMDD (8 digits), got {date!r}; "
-                f"pass empty string for today"
+                f"date 必须是 YYYYMMDD 格式（8 位数字），收到 {date!r}；"
+                f"传入空字符串表示今天"
             ),
             context=f"get_economic_news(date={date!r})",
         )

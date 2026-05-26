@@ -1,4 +1,4 @@
-"""Base agent configuration and factory for creating LangGraph react agents."""
+"""Agent 基础配置与工厂函数，用于创建 LangGraph ReAct Agent。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from research_agent.llm.tier import AgentName
 
 @dataclass(frozen=True)
 class AgentConfig:
-    """Declarative agent specification — decouples definition from execution."""
+    """声明式 Agent 规格 — 将定义与执行解耦。"""
 
     name: AgentName
     system_prompt: str
@@ -27,10 +27,10 @@ def build_agent(
     model_router: ModelRouter,
     **kwargs: Any,
 ) -> Any:
-    """Create a LangGraph react agent from an AgentConfig.
+    """根据 AgentConfig 创建一个 LangGraph ReAct Agent。
 
-    Uses create_react_agent which wraps tool-calling in a ReAct loop:
-    Reasoning → Action → Observation → Reasoning ...
+    使用 create_react_agent，它将工具调用封装在 ReAct 循环中：
+    推理 → 行动 → 观察 → 推理 ...
     """
     model = model_router.for_agent(config.name)
 

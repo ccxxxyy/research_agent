@@ -1,10 +1,7 @@
-"""Unit tests — in-process knowledge-base tool wrappers.
+"""单元测试 — 进程内知识库工具包装器。
 
-Validates that ``research_agent.tools.knowledge_tools`` correctly
-exposes the four knowledge-base tools as ``StructuredTool`` instances
-with the right names, arg schemas, and passthrough semantics. No
-embedding model or FAISS index is loaded — the underlying
-``knowledge_server`` functions are monkeypatched.
+验证 ``research_agent.tools.knowledge_tools`` 正确地将四个知识库工具暴露为 ``StructuredTool`` 实例，且具有正确的名称、
+参数 schema 和透传语义。不加载 embedding 模型或 FAISS 索引 — 底层``knowledge_server`` 函数通过 monkeypatch 替换。
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ from research_agent.tools.knowledge_tools import (
 
 
 class TestKnowledgeToolsRoster:
-    """Guard the exported roster shape — agents and prompts rely on it."""
+    """守护导出的工具清单结构 — Agent 和提示词依赖于此。"""
 
     def test_roster_has_four_tools(self) -> None:
         assert len(KNOWLEDGE_TOOLS) == 4

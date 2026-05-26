@@ -1,13 +1,9 @@
-"""LangGraph orchestration — supervisor apps for the API.
+"""LangGraph 编排层 — 为 API 提供 supervisor 应用。
 
-- :func:`build_minimal_supervisor` — toy specialists + optional MCP coder
-  (``/api/supervisor`` minimal path).
-- :func:`build_research_supervisor` — financial research team
-  (``data_expert``, ``report_expert``, ``coder_expert``, ``news_expert``,
-  ``knowledge_expert``) with optional tool subsets.
+- :func:`build_minimal_supervisor` — 简单专家组 + 可选 MCP 编程专家（``/api/supervisor`` 最小化路径）。
+- :func:`build_research_supervisor` — 金融研究团队（``data_expert``、``report_expert``、``coder_expert``、``news_expert``、 ``knowledge_expert``），支持可选工具子集。
 
-**Removed:** Phase-3 ``build_research_graph`` (Chroma + node-level retrieve /
-grade / rewrite). Use ``research_supervisor`` + ``knowledge_server`` instead.
+已移除：``build_research_graph``（Chroma + 节点级检索 /评分 / 重写）。改用 ``research_supervisor`` + ``knowledge_server``。
 """
 
 from research_agent.graph.minimal_supervisor import build_minimal_supervisor

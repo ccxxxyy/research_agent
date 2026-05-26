@@ -1,10 +1,9 @@
-"""Aggregate LLM token usage counters (process lifetime).
+"""聚合 LLM Token 用量计数器（进程生命周期）。
 
-Two views of the same data:
+同一数据的两种视图：
 
-* ``GET /api/usage``   — JSON (for application clients / dashboards).
-* ``GET /metrics``     — Prometheus text exposition format (for
-  ``prometheus.yml`` scrape targets or any OTEL-compatible collector).
+* ``GET /api/usage``   — JSON（供应用客户端/仪表盘使用）。
+* ``GET /metrics``     — Prometheus 文本暴露格式（供``prometheus.yml`` 抓取目标或任何 OTEL 兼容收集器使用）。
 """
 
 from __future__ import annotations
@@ -22,18 +21,17 @@ router = APIRouter(prefix="/api", tags=["usage"])
 
 @router.get("/usage")
 async def get_llm_usage(model_router: ModelRouterDep) -> dict[str, Any]:
-    """Return :meth:`~research_agent.llm.usage_tracker.UsageTracker.summary` for this worker."""
+    """返回当前 worker 的 :meth:`~research_agent.llm.usage_tracker.UsageTracker.summary`。"""
     return model_router.usage.summary()
 
 
-# Mounted at top-level (no /api prefix) so Prometheus can scrape the
-# conventional ``/metrics`` path out of the box.
+# 挂载在顶层（无 /api 前缀），以便 Prometheus 可以直接抓取约定的 ``/metrics`` 路径。
 metrics_router = APIRouter(tags=["observability"])
 
 
 @metrics_router.get("/metrics")
 async def prometheus_metrics(model_router: ModelRouterDep) -> PlainTextResponse:
-    """Prometheus text exposition endpoint."""
+    """Prometheus 文本暴露端点。"""
     usage = model_router.usage.summary()
     body = METRICS.render(usage_summary=usage)
     return PlainTextResponse(body, media_type="text/plain; version=0.0.4; charset=utf-8")
