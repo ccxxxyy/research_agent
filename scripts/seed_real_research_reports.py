@@ -262,8 +262,9 @@ async def amain(argv: list[str]) -> int:
         from_cache = dl.get("from_cache", False)
         _step(f"  -> {local_path} ({size_kb} KB, from_cache={from_cache})")
 
-        # 幂等性：如果该 PDF 的路径已在 collection 的 ``source``集合中，则跳过灌入。重复灌入会追加每个分块的副本（knowledge_server 的 TODO 关于内容哈希去重尚未实现），
-        # 导致索引膨胀。
+        # 幂等性：如果该 PDF 的路径已在 collection 的 ``source``集合中，则跳过灌入。
+        # knowledge_server 已实现基于文件 SHA-256 的内容哈希去重（相同内容的 PDF 返回 skipped=True），
+        # 此处路径级检查作为快速前置过滤，避免不必要的函数调用开销。
         if local_path in already:
             _step("  已在此 collection 中灌入过；跳过。")
             skipped += 1

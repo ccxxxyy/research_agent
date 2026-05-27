@@ -98,6 +98,7 @@ _os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 _os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 import asyncio  # noqa: E402
+import json  # noqa: E402
 import math  # noqa: E402
 import re  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -290,6 +291,51 @@ def _save_faiss_store(collection: str, store: Any, *, db_dir: Path | None = None
     _FAISS_STORES[collection] = store
 
 
+# ---------------------------------------------------------------------
+# 内容哈希去重
+# ---------------------------------------------------------------------
+_HASH_FILENAME = ".ingested_hashes.json"
+
+
+def _load_ingested_hashes(collection: str, *, db_dir: Path | None = None) -> dict[str, str]:
+    """加载集合的已导入文件哈希注册表。
+
+    返回 ``{sha256_hex: source_path}`` 映射。文件不存在时返回空字典。
+    """
+    cdir = _collection_dir(collection, db_dir=db_dir)
+    hash_file = cdir / _HASH_FILENAME
+    if not hash_file.exists():
+        return {}
+    try:
+        return json.loads(hash_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_ingested_hash(
+    collection: str, file_hash: str, source_path: str, *, db_dir: Path | None = None
+) -> None:
+    """将新的文件哈希追加到集合的注册表中。"""
+    cdir = _collection_dir(collection, db_dir=db_dir)
+    cdir.mkdir(parents=True, exist_ok=True)
+    hashes = _load_ingested_hashes(collection, db_dir=db_dir)
+    hashes[file_hash] = source_path
+    (cdir / _HASH_FILENAME).write_text(
+        json.dumps(hashes, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _compute_file_hash(path: Path) -> str:
+    """计算文件的 SHA-256 哈希值。"""
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(8192):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def _invalidate_bm25(collection: str) -> None:
     """清除 ``collection`` 的 BM25 缓存；下次搜索时重建。"""
     _BM25_CACHE.pop(collection, None)
@@ -402,7 +448,7 @@ async def ingest_pdf(
     """将单个 PDF 导入持久化知识库。
 
     PDF 用 ``pypdf`` 读取一次（页面保留为溯源单位），切分为 ``chunk_size``字符的窗口并有 ``chunk_overlap`` 字符的滑动，用 bge-small 中文模型嵌入，
-    然后写入 FAISS 集合（``DEFAULT_DB_DIR`` 下每个集合一个文件夹）。重复导入 同一 PDF 会追加重复分块 — 尚无内容哈希去重（TODO 留待未来迭代；当前模式为"每次导入一个集合"）。
+    然后写入 FAISS 集合（``DEFAULT_DB_DIR`` 下每个集合一个文件夹）。基于文件 SHA-256 哈希去重：相同内容的 PDF 不会重复导入，返回 ``skipped=True``。
 
     Args:
         local_path: ``.pdf`` 文件的绝对或相对路径。通常为``pdf_download_pdf``（服务器）返回的路径，以便两个工具自然串联。
@@ -452,6 +498,22 @@ async def ingest_pdf(
         )
 
     def _ingest() -> dict[str, Any]:
+        file_hash = _compute_file_hash(path)
+        existing_hashes = _load_ingested_hashes(collection)
+        if file_hash in existing_hashes:
+            return {
+                "collection": collection,
+                "source": str(path),
+                "num_pages": 0,
+                "num_chunks_added": 0,
+                "total_chunks_in_collection": _collection_count(collection),
+                "skipped": True,
+                "reason": (
+                    f"PDF content hash already ingested "
+                    f"(original: {existing_hashes[file_hash]})"
+                ),
+            }
+
         pages = _load_pdf_pages(path)
         chunks = _chunk_pages(
             pages,
@@ -485,6 +547,7 @@ async def ingest_pdf(
             store = existing
         _save_faiss_store(collection, store)
         _invalidate_bm25(collection)
+        _save_ingested_hash(collection, file_hash, str(path))
         return {
             "collection": collection,
             "source": str(path),
