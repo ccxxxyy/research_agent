@@ -8,6 +8,12 @@
 """
 
 from research_agent.agents.base import AgentConfig, build_agent
+from research_agent.agents.confidence import (
+    ConfidenceLevel,
+    ConfidenceValidator,
+    ConfidenceVerdict,
+    Recommendation,
+)
 from research_agent.agents.specialists import (
     SPECIALIST_BUILDERS,
     build_coder_expert,
@@ -23,6 +29,10 @@ from research_agent.agents.specialists import (
 
 __all__ = [
     "AgentConfig",
+    "ConfidenceLevel",
+    "ConfidenceValidator",
+    "ConfidenceVerdict",
+    "Recommendation",
     "SPECIALIST_BUILDERS",
     "build_agent",
     "build_coder_expert",

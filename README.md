@@ -99,6 +99,8 @@
 | 数据源 | `akshare`（A 股行情/基本面/公告/新闻）+ `httpx` + `pypdf`（cninfo PDF 解析）+ `snownlp`（中文情感） |
 | 可观测 | `loguru` 结构化日志 + `langsmith` tracing |
 | 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（281 tests） |
+| 安全 | Prompt 注入检测（`security/prompt_guard.py`）+ 代码沙箱 subprocess 隔离 |
+| 协议 | MCP（Agent→Tool，已有）+ A2A（Agent→Agent，`/.well-known/agent.json`） |
 
 ---
 
@@ -155,8 +157,19 @@ uv run uvicorn research_agent.main:app --host 0.0.0.0 --port 8080
 ```
 
 服务起来后：
+- `http://localhost:8080/` —— 内置 Chat UI（静态 HTML，与 API 同端口，无独立前端 dev server）
 - `http://localhost:8080/docs` —— OpenAPI 文档（自动生成）
 - `GET /health` —— 健康检查，返回 postgres / redis / knowledge_db / research_supervisor 的实时状态
+
+端口一览（`docker compose up` 时）：
+
+| 端口 | 服务 | 说明 |
+|---|---|---|
+| 8080 | FastAPI + 静态前端 | 唯一对外 HTTP 入口；API + Chat UI 都在这里 |
+| 5432 | Postgres | 可选；checkpointer + 长期记忆持久化 |
+| 6379 | Redis | 可选；分布式限流（不配则内存限流） |
+
+MCP 工具服务器（`fin_data_server`、`code_server` 等）不是 HTTP 服务，而是 FastAPI 启动时拉起的 stdio 子进程，通过标准输入/输出与主进程通信，不占用额外端口。
 
 ### 4.4 跑一个端到端 demo（含真实业务数据）
 
@@ -236,6 +249,17 @@ $body = '{"message":"中文请求"}'
 | POST | `/api/supervisor/research/{thread_id}/approve` | **HITL**：审核通过被 `interrupt()` 暂停的 draft，graph 从断点续跑 |
 | POST | `/api/supervisor/research/{thread_id}/resume` | **HITL**：携带 `feedback` 修订意见 resume；feedback 通过 `Command(resume=...)` 注入到 `interrupt()` 返回值 |
 
+### 5.2.1 A2A（Agent-to-Agent 协议）
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/.well-known/agent.json` | Agent Card 发现：声明本系统能做什么（金融研究 / 知识检索 / 舆情） |
+| POST | `/a2a/tasks/send` | 外部 Agent 提交研究任务（异步） |
+| GET | `/a2a/tasks/{task_id}` | 查询任务状态（submitted → working → completed/failed） |
+| POST | `/a2a/tasks/{task_id}/cancel` | 取消进行中的任务 |
+
+MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 解决 **Agent → Agent**（别的系统的 Agent 通过标准协议调本系统的研究能力）。
+
 ### 5.3 知识库 / 记忆 / 情感
 
 | Method | Path | 说明 |
@@ -261,10 +285,11 @@ $body = '{"message":"中文请求"}'
 
 ## 六、细节
 
-1. **多模型分层路由**（`llm/provider.py` + `llm/tier.py`）
+1. 多模型分层路由 + 熔断器（`llm/provider.py` + `llm/tier.py`）
    - 同一个 `ModelRouter` 暴露 `for_agent(AgentName)`，自动映射到 LIGHT/MEDIUM/HEAVY。
    - LLM 失败时自动 fallback 到下一档（`FALLBACK_CHAIN`）。
-   - 故事：「supervisor 用 HEAVY，因为它要规划+综合 6 个 specialist；specialist 用 MEDIUM，因为它要从工具菜单挑工具+理解返回；grader/rewriter 用 LIGHT，因为这俩都是分类任务。**单 prompt 全 HEAVY 是浪费；全 LIGHT 又会让 supervisor 路由错乱**。」
+   - 熔断器：同一 tier 的模型连续失败 3 次 → 状态变为 OPEN，后续 30 秒内不再尝试该模型，直接走 fallback（避免每次请求都白等超时）。30 秒后进入 HALF_OPEN，允许试探一次；成功则恢复 CLOSED。
+   - 故事：「DeepSeek 宕机时，第 4 个用户不应再傻等 30 秒超时 —— 熔断器让 fallback 瞬间生效。」
 
 2. **Supervisor 模式 + 动态团队**（`graph/research_supervisor.py`）
    - 任何 specialist 的工具集为空就自动从 prompt 里抹掉，避免 `transfer_to_<missing>` 幽灵路由。
@@ -279,6 +304,7 @@ $body = '{"message":"中文请求"}'
 
 4. **MCP 协议化工具 + 一个真实的取舍**（`mcp_servers/` + `tools/knowledge_tools.py`）
    - 5 个 server 走真 stdio 子进程，1 个（knowledge）走进程内并诚实写在 docstring 里——因为 Windows + Python 3.13 + anyio + heavy ML import 链有死锁。
+   - `code_server.py` 沙箱：`execute_python` 用 **subprocess** 在独立子进程跑用户代码；内层 **API 白名单**（自定义 `__builtins__` 字典，只允许 `print/range/len/...`，禁止 `open/__import__/eval`）+ 预导入模块（math/statistics/json/collections/itertools）。`execute_python_inproc` 是降级方案（仅白名单、无进程隔离，与改造前相同）。
    - 故事：「从 `chromadb posthog 守护线程污染 stdout` → 写 `_stdio_firewall` → 迁 ChromaDB → FAISS → 发现 sentence-transformers 仍然干扰 → 工程上决定 in-process 同源代码，保留 MCP 接口作为契约文档。」
 
 5. **三级 Checkpointer 自动 fallback**（`memory/checkpointer.py` + `memory/_pg_reachability.py`）
@@ -307,6 +333,18 @@ $body = '{"message":"中文请求"}'
    - `MetricsMiddleware` 累计 QPS、按 specialist 的调用次数、请求耗时直方图，由 `GET /metrics` 输出标准 Prometheus 文本。零额外依赖（手写 `_Counters`，不引 `prometheus_client`）。
    - `UsageCallbackHandler` 走 `run_inline=True` 在 async 路径内联执行（避免 LangChain 默认的 `run_in_executor` 跨线程开销），把每次 `on_llm_end` 的 token 用量按 `(tier, model_name)` 累加 + 用 `MODEL_PRICING` 估成本，由 `GET /api/usage` 暴露。
    - 故事：「LLM 应用'盲目调'的代价太高了——一次实验跑爆几百块的事故每周都在群里看见。**所以 token 和 trace 必须从 day 1 就有，而非等出事再补**。」
+
+10. **Prompt 注入防御（双向）**（`security/prompt_guard.py` + `api/routes/supervisor.py`）
+    - **Prompt 注入**：用户在问题里伪装成系统指令（如 "ignore previous instructions"），试图覆盖 supervisor 的系统提示词或泄漏内部配置。
+    - **输入规则**（正则，微秒级）：指令覆盖、角色劫持、系统提示词提取、越狱模板（DAN/developer mode）、间接注入标记、编码绕过等 → 命中则 `ThreatLevel.BLOCKED`，返回 HTTP 400。
+    - **输出规则**（正则，LLM 返回后、HTTP 响应前）：系统提示词泄漏、API Key/密码泄漏、内部路径泄漏 → 命中则替换为 `[输出已过滤：检测到敏感信息泄漏风险]`。
+    - **覆盖端点**：`/chat`、`/research` 的输入+输出均检测；`/research/stream` 仅入口输入检测（SSE 流逐帧过滤待实现）。
+    - 故事：「OWASP Agentic AI Top 10 第一条就是 Prompt Injection —— 金融场景不能让恶意用户把 AI 变成'无限制模式'。」
+
+11. **专家输出置信度校验**（`agents/confidence.py`，可选接入 supervisor）
+    - 规则层：幻觉模式（编造引用、过度推测）、数值合理性（PE/ROE/股价范围）、与源文本数字一致性。
+    - 提供 `build_llm_validation_prompt()` 供 LIGHT 模型做深度语义校验。
+    - 返回 `ConfidenceVerdict(score, level, recommendation)`：accept / downweight / reject。
 
 ---
 
@@ -340,11 +378,13 @@ $body = '{"message":"中文请求"}'
 src/research_agent/
 ├── agents/              # Specialist 构造器 + 角色 prompt
 │   ├── __init__.py      # build_xxx_expert + SPECIALIST_BUILDERS 全 re-export
+│   ├── confidence.py    # 专家输出置信度校验（规则 + 可选 LLM 深度校验）
 │   └── specialists.py   # 6 个 build_xxx_expert + KNOWLEDGE/REPORT/NEWS/... PROMPT
 ├── api/                 # FastAPI 层
 │   ├── middleware.py    # Auth + RateLimit + RequestTimeout + RequestId
 │   ├── dependencies.py  # FastAPI Depends 工厂
 │   ├── routes/
+│   │   ├── a2a.py       # /.well-known/agent.json + /a2a/tasks/*
 │   │   ├── health.py    # /health
 │   │   ├── knowledge.py # /api/knowledge/{ingest,search,collections}
 │   │   ├── memory.py    # /api/memory/{context,history,preferences}
@@ -352,6 +392,8 @@ src/research_agent/
 │   │   ├── supervisor.py# /api/supervisor/{chat,research,research/stream,research/{tid}/approve,…}
 │   │   └── usage.py     # /api/usage + /metrics
 │   └── schemas.py       # Pydantic 请求/响应（含 SSE 8 类事件枚举）
+├── security/
+│   └── prompt_guard.py  # Prompt 注入检测（输入/输出规则）
 ├── graph/
 │   ├── minimal_supervisor.py    # Phase-3 教学版（math/time/text 三 toy 工具）
 │   ├── research_supervisor.py   # Phase-4 产品版（六 specialist + HEAVY supervisor + 可选 reflection + 可选 HITL human_review 节点）

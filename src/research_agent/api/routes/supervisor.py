@@ -30,6 +30,7 @@ from research_agent.api.schemas import (
 )
 from research_agent.config import get_settings
 from research_agent.memory.manager import MemoryManager
+from research_agent.security.prompt_guard import PromptGuard, ThreatLevel
 
 
 def _graph_config(
@@ -48,6 +49,7 @@ def _graph_config(
     return cfg
 
 router = APIRouter(prefix="/api/supervisor", tags=["supervisor"])
+_prompt_guard = PromptGuard()
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +148,19 @@ async def supervisor_chat(
     处理每个子任务，然后合成最终面向用户的回答。
     """
     thread_id = request.thread_id or str(uuid.uuid4())
+
+    verdict = _prompt_guard.check_input(request.message)
+    if verdict.level == ThreatLevel.BLOCKED:
+        logger.warning(
+            "Prompt injection blocked in chat: thread={}, rules={}",
+            thread_id,
+            verdict.triggered_rules,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Request blocked by security filter.",
+        )
+
     config = _graph_config(thread_id, request.recursion_limit)
 
     logger.info("Supervisor chat: thread={}", thread_id)
@@ -156,6 +171,16 @@ async def supervisor_chat(
     )
     messages = result.get("messages", [])
     reply = _final_assistant_text(messages)
+
+    # --- 输出安全过滤 ---
+    out_verdict = _prompt_guard.check_output(reply)
+    if out_verdict.level == ThreatLevel.BLOCKED:
+        logger.warning(
+            "Output leak blocked in chat: thread={}, rules={}",
+            thread_id,
+            out_verdict.triggered_rules,
+        )
+        reply = "[输出已过滤：检测到敏感信息泄漏风险]"
 
     return SupervisorChatResponse(
         reply=reply,
@@ -184,6 +209,20 @@ async def supervisor_research(
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
+
+    verdict = _prompt_guard.check_input(request.query)
+    if verdict.level == ThreatLevel.BLOCKED:
+        logger.warning(
+            "Prompt injection blocked in research: user={}, thread={}, rules={}",
+            user_id,
+            thread_id,
+            verdict.triggered_rules,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Request blocked by security filter.",
+        )
+
     config = _graph_config(thread_id, request.recursion_limit)
 
     logger.info(
@@ -201,6 +240,17 @@ async def supervisor_research(
     )
     messages = result.get("messages", [])
     reply = _final_assistant_text(messages)
+
+    # --- 输出安全过滤 ---
+    out_verdict = _prompt_guard.check_output(reply)
+    if out_verdict.level == ThreatLevel.BLOCKED:
+        logger.warning(
+            "Output leak blocked in research: user={}, thread={}, rules={}",
+            user_id,
+            thread_id,
+            out_verdict.triggered_rules,
+        )
+        reply = "[输出已过滤：检测到敏感信息泄漏风险]"
 
     # --- 长期记忆：保存研究结果 ---
     if user_id != "anonymous" and reply:
@@ -657,6 +707,20 @@ async def supervisor_research_stream(
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
+
+    verdict = _prompt_guard.check_input(request.query)
+    if verdict.level == ThreatLevel.BLOCKED:
+        logger.warning(
+            "Prompt injection blocked in research stream: user={}, thread={}, rules={}",
+            user_id,
+            thread_id,
+            verdict.triggered_rules,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Request blocked by security filter.",
+        )
+
     logger.info(
         "Research-supervisor stream: user={}, thread={}", user_id, thread_id
     )
@@ -754,7 +818,7 @@ async def supervisor_research_approve(
     request: ApproveRequest,
     graph: ResearchSupervisorGraphDep,
 ) -> ResearchSupervisorResponse:
-    """审批 HITL 暂停的研究草稿并恢复图执行。
+    """审批 HITL 暂停的研究草稿并恢复图执行。审核通过，让研究继续往下跑。Chat UI 里点 Approve 按钮。
 
     ``human_review`` 节点通过 ``Command(resume=...)`` 收到``{"action": "approve", ...}``，直接通过而不注入反馈，图继续进入反思（若启用）或终止。
 
@@ -789,10 +853,10 @@ async def supervisor_research_resume(
     request: ResumeRequest,
     graph: ResearchSupervisorGraphDep,
 ) -> ResearchSupervisorResponse:
-    """带修订反馈恢复 HITL 暂停的研究。
+    """带修订反馈恢复 HITL 暂停的研究。带修订意见恢复；或没意见时等价 approve。Chat UI 点 Revise 按钮并输入反馈。
 
-    ``human_review`` 节点通过 ``Command(resume=...)`` 收到 ``{"action": "revise", ...}``。当 ``feedback`` 非空时，
-    节点将其作为 ``HumanMessage`` 注入，使反思循环（或下游重写步骤）能够处理审核者的意见。
+    ``human_review`` 节点通过 ``Command(resume=...)`` 收到 ``{"action": "revise", ...}``。
+    当 ``feedback`` 非空时，节点将其作为 ``HumanMessage`` 注入，使反思循环（或下游重写步骤）能够处理审核者的意见。
 
     """
     await _verify_thread_interrupted(graph, thread_id)

@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from research_agent.api.routes import health, knowledge, memory, sentiment, supervisor, usage
+from research_agent.api.routes import a2a, health, knowledge, memory, sentiment, supervisor, usage
 from research_agent.config import get_settings
 from research_agent.observability.logging import setup_logging
 
@@ -269,6 +269,7 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(sentiment.router)
     app.include_router(supervisor.router)
+    app.include_router(a2a.router)
 
     # --- 静态前端 ---
     from pathlib import Path as _Path
