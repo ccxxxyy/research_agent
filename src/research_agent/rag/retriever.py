@@ -66,7 +66,7 @@ class BM25Index:
     分词策略有意保持简单：转小写 + 按非单词字符拆分。
     CJK 中文字符作为单字符 token 保留，对于与文档共享名词短语的查询，BM25 可以正常处理。
 
-    _SPLIT_RE：正则 \W+，意思是"一个或多个非单词字符"作为分隔符。例如 "Hello, world!" → ["hello", "world"]。
+    _SPLIT_RE：正则 r"\\W+"，意思是"一个或多个非单词字符"作为分隔符。例如 "Hello, world!" → ["hello", "world"]。
 
     __init__：
         接收 [{"content": "...", "metadata": {...}}, ...] 格式的文档列表
@@ -135,7 +135,7 @@ def hybrid_rrf_fuse(
 
     RRF 公式核心：
     单个文档的 rrf_score = Σ (weight / (k + rank))
-    
+
     举例：如果一个文档在向量结果中排第 2，在 BM25 中排第 5：
     rrf_score = 0.6/(60+2) + 0.4/(60+5) = 0.00968 + 0.00615 = 0.01583
     去重策略（_key 函数）：按 (来源文件名, 页码, content前80字符) 生成唯一键。同一个文档在向量和 BM25 中都命中时，只保留一条记录，分数累加。
@@ -179,9 +179,7 @@ def hybrid_rrf_fuse(
             },
         )
         rec["bm25_score"] = max(rec["bm25_score"], score)
-        rec["bm25_rank"] = (
-            rank if rec["bm25_rank"] is None else min(rec["bm25_rank"], rank)
-        )
+        rec["bm25_rank"] = rank if rec["bm25_rank"] is None else min(rec["bm25_rank"], rank)
         rec["rrf_score"] += bm25_weight / (k_rrf + rank)
 
     return sorted(fused.values(), key=lambda r: r["rrf_score"], reverse=True)

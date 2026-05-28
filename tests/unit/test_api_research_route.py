@@ -112,9 +112,7 @@ def _reflection_plain(text: str) -> AIMessage:
 class _SpyMemory(MemoryManager):
     """记录 ``save_research_result`` 调用；可选的假历史前言。"""
 
-    def __init__(
-        self, *, fake_recent_research: list[dict[str, str]] | None = None
-    ) -> None:
+    def __init__(self, *, fake_recent_research: list[dict[str, str]] | None = None) -> None:
         super().__init__(InMemoryStore())
         self._fake_recent_research = fake_recent_research
         self.save_calls: list[dict[str, Any]] = []
@@ -195,9 +193,7 @@ class TestResearchJSON:
         )
         app = _build_test_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research",
                 json={"query": "分析宁德时代"},
@@ -215,9 +211,7 @@ class TestResearchJSON:
         graph = _FakeGraph([_supervisor_final("ok")])
         app = _build_test_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research",
                 json={"query": "hello", "thread_id": "my-fixed-thread"},
@@ -231,12 +225,8 @@ class TestResearchJSON:
         """如果 lifespan 未能构建 supervisor，路由应返回 503 — 而非 500 — 这样客户端可以直接重试，无需解析堆栈跟踪。"""
         app = _build_test_app(graph=None)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            r = await client.post(
-                "/api/supervisor/research", json={"query": "hi"}
-            )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.post("/api/supervisor/research", json={"query": "hi"})
 
         assert r.status_code == 503
         assert "not available" in r.json()["detail"].lower()
@@ -246,12 +236,8 @@ class TestResearchJSON:
         graph = _FakeGraph([_supervisor_final("ok")])
         app = _build_test_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            r = await client.post(
-                "/api/supervisor/research", json={"query": ""}
-            )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.post("/api/supervisor/research", json={"query": ""})
 
         assert r.status_code == 422
 
@@ -291,9 +277,7 @@ class TestResearchSSE:
         )
         app = _build_test_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "go"},
@@ -310,9 +294,7 @@ class TestResearchSSE:
         assert phases[0] == "update"
         # 2. 每个专家至少有一次移交，按顺序排列。
         handoff_specialists = [
-            e["metadata"]["specialist"]
-            for e in events
-            if e["phase"] == "handoff"
+            e["metadata"]["specialist"] for e in events if e["phase"] == "handoff"
         ]
         assert handoff_specialists == ["data_expert", "report_expert"]
         # 3. 恰好一个 ``final`` 阶段（第一条无工具调用的 supervisor纯文本消息）。
@@ -329,9 +311,7 @@ class TestResearchSSE:
         app = _build_test_app(graph)
         app.state.available_specialists = ["data_expert", "news_expert"]
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "go"},
@@ -398,21 +378,13 @@ class TestResearchSSE:
                 # supervisor 最终回答
                 yield (
                     (),
-                    {
-                        "supervisor": {
-                            "messages": [
-                                AIMessage(content="done", name="supervisor")
-                            ]
-                        }
-                    },
+                    {"supervisor": {"messages": [AIMessage(content="done", name="supervisor")]}},
                 )
 
         graph = _SubgraphFakeGraph([])
         app = _build_test_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "test"},
@@ -441,9 +413,7 @@ class TestResearchSSE:
         graph = _BoomGraph([])
         app = _build_test_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "go"},
@@ -461,12 +431,8 @@ class TestResearchSSE:
     async def test_stream_503_when_graph_unavailable(self) -> None:
         app = _build_test_app(graph=None)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            r = await client.post(
-                "/api/supervisor/research/stream", json={"query": "hi"}
-            )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.post("/api/supervisor/research/stream", json={"query": "hi"})
 
         assert r.status_code == 503
 
@@ -489,9 +455,7 @@ class TestResearchSSE:
         graph = _SlowFakeGraph(scripted)
         app = _build_test_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "go"},
@@ -526,9 +490,7 @@ class TestResearchSSE:
         graph = _SlowFakeGraph(scripted)
         app = _build_test_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "go"},
@@ -544,9 +506,7 @@ class TestResearchSSE:
         graph = _FakeGraph([_supervisor_final("persisted synthesis")])
         app = _build_test_app(graph, memory=spy)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
                 "/api/supervisor/research/stream",
                 json={
@@ -569,9 +529,7 @@ class TestResearchSSE:
         graph = _FakeGraph([_supervisor_final("x")])
         app = _build_test_app(graph, memory=spy)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "q"},  # 默认 user_id 为匿名
@@ -591,9 +549,7 @@ class TestResearchSSE:
 
         app = _build_test_app(_BoomGraph([]), memory=spy)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "go", "user_id": "bob"},
@@ -609,9 +565,7 @@ class TestResearchSSE:
         graph = _FakeGraph([_supervisor_final("answer")])
         app = _build_test_app(graph, memory=spy)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "CURRENT_QUESTION_ONLY", "user_id": "u3"},
@@ -633,9 +587,7 @@ class TestResearchSSE:
         )
         app = _build_test_app(graph, memory=spy)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "q", "user_id": "u4"},

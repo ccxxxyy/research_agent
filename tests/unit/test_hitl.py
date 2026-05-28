@@ -49,9 +49,7 @@ class _FakeState:
     ) -> None:
         self.next = ("human_review",) if is_interrupted else ()
         self.tasks = ()
-        self.values = (
-            {} if is_empty else {"messages": [AIMessage(content="draft")]}
-        )
+        self.values = {} if is_empty else {"messages": [AIMessage(content="draft")]}
 
 
 class _HITLStreamGraph:
@@ -145,7 +143,7 @@ def _parse_sse(body: bytes) -> list[dict]:
         frame = frame.strip()
         if not frame or not frame.startswith("data:"):
             continue
-        payload = frame[len("data:"):].strip()
+        payload = frame[len("data:") :].strip()
         events.append(json.loads(payload))
     return events
 
@@ -159,20 +157,20 @@ class TestSSEReviewRequested:
     @pytest.mark.asyncio
     async def test_stream_emits_review_requested_when_interrupted(self) -> None:
         """当图被中断时，SSE 流应发出包含草稿内容的``review_requested`` 事件。"""
-        graph = _HITLStreamGraph([
-            AIMessage(
-                content="",
-                name="supervisor",
-                tool_calls=[{"name": "transfer_to_data_expert", "args": {}, "id": "x"}],
-            ),
-            AIMessage(content="specialist data", name="data_expert"),
-            AIMessage(content="supervisor draft synthesis", name="supervisor"),
-        ])
+        graph = _HITLStreamGraph(
+            [
+                AIMessage(
+                    content="",
+                    name="supervisor",
+                    tool_calls=[{"name": "transfer_to_data_expert", "args": {}, "id": "x"}],
+                ),
+                AIMessage(content="specialist data", name="data_expert"),
+                AIMessage(content="supervisor draft synthesis", name="supervisor"),
+            ]
+        )
         app = _build_hitl_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "test hitl"},
@@ -195,9 +193,7 @@ class TestSSEReviewRequested:
         graph = _CompletedGraph()
         app = _build_hitl_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/stream",
                 json={"query": "test no hitl"},
@@ -222,9 +218,7 @@ class TestApproveRoute:
         )
         app = _build_hitl_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/test-thread-1/approve",
                 json={"feedback": ""},
@@ -243,9 +237,7 @@ class TestApproveRoute:
         )
         app = _build_hitl_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/test-thread-2/approve",
                 json={"feedback": "Add more citations"},
@@ -259,9 +251,7 @@ class TestApproveRoute:
         graph = _CompletedGraph()
         app = _build_hitl_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/thread-done/approve",
                 json={"feedback": ""},
@@ -285,9 +275,7 @@ class TestResumeRoute:
         )
         app = _build_hitl_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/thread-r1/resume",
                 json={"feedback": "Focus on ESG metrics"},
@@ -306,9 +294,7 @@ class TestResumeRoute:
         )
         app = _build_hitl_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/thread-r2/resume",
                 json={"feedback": ""},
@@ -322,9 +308,7 @@ class TestResumeRoute:
         graph = _CompletedGraph()
         app = _build_hitl_app(graph)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/thread-done/resume",
                 json={"feedback": "nope"},
@@ -378,9 +362,7 @@ class TestThreadStateErrorMatrix:
     async def test_approve_404_when_thread_does_not_exist(self) -> None:
         graph = _AbsentThreadGraph()
         app = _build_hitl_app(graph)
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/missing-thread/approve",
                 json={"feedback": ""},
@@ -393,9 +375,7 @@ class TestThreadStateErrorMatrix:
         """空状态（无 next、无 values）被视为不存在。"""
         graph = _EmptyStateGraph()
         app = _build_hitl_app(graph)
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/empty-thread/resume",
                 json={"feedback": ""},
@@ -406,9 +386,7 @@ class TestThreadStateErrorMatrix:
     async def test_approve_500_when_checkpointer_fails(self) -> None:
         graph = _CheckpointerFailingGraph()
         app = _build_hitl_app(graph)
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/any-thread/approve",
                 json={"feedback": ""},
@@ -421,9 +399,7 @@ class TestThreadStateErrorMatrix:
         """已存在但已终止的线程应返回 409，并在消息中说明线程并非不存在，只是已完成。"""
         graph = _CompletedGraph()
         app = _build_hitl_app(graph)
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.post(
                 "/api/supervisor/research/completed-thread/resume",
                 json={"feedback": ""},

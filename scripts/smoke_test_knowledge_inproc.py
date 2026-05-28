@@ -128,9 +128,7 @@ async def _call(tool, payload: dict, *, timeout: float, label: str) -> dict:
         raise RuntimeError(f"{label}: 超时，已等待 {timeout:.1f} 秒") from exc
     elapsed = time.time() - t0
     if not isinstance(result, dict):
-        raise RuntimeError(
-            f"{label}: 预期 dict，实际得到 {type(result).__name__}: {result!r}"
-        )
+        raise RuntimeError(f"{label}: 预期 dict，实际得到 {type(result).__name__}: {result!r}")
     _step(f"{label}: {elapsed:.2f}s -> {sorted(result)}")
     return result
 

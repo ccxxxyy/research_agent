@@ -100,9 +100,7 @@ async def test_discovery_and_stock_news() -> None:
         )
 
         payload = _parse(
-            await tools["get_stock_news"].ainvoke(
-                {"symbol": SAMPLE_SYMBOL, "limit": 5}
-            )
+            await tools["get_stock_news"].ainvoke({"symbol": SAMPLE_SYMBOL, "limit": 5})
         )
         if "error" in payload:
             assert "context" in payload, payload
@@ -114,9 +112,7 @@ async def test_discovery_and_stock_news() -> None:
         assert len(payload["news"]) <= 5, "limit=5 must be honoured"
         if payload["news"]:
             row = payload["news"][0]
-            assert isinstance(row, dict) and row, (
-                "每条新闻应为非空的 列名→值 字典"
-            )
+            assert isinstance(row, dict) and row, "每条新闻应为非空的 列名→值 字典"
 
 
 # ---------------------------------------------------------------------
@@ -129,9 +125,7 @@ async def test_market_telegraph_contract() -> None:
     """
     async with _open_session() as tools:
         payload = _parse(
-            await tools["get_market_telegraph"].ainvoke(
-                {"category": "全部", "limit": 5}
-            )
+            await tools["get_market_telegraph"].ainvoke({"category": "全部", "limit": 5})
         )
         if "error" in payload:
             assert "context" in payload, payload
@@ -162,9 +156,7 @@ async def test_hot_keywords_and_economic_news() -> None:
     """
     async with _open_session() as tools:
         payload = _parse(
-            await tools["get_hot_keywords"].ainvoke(
-                {"symbol": SAMPLE_SYMBOL, "limit": 5}
-            )
+            await tools["get_hot_keywords"].ainvoke({"symbol": SAMPLE_SYMBOL, "limit": 5})
         )
         if "error" in payload:
             assert "context" in payload, payload
@@ -177,9 +169,7 @@ async def test_hot_keywords_and_economic_news() -> None:
             assert payload["symbol"].upper().startswith(("SH", "SZ"))
             assert SAMPLE_SYMBOL in payload["symbol"]
 
-        econ = _parse(
-            await tools["get_economic_news"].ainvoke({"limit": 5})
-        )
+        econ = _parse(await tools["get_economic_news"].ainvoke({"limit": 5}))
         if "error" not in econ:
             assert econ["source"] == "baidu"
             assert isinstance(econ["news"], list)
@@ -189,9 +179,7 @@ async def test_hot_keywords_and_economic_news() -> None:
         else:
             assert "context" in econ, econ
 
-        bad = _parse(
-            await tools["get_economic_news"].ainvoke({"date": "2026-05-08"})
-        )
+        bad = _parse(await tools["get_economic_news"].ainvoke({"date": "2026-05-08"}))
         assert "error" in bad
         assert "date" in bad["error"] or "YYYYMMDD" in bad["error"]
 
@@ -205,18 +193,12 @@ async def test_xueqiu_discussion_rank_contract() -> None:
     无效 ``ranking`` 必须在任何 HTTP 请求之前报错。有效调用会访问雪球且可能较慢（akshare 中的全量筛选器分页）。
     """
     async with _open_session() as tools:
-        bad = _parse(
-            await tools["get_xueqiu_discussion_hot_rank"].ainvoke(
-                {"ranking": "全天热帖"}
-            )
-        )
+        bad = _parse(await tools["get_xueqiu_discussion_hot_rank"].ainvoke({"ranking": "全天热帖"}))
         assert "error" in bad
         assert "ranking" in bad["error"] or "ValueError" in bad["error"]
 
         payload = _parse(
-            await tools["get_xueqiu_discussion_hot_rank"].ainvoke(
-                {"ranking": "最热门", "limit": 5}
-            )
+            await tools["get_xueqiu_discussion_hot_rank"].ainvoke({"ranking": "最热门", "limit": 5})
         )
         if "error" in payload:
             assert "context" in payload, payload

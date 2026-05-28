@@ -73,9 +73,7 @@ async def health_check(request: Request) -> HealthResponse:
     # 只要数据面正常即报告 ``ok``。
     # 可选服务缺失会降级响应，但不会将绿色仪表盘翻转为红色。
     critical = ("postgres", "redis")
-    overall = (
-        "ok" if all(services.get(k) == "ok" for k in critical) else "degraded"
-    )
+    overall = "ok" if all(services.get(k) == "ok" for k in critical) else "degraded"
 
     return HealthResponse(
         status=overall,

@@ -279,8 +279,8 @@ class TestSupervisorPrompt:
                 has_news=flags[4],
                 has_sentiment=flags[5],
             )
-            assert "hand off" in prompt.lower() or "hand-off" in prompt.lower()
-            assert "Never invent" in prompt
+            assert "移交" in prompt
+            assert "不要编造" in prompt
 
     def test_anti_hallucination_rules_present(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -291,10 +291,10 @@ class TestSupervisorPrompt:
             has_news=True,
             has_sentiment=True,
         )
-        assert "NEVER claim" in prompt
-        assert "unavailable" in prompt.lower()
-        assert "NEVER substitute" in prompt
-        assert "NEVER perform arithmetic" in prompt
+        assert "绝不声称" in prompt
+        assert "不可用" in prompt
+        assert "绝不用你自己的知识替代" in prompt
+        assert "绝不自己做算术" in prompt
 
     def test_anti_hallucination_present_single_specialist(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -305,8 +305,8 @@ class TestSupervisorPrompt:
             has_news=False,
             has_sentiment=False,
         )
-        assert "NEVER claim" in prompt
-        assert "NEVER substitute" in prompt
+        assert "绝不声称" in prompt
+        assert "绝不用你自己的知识替代" in prompt
 
     def test_sub_question_decomposition_guidance(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -317,8 +317,7 @@ class TestSupervisorPrompt:
             has_news=True,
             has_sentiment=True,
         )
-        lower = prompt.lower()
-        assert "numbered step" in lower or "numbered steps" in lower
+        assert "编号步骤" in prompt
 
     def test_self_check_before_final_answer(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -329,8 +328,7 @@ class TestSupervisorPrompt:
             has_news=True,
             has_sentiment=True,
         )
-        lower = prompt.lower()
-        assert "self-check" in lower or "re-read" in lower
+        assert "自检" in prompt or "重新阅读" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -369,12 +367,8 @@ class TestBuildResearchSupervisor:
         assert "knowledge_expert" in node_names
         assert "news_expert" in node_names
 
-    def test_data_only_compiles(
-        self, router: ModelRouter, fake_data_tools: list[BaseTool]
-    ) -> None:
-        graph = build_research_supervisor(
-            model_router=router, data_tools=fake_data_tools
-        )
+    def test_data_only_compiles(self, router: ModelRouter, fake_data_tools: list[BaseTool]) -> None:
+        graph = build_research_supervisor(model_router=router, data_tools=fake_data_tools)
         node_names = set(graph.get_graph().nodes.keys())
         assert "data_expert" in node_names
         assert "report_expert" not in node_names
@@ -385,9 +379,7 @@ class TestBuildResearchSupervisor:
     def test_report_only_compiles(
         self, router: ModelRouter, fake_report_tools: list[BaseTool]
     ) -> None:
-        graph = build_research_supervisor(
-            model_router=router, report_tools=fake_report_tools
-        )
+        graph = build_research_supervisor(model_router=router, report_tools=fake_report_tools)
         node_names = set(graph.get_graph().nodes.keys())
         assert "report_expert" in node_names
         assert "data_expert" not in node_names
@@ -398,9 +390,7 @@ class TestBuildResearchSupervisor:
         self, router: ModelRouter, fake_knowledge_tools: list[BaseTool]
     ) -> None:
         """仅含 knowledge 的团队是 Phase-4.6 RAG 闭环的冒烟配置 —守护其能独立编译。"""
-        graph = build_research_supervisor(
-            model_router=router, knowledge_tools=fake_knowledge_tools
-        )
+        graph = build_research_supervisor(model_router=router, knowledge_tools=fake_knowledge_tools)
         node_names = set(graph.get_graph().nodes.keys())
         assert "knowledge_expert" in node_names
         assert "data_expert" not in node_names
@@ -408,13 +398,9 @@ class TestBuildResearchSupervisor:
         assert "coder_expert" not in node_names
         assert "news_expert" not in node_names
 
-    def test_news_only_compiles(
-        self, router: ModelRouter, fake_news_tools: list[BaseTool]
-    ) -> None:
+    def test_news_only_compiles(self, router: ModelRouter, fake_news_tools: list[BaseTool]) -> None:
         """仅含 news 的团队是新闻平面的冒烟配置 — 同样守护其能独立编译。"""
-        graph = build_research_supervisor(
-            model_router=router, news_tools=fake_news_tools
-        )
+        graph = build_research_supervisor(model_router=router, news_tools=fake_news_tools)
         node_names = set(graph.get_graph().nodes.keys())
         assert "news_expert" in node_names
         assert "data_expert" not in node_names
@@ -423,12 +409,12 @@ class TestBuildResearchSupervisor:
         assert "knowledge_expert" not in node_names
 
     def test_empty_inputs_raise(self, router: ModelRouter) -> None:
-        with pytest.raises(ValueError, match="at least one specialist"):
+        with pytest.raises(ValueError, match="至少需要一个专家的工具列表非空"):
             build_research_supervisor(model_router=router)
 
     def test_all_empty_lists_raise(self, router: ModelRouter) -> None:
         """传递空列表在语义上等同于不传递任何内容 — 构建器应统一拒绝两者。"""
-        with pytest.raises(ValueError, match="at least one specialist"):
+        with pytest.raises(ValueError, match="至少需要一个专家的工具列表非空"):
             build_research_supervisor(
                 model_router=router,
                 data_tools=[],
@@ -460,9 +446,7 @@ class TestBuildResearchSupervisor:
     ) -> None:
         """默认设置（``enable_reflection=False``）不得引入反射包装器。 旧版 supervisor 已将其路由节点命名为 ``supervisor``（这是``langgraph_supervisor`` 的契约），
         因此区分"已包装"与"未包装"的标志是 ``reflection`` 节点的存在，以及专家节点位于顶层（未被封装）。"""
-        graph = build_research_supervisor(
-            model_router=router, data_tools=fake_data_tools
-        )
+        graph = build_research_supervisor(model_router=router, data_tools=fake_data_tools)
         node_names = set(graph.get_graph().nodes.keys())
         # 在未包装的图中，专家节点位于顶层。
         assert "data_expert" in node_names

@@ -283,9 +283,13 @@ def _format_transcript(messages: list[BaseMessage], *, max_chars: int = 8000) ->
     """
     parts: list[str] = []
     for msg in messages:
-        role = "user" if isinstance(msg, HumanMessage) else (
-            "system" if isinstance(msg, SystemMessage) else (
-                getattr(msg, "name", None) or "assistant"
+        role = (
+            "user"
+            if isinstance(msg, HumanMessage)
+            else (
+                "system"
+                if isinstance(msg, SystemMessage)
+                else (getattr(msg, "name", None) or "assistant")
             )
         )
         content = msg.content if isinstance(msg.content, str) else str(msg.content)

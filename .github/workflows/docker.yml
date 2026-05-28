@@ -7,6 +7,7 @@ on:
 
 env:
   IMAGE_NAME: research-agent
+  UV_INDEX_URL: https://pypi.org/simple
 
 jobs:
   build:

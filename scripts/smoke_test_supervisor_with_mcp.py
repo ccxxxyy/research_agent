@@ -105,11 +105,7 @@ async def main() -> int:
     for msg in messages:
         tc = getattr(msg, "tool_calls", None) or []
         for call in tc:
-            name = (
-                call.get("name", "")
-                if isinstance(call, dict)
-                else getattr(call, "name", "")
-            )
+            name = call.get("name", "") if isinstance(call, dict) else getattr(call, "name", "")
             if "transfer_to_coder_expert" in name:
                 coder_handoff = True
             if "code_execute_python" in name:
@@ -133,8 +129,7 @@ async def main() -> int:
 
     all_ok = hit_sum and hit_count and hit_second and routing_ok
     if all_ok:
-        print("\n  [PASS] Supervisor 路由到 coder_expert，MCP code_server "
-              "产生了正确答案。")
+        print("\n  [PASS] Supervisor 路由到 coder_expert，MCP code_server 产生了正确答案。")
         return 0
 
     print("\n  [FAIL] 一项或多项校验未通过。请查看上方消息跟踪。")

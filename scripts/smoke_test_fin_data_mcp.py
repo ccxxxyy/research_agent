@@ -80,9 +80,7 @@ async def main() -> int:
     # ---- 工具 1: search_stock_by_name（确定性过滤） ----
     logger.info("\n[1/5] fin_search_stock_by_name(keyword='{}') ...", SAMPLE_KEYWORD)
     payload = _parse(
-        await tool_map["fin_search_stock_by_name"].ainvoke(
-            {"keyword": SAMPLE_KEYWORD, "limit": 5}
-        )
+        await tool_map["fin_search_stock_by_name"].ainvoke({"keyword": SAMPLE_KEYWORD, "limit": 5})
     )
     if "error" in payload:
         logger.error("  FAIL: {}", payload)
@@ -96,9 +94,7 @@ async def main() -> int:
 
     # ---- 工具 2: get_stock_basic_info（多数据源降级） ----
     logger.info("\n[2/5] fin_get_stock_basic_info(symbol='{}') ...", SAMPLE_SYMBOL)
-    payload = _parse(
-        await tool_map["fin_get_stock_basic_info"].ainvoke({"symbol": SAMPLE_SYMBOL})
-    )
+    payload = _parse(await tool_map["fin_get_stock_basic_info"].ainvoke({"symbol": SAMPLE_SYMBOL}))
     if "error" in payload:
         if _is_structured_error(payload):
             logger.warning(
@@ -118,9 +114,7 @@ async def main() -> int:
     # ---- 工具 3: get_stock_price_history（多数据源降级） ----
     logger.info("\n[3/5] fin_get_stock_price_history(symbol='{}', days=15) ...", SAMPLE_SYMBOL)
     payload = _parse(
-        await tool_map["fin_get_stock_price_history"].ainvoke(
-            {"symbol": SAMPLE_SYMBOL, "days": 15}
-        )
+        await tool_map["fin_get_stock_price_history"].ainvoke({"symbol": SAMPLE_SYMBOL, "days": 15})
     )
     if "error" in payload:
         if _is_structured_error(payload):
@@ -140,7 +134,9 @@ async def main() -> int:
         )
 
     # ---- 工具 4: get_financial_abstract ----
-    logger.info("\n[4/5] fin_get_financial_abstract(symbol='{}', last_n_periods=2) ...", SAMPLE_SYMBOL)
+    logger.info(
+        "\n[4/5] fin_get_financial_abstract(symbol='{}', last_n_periods=2) ...", SAMPLE_SYMBOL
+    )
     payload = _parse(
         await tool_map["fin_get_financial_abstract"].ainvoke(
             {"symbol": SAMPLE_SYMBOL, "last_n_periods": 2}
@@ -157,7 +153,9 @@ async def main() -> int:
         )
 
     # ---- 工具 5: get_financial_indicators ----
-    logger.info("\n[5/5] fin_get_financial_indicators(symbol='{}', start_year='2024') ...", SAMPLE_SYMBOL)
+    logger.info(
+        "\n[5/5] fin_get_financial_indicators(symbol='{}', start_year='2024') ...", SAMPLE_SYMBOL
+    )
     payload = _parse(
         await tool_map["fin_get_financial_indicators"].ainvoke(
             {"symbol": SAMPLE_SYMBOL, "start_year": "2024"}

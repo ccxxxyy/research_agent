@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 # 进程内计数器
 # ---------------------------------------------------------------------------
 
+
 class _Counters:
     """线程安全的指标存储。计数器：记录 HTTP 请求数、耗时、LLM 用量"""
 
@@ -98,7 +99,9 @@ class _Counters:
                 f'path="{path}",status="{status}"}} {count}'
             )
 
-        lines.append("# HELP research_agent_http_request_duration_seconds_total Cumulative request wall-clock time.")
+        lines.append(
+            "# HELP research_agent_http_request_duration_seconds_total Cumulative request wall-clock time."
+        )
         lines.append("# TYPE research_agent_http_request_duration_seconds_total counter")
         for (method, path, status), dur in sorted(http_dur.items()):
             lines.append(
@@ -115,20 +118,24 @@ class _Counters:
         if usage_summary:
             by_model: dict = usage_summary.get("by_model", {})
             if by_model:
-                lines.append("# HELP research_agent_llm_prompt_tokens_total Total LLM prompt tokens.")
+                lines.append(
+                    "# HELP research_agent_llm_prompt_tokens_total Total LLM prompt tokens."
+                )
                 lines.append("# TYPE research_agent_llm_prompt_tokens_total counter")
                 for model, rec in sorted(by_model.items()):
                     lines.append(
                         f'research_agent_llm_prompt_tokens_total{{model="{model}"}} '
-                        f'{rec.get("prompt_tokens", 0)}'
+                        f"{rec.get('prompt_tokens', 0)}"
                     )
 
-                lines.append("# HELP research_agent_llm_completion_tokens_total Total LLM completion tokens.")
+                lines.append(
+                    "# HELP research_agent_llm_completion_tokens_total Total LLM completion tokens."
+                )
                 lines.append("# TYPE research_agent_llm_completion_tokens_total counter")
                 for model, rec in sorted(by_model.items()):
                     lines.append(
                         f'research_agent_llm_completion_tokens_total{{model="{model}"}} '
-                        f'{rec.get("completion_tokens", 0)}'
+                        f"{rec.get('completion_tokens', 0)}"
                     )
 
                 lines.append("# HELP research_agent_llm_calls_total Total LLM calls.")
@@ -136,7 +143,7 @@ class _Counters:
                 for model, rec in sorted(by_model.items()):
                     lines.append(
                         f'research_agent_llm_calls_total{{model="{model}"}} '
-                        f'{rec.get("call_count", 0)}'
+                        f"{rec.get('call_count', 0)}"
                     )
 
                 lines.append("# HELP research_agent_llm_cost_cny_total Estimated LLM cost (CNY).")
@@ -144,7 +151,7 @@ class _Counters:
                 for model, rec in sorted(by_model.items()):
                     lines.append(
                         f'research_agent_llm_cost_cny_total{{model="{model}"}} '
-                        f'{rec.get("total_cost_cny", 0)}'
+                        f"{rec.get('total_cost_cny', 0)}"
                     )
 
         lines.append("")
@@ -157,6 +164,7 @@ METRICS = _Counters()
 # ---------------------------------------------------------------------------
 # 中间件 — 记录每个请求
 # ---------------------------------------------------------------------------
+
 
 class MetricsMiddleware(BaseHTTPMiddleware):
     """记录每个请求的计数和挂钟耗时。FastAPI 中间件，每个请求进来自动记录一次"""

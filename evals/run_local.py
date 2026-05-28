@@ -140,11 +140,11 @@ async def run_eval(
 
     aggregate = {k: _aggregate(v) for k, v in all_scores.items()}
     category_aggregate = {
-        cat: {k: _aggregate(v) for k, v in metrics.items()}
-        for cat, metrics in by_category.items()
+        cat: {k: _aggregate(v) for k, v in metrics.items()} for cat, metrics in by_category.items()
     }
 
     from research_agent.config import get_settings
+
     settings = get_settings()
 
     report = {
@@ -184,8 +184,10 @@ def _print_summary(
     print(f"  EVALUATION REPORT — {metadata['timestamp'][:19]}")
     print(f"  Dataset: {metadata['dataset']} ({metadata['num_examples']} examples)")
     print(f"  Errors: {metadata['num_errors']}")
-    print(f"  Models: heavy={metadata['model_config']['heavy']}, "
-          f"medium={metadata['model_config']['medium']}")
+    print(
+        f"  Models: heavy={metadata['model_config']['heavy']}, "
+        f"medium={metadata['model_config']['medium']}"
+    )
     print("=" * 70)
 
     print(f"\n{'Metric':<28} {'Mean':>8} {'Min':>8} {'Max':>8} {'Std':>8} {'N':>5}")

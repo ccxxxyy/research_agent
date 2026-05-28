@@ -73,9 +73,7 @@ def _fmt_error(exc: Exception, *, context: str) -> dict[str, Any]:
     return {"error": f"{type(exc).__name__}: {exc}", "context": context}
 
 
-def _df_to_records(
-    df: pd.DataFrame, *, limit: int | None = None
-) -> list[dict[str, Any]]:
+def _df_to_records(df: pd.DataFrame, *, limit: int | None = None) -> list[dict[str, Any]]:
     """将 DataFrame 转换为 JSON 安全的字典列表。
 
     与 ``fin_data_server`` 中的辅助函数保持一致的线上格式（中文键名、NaN 为 ``None``、ISO 格式日期）— Agent 可在数据 / 新闻层之间切换而无需学习两种响应约定。
@@ -174,8 +172,7 @@ async def get_xueqiu_discussion_hot_rank(ranking: str = "最热门", limit: int 
     if ranking not in XUEQIU_DISCUSSION_RANKINGS:
         return _fmt_error(
             ValueError(
-                f"ranking 必须是 {sorted(XUEQIU_DISCUSSION_RANKINGS)} 之一，"
-                f"收到 {ranking!r}"
+                f"ranking 必须是 {sorted(XUEQIU_DISCUSSION_RANKINGS)} 之一，收到 {ranking!r}"
             ),
             context=f"get_xueqiu_discussion_hot_rank(ranking={ranking!r})",
         )
@@ -184,9 +181,7 @@ async def get_xueqiu_discussion_hot_rank(ranking: str = "最热门", limit: int 
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,
-            context=(
-                f"get_xueqiu_discussion_hot_rank(ranking={ranking!r}, limit={limit})"
-            ),
+            context=(f"get_xueqiu_discussion_hot_rank(ranking={ranking!r}, limit={limit})"),
         )
 
 
@@ -232,7 +227,8 @@ async def get_stock_news(symbol: str, limit: int = 20) -> dict:
         return await asyncio.to_thread(_stock_news_em, symbol, limit)
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
-            e, context=f"get_stock_news(symbol={symbol!r}, limit={limit})",
+            e,
+            context=f"get_stock_news(symbol={symbol!r}, limit={limit})",
         )
 
 
@@ -293,10 +289,7 @@ async def get_market_telegraph(category: str = "全部", limit: int = 30) -> dic
     limit = _coerce_limit(limit)
     if category not in TELEGRAPH_CATEGORIES:
         return _fmt_error(
-            ValueError(
-                f"category 必须是 {sorted(TELEGRAPH_CATEGORIES)} 之一，"
-                f"收到 {category!r}"
-            ),
+            ValueError(f"category 必须是 {sorted(TELEGRAPH_CATEGORIES)} 之一，收到 {category!r}"),
             context=f"get_market_telegraph(category={category!r})",
         )
     try:
@@ -412,8 +405,7 @@ async def get_economic_news(date: str = "", limit: int = 30) -> dict:
     if not use_date.isdigit() or len(use_date) != 8:
         return _fmt_error(
             ValueError(
-                f"date 必须是 YYYYMMDD 格式（8 位数字），收到 {date!r}；"
-                f"传入空字符串表示今天"
+                f"date 必须是 YYYYMMDD 格式（8 位数字），收到 {date!r}；传入空字符串表示今天"
             ),
             context=f"get_economic_news(date={date!r})",
         )

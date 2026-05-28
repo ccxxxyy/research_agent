@@ -87,9 +87,7 @@ class TaskStatus(BaseModel):
 
     state: TaskState
     message: Message | None = None
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class Task(BaseModel):
@@ -179,9 +177,7 @@ def _build_agent_card(base_url: str = "") -> AgentCard:
             AgentSkill(
                 id="news_sentiment",
                 name="新闻舆情分析",
-                description=(
-                    "获取并分析上市公司相关新闻，提供舆情评分和趋势判断。"
-                ),
+                description=("获取并分析上市公司相关新闻，提供舆情评分和趋势判断。"),
                 tags=["news", "sentiment", "nlp"],
                 examples=[
                     "最近一周关于宁德时代的新闻舆情如何",
@@ -327,6 +323,7 @@ async def _execute_task(task_id: str, query: str, app: Any) -> None:
         messages = result.get("messages", [])
         reply = ""
         from langchain_core.messages import AIMessage
+
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
                 tc = getattr(msg, "tool_calls", None) or []

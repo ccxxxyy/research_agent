@@ -73,9 +73,7 @@ async def init_memory_store(
                 logger.info("MemoryStore initialized: PostgresStore")
                 return store
             except Exception as e:
-                logger.warning(
-                    "PostgresStore init failed ({}), trying sqlite/memory fallback", e
-                )
+                logger.warning("PostgresStore init failed ({}), trying sqlite/memory fallback", e)
 
     if sqlite_path is not None:
         try:
@@ -91,9 +89,7 @@ async def init_memory_store(
             logger.info("MemoryStore initialized: AsyncSqliteStore at {}", path)
             return store
         except Exception as e:
-            logger.warning(
-                "AsyncSqliteStore init failed ({}), falling back to memory", e
-            )
+            logger.warning("AsyncSqliteStore init failed ({}), falling back to memory", e)
 
     logger.info("MemoryStore initialized: InMemoryStore (non-persistent)")
     return InMemoryStore()

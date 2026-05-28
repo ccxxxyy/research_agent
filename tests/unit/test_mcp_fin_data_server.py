@@ -113,9 +113,7 @@ async def test_discovery_and_search() -> None:
             f"{SAMPLE_NAME_KEYWORD!r}, got {hit['matches']}"
         )
 
-        bad = _parse(
-            await tools["search_stock_by_name"].ainvoke({"keyword": "   "})
-        )
+        bad = _parse(await tools["search_stock_by_name"].ainvoke({"keyword": "   "}))
         assert "error" in bad
         assert "non-empty" in bad["error"] or "ValueError" in bad["error"]
 
@@ -136,10 +134,7 @@ async def test_financial_statement_tools() -> None:
         )
         assert "error" not in abs_payload, abs_payload
         assert abs_payload["symbol"] == SAMPLE_SYMBOL
-        assert (
-            isinstance(abs_payload["periods"], list)
-            and 1 <= len(abs_payload["periods"]) <= 2
-        )
+        assert isinstance(abs_payload["periods"], list) and 1 <= len(abs_payload["periods"]) <= 2
         assert isinstance(abs_payload["metrics"], dict) and abs_payload["metrics"]
         assert any("营业" in k or "净利润" in k for k in abs_payload["metrics"]), (
             f"expected revenue/profit metric, got {list(abs_payload['metrics'])}"
@@ -154,10 +149,7 @@ async def test_financial_statement_tools() -> None:
             )
         )
         assert "error" in bad_periods
-        assert (
-            "last_n_periods" in bad_periods["error"]
-            or "ValueError" in bad_periods["error"]
-        )
+        assert "last_n_periods" in bad_periods["error"] or "ValueError" in bad_periods["error"]
 
         ind_payload = _parse(
             await tools["get_financial_indicators"].ainvoke(
@@ -183,9 +175,7 @@ async def test_basic_info_and_price_history_fallback() -> None:
       3. 超出范围的 ``days`` 在工具边界被拒绝。
     """
     async with _open_session() as tools:
-        basic = _parse(
-            await tools["get_stock_basic_info"].ainvoke({"symbol": SAMPLE_SYMBOL})
-        )
+        basic = _parse(await tools["get_stock_basic_info"].ainvoke({"symbol": SAMPLE_SYMBOL}))
         if "error" in basic:
             assert "attempts" in basic, basic
         else:
@@ -193,9 +183,7 @@ async def test_basic_info_and_price_history_fallback() -> None:
             assert isinstance(basic["info"], dict) and basic["info"]
 
         price = _parse(
-            await tools["get_stock_price_history"].ainvoke(
-                {"symbol": SAMPLE_SYMBOL, "days": 15}
-            )
+            await tools["get_stock_price_history"].ainvoke({"symbol": SAMPLE_SYMBOL, "days": 15})
         )
         if "error" in price:
             assert "attempts" in price, price
@@ -208,9 +196,7 @@ async def test_basic_info_and_price_history_fallback() -> None:
             assert len(price["bars"]) == summary["sessions"]
 
         bad_days = _parse(
-            await tools["get_stock_price_history"].ainvoke(
-                {"symbol": SAMPLE_SYMBOL, "days": 9999}
-            )
+            await tools["get_stock_price_history"].ainvoke({"symbol": SAMPLE_SYMBOL, "days": 9999})
         )
         assert "error" in bad_days
         assert "days" in bad_days["error"] or "ValueError" in bad_days["error"]

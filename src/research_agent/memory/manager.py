@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 class MemoryNamespace:
-    """用于组织长期记忆的预定义命名空间。分别是用户偏好 / 研究历史 / 领域知识。 """
+    """用于组织长期记忆的预定义命名空间。分别是用户偏好 / 研究历史 / 领域知识。"""
 
     USER_PREFERENCES = "user_preferences"
     RESEARCH_HISTORY = "research_history"
@@ -99,10 +99,14 @@ class MemoryManager:
     async def get_user_context(self, user_id: str) -> dict[str, Any]:
         """检索所有相关的用户上下文，用于个性化 agent 行为。"""
         preferences = await self.search_memories(
-            user_id, MemoryNamespace.USER_PREFERENCES, limit=5,
+            user_id,
+            MemoryNamespace.USER_PREFERENCES,
+            limit=5,
         )
         history = await self.search_memories(
-            user_id, MemoryNamespace.RESEARCH_HISTORY, limit=5,
+            user_id,
+            MemoryNamespace.RESEARCH_HISTORY,
+            limit=5,
         )
         return {
             "preferences": preferences,

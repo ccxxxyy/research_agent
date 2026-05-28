@@ -80,9 +80,7 @@ async def run_probe(agent: Any, probe: dict[str, str]) -> None:
     print(f"  预期工具调用: {probe['expected_tool']}")
     print("=" * 70)
 
-    result = await agent.ainvoke(
-        {"messages": [HumanMessage(content=probe["question"])]}
-    )
+    result = await agent.ainvoke({"messages": [HumanMessage(content=probe["question"])]})
 
     trace = _summarize_trace(result["messages"])
 

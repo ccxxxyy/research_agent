@@ -90,6 +90,7 @@ def length_in_cm(value: float, unit: str) -> str:
 # 辅助函数
 # ---------------------------------------------------------------------------
 
+
 def _banner(title: str) -> None:
     print("\n" + "=" * 72)
     print(f"  {title}")
@@ -162,10 +163,7 @@ def probe2_predicate(trace: dict[str, Any]) -> bool:
     units_tried = {c["unit"] for c in STRICT_CALLS}
     had_error = any("Error:" in r for r in trace["tool_results"])
     return (
-        len(STRICT_CALLS) >= 2
-        and len(units_tried) >= 2
-        and had_error
-        and "100" in trace["final"]
+        len(STRICT_CALLS) >= 2 and len(units_tried) >= 2 and had_error and "100" in trace["final"]
     )
 
 

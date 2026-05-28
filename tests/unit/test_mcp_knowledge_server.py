@@ -66,9 +66,7 @@ def _make_tiny_pdf(pages: list[str]) -> bytes:
     # 2. 页面树（前向引用占位符；页面对象创建后再填充子节点列表）。
     pages_obj_num = _push(b"")
     # 字体（所有页面共享）
-    font_obj_num = _push(
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
-    )
+    font_obj_num = _push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
 
     page_obj_nums: list[int] = []
     for text in pages:
@@ -95,13 +93,13 @@ def _make_tiny_pdf(pages: list[str]) -> bytes:
         page_obj_nums.append(_push(page_obj))
 
     # 用实际子节点引用填充页面树。
-    kids = b" ".join(
-        str(n).encode("ascii") + b" 0 R" for n in page_obj_nums
-    )
+    kids = b" ".join(str(n).encode("ascii") + b" 0 R" for n in page_obj_nums)
     objects[pages_obj_num - 1] = (
         b"<< /Type /Pages /Count "
         + str(len(page_obj_nums)).encode("ascii")
-        + b" /Kids [" + kids + b"] >>"
+        + b" /Kids ["
+        + kids
+        + b"] >>"
     )
 
     # 组装 PDF：头部、主体对象、交叉引用表、尾部。
@@ -181,10 +179,7 @@ class TestValidateCollectionName:
 
 class TestQualityClassifier:
     def test_high_when_top_score_clears_threshold(self) -> None:
-        assert (
-            _classify_quality(QUALITY_HIGH_THRESHOLD + 0.05, 0.5, unique_sources=2)
-            == "high"
-        )
+        assert _classify_quality(QUALITY_HIGH_THRESHOLD + 0.05, 0.5, unique_sources=2) == "high"
 
     def test_medium_band(self) -> None:
         # top_score ≥ medium 但 < high；mean 仍然足够高。
@@ -192,18 +187,15 @@ class TestQualityClassifier:
         assert _classify_quality(score, score, unique_sources=2) == "medium"
 
     def test_low_when_top_score_below_medium(self) -> None:
-        assert (
-            _classify_quality(QUALITY_MEDIUM_THRESHOLD - 0.05, 0.1, unique_sources=1)
-            == "low"
-        )
+        assert _classify_quality(QUALITY_MEDIUM_THRESHOLD - 0.05, 0.1, unique_sources=1) == "low"
 
     def test_low_when_no_unique_sources(self) -> None:
         # 我们将 ``unique_sources=0`` 视为"无可用证据" — 即使部分分数
         # 漂移上升，分类器也不得报告 'high'。
-        assert (
-            _classify_quality(QUALITY_HIGH_THRESHOLD + 0.1, 0.5, unique_sources=0)
-            in {"medium", "low"}
-        )
+        assert _classify_quality(QUALITY_HIGH_THRESHOLD + 0.1, 0.5, unique_sources=0) in {
+            "medium",
+            "low",
+        }
 
 
 class TestBM25Index:
@@ -242,18 +234,14 @@ class TestChunkPages:
             {"page": 1, "text": "alpha beta " * 200},
             {"page": 2, "text": "gamma delta " * 50},
         ]
-        chunks = _chunk_pages(
-            pages, source="x.pdf", chunk_size=300, chunk_overlap=50
-        )
+        chunks = _chunk_pages(pages, source="x.pdf", chunk_size=300, chunk_overlap=50)
         assert chunks
         assert all("page" in c["metadata"] for c in chunks)
         assert all(c["metadata"]["source"] == "x.pdf" for c in chunks)
         # 分块绝不跨页 — 来源追溯必须保持干净。
         page_to_chunks: dict[int, int] = {}
         for c in chunks:
-            page_to_chunks[c["metadata"]["page"]] = (
-                page_to_chunks.get(c["metadata"]["page"], 0) + 1
-            )
+            page_to_chunks[c["metadata"]["page"]] = page_to_chunks.get(c["metadata"]["page"], 0) + 1
         assert 1 in page_to_chunks and 2 in page_to_chunks
 
 
@@ -271,20 +259,13 @@ class TestHybridFuse:
 
     def test_doc_in_both_lists_gets_summed_rrf(self) -> None:
         doc = {"content": "shared", "metadata": {"source": "x", "page": 1}}
-        fused_only_vec = _hybrid_fuse(
-            vector_hits=[(doc, 0.8)], bm25_hits=[]
-        )
-        fused_both = _hybrid_fuse(
-            vector_hits=[(doc, 0.8)], bm25_hits=[(0, 5.0, doc)]
-        )
+        fused_only_vec = _hybrid_fuse(vector_hits=[(doc, 0.8)], bm25_hits=[])
+        fused_both = _hybrid_fuse(vector_hits=[(doc, 0.8)], bm25_hits=[(0, 5.0, doc)])
         # 同一文档出现在两个列表中时，其 RRF 分数应高于仅出现在单个列表中的版本。
         assert fused_both[0]["rrf_score"] > fused_only_vec[0]["rrf_score"]
 
     def test_results_sorted_descending_by_rrf(self) -> None:
-        docs = [
-            {"content": f"doc{i}", "metadata": {"source": "s", "page": i}}
-            for i in range(5)
-        ]
+        docs = [{"content": f"doc{i}", "metadata": {"source": "s", "page": i}} for i in range(5)]
         # doc0 向量排名最高，doc4 最低。BM25 同理。
         vec = [(docs[i], 1.0 - i * 0.1) for i in range(5)]
         bm = [(i, 5.0 - i, docs[i]) for i in range(5)]
@@ -382,9 +363,7 @@ class TestIngestAndSearch:
         monkeypatch.setattr(knowledge_server, "_FAISS_STORES", {})
         monkeypatch.setattr(knowledge_server, "_BM25_CACHE", {})
 
-        await knowledge_server.ingest_pdf(
-            local_path=str(tiny_pdf_path), collection="to-delete"
-        )
+        await knowledge_server.ingest_pdf(local_path=str(tiny_pdf_path), collection="to-delete")
 
         listing = await knowledge_server.list_collections()
         names = {c["name"] for c in listing["collections"]}
@@ -395,8 +374,6 @@ class TestIngestAndSearch:
         assert deleted["deleted"] is True
 
         # 幂等的第二次调用。
-        deleted_again = await knowledge_server.delete_collection(
-            collection="to-delete"
-        )
+        deleted_again = await knowledge_server.delete_collection(collection="to-delete")
         assert deleted_again["existed"] is False
         assert deleted_again["deleted"] is False

@@ -219,7 +219,7 @@ async def list_collections(
 
     # 仅保留当前用户的集合并去除前缀
     user_collections = [
-        {"name": c["name"][len(prefix):], "chunk_count": c["chunk_count"]}
+        {"name": c["name"][len(prefix) :], "chunk_count": c["chunk_count"]}
         for c in result.get("collections", [])
         if c["name"].startswith(prefix)
     ]
@@ -235,8 +235,7 @@ async def delete_collection(
     collection_name: str,
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> DeleteCollectionResponse:
-    """删除知识库集合。幂等操作 —— 不存在的集合返回 ``existed=False``及 200 状态码。
-    """
+    """删除知识库集合。幂等操作 —— 不存在的集合返回 ``existed=False``及 200 状态码。"""
     user_id = _validate_user_id(x_user_id)
     scoped = _scoped_collection(user_id, collection_name)
 

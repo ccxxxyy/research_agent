@@ -56,15 +56,13 @@ def _print_report(report: dict[str, Any]) -> None:
     sample = agg.get("sample_size", 0)
     print()
     print("  [聚合统计]")
-    print(f"    总体结论: {agg.get('overall_label', '?')}  "
-          f"(均分: {agg.get('overall_score', 0):+.4f})")
+    print(
+        f"    总体结论: {agg.get('overall_label', '?')}  (均分: {agg.get('overall_score', 0):+.4f})"
+    )
     print(f"    样本量:   {sample} 条")
-    print(f"    正面: {agg.get('positive_count', 0):>3} 条 "
-          f"({agg.get('positive_ratio', 0):.1%})")
-    print(f"    中性: {agg.get('neutral_count', 0):>3} 条 "
-          f"({agg.get('neutral_ratio', 0):.1%})")
-    print(f"    负面: {agg.get('negative_count', 0):>3} 条 "
-          f"({agg.get('negative_ratio', 0):.1%})")
+    print(f"    正面: {agg.get('positive_count', 0):>3} 条 ({agg.get('positive_ratio', 0):.1%})")
+    print(f"    中性: {agg.get('neutral_count', 0):>3} 条 ({agg.get('neutral_ratio', 0):.1%})")
+    print(f"    负面: {agg.get('negative_count', 0):>3} 条 ({agg.get('negative_ratio', 0):.1%})")
 
     # ── 2) 高频讨论词 ──
     hot_words = report.get("hot_words", [])
@@ -105,8 +103,10 @@ def _print_report(report: dict[str, Any]) -> None:
         print()
         print("  [雪球讨论热度]")
         if xq.get("on_list"):
-            print(f"    该股在雪球热门榜第 {xq.get('rank', '?')} 名"
-                  f" (共 {xq.get('total_ranked', '?')} 支)")
+            print(
+                f"    该股在雪球热门榜第 {xq.get('rank', '?')} 名"
+                f" (共 {xq.get('total_ranked', '?')} 支)"
+            )
             vol = xq.get("discussion_volume", 0)
             if vol:
                 print(f"    讨论量: {vol}")
@@ -117,8 +117,7 @@ def _print_report(report: dict[str, Any]) -> None:
             if price:
                 print(f"    最新价: {price}")
         else:
-            print(f"    该股未进入雪球热门榜"
-                  f" (当前上榜 {xq.get('total_ranked', '?')} 支)")
+            print(f"    该股未进入雪球热门榜 (当前上榜 {xq.get('total_ranked', '?')} 支)")
 
     # ── 5) 东财热搜关联词 ──
     em_kws = report.get("eastmoney_trending_keywords", [])
@@ -162,10 +161,14 @@ def _print_report(report: dict[str, Any]) -> None:
         most_pos = sorted_items[0]
         most_neg = sorted_items[-1]
         print("  [极值速览]")
-        print(f"    最正面: {most_pos.get('title', '')[:35]}  "
-              f"{most_pos.get('sentiment_score', 0):+.4f}")
-        print(f"    最负面: {most_neg.get('title', '')[:35]}  "
-              f"{most_neg.get('sentiment_score', 0):+.4f}")
+        print(
+            f"    最正面: {most_pos.get('title', '')[:35]}  "
+            f"{most_pos.get('sentiment_score', 0):+.4f}"
+        )
+        print(
+            f"    最负面: {most_neg.get('title', '')[:35]}  "
+            f"{most_neg.get('sentiment_score', 0):+.4f}"
+        )
     else:
         print("\n  (无新闻数据)")
 
@@ -175,12 +178,11 @@ def _print_report(report: dict[str, Any]) -> None:
 
 async def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="个股舆情量化分析演示（多维度）")
-    parser.add_argument("--symbol", type=str, default="300750",
-                        help="6 位 A 股代码，默认 300750（宁德时代）")
-    parser.add_argument("--limit", type=int, default=30,
-                        help="分析新闻条数上限（默认 30）")
-    parser.add_argument("--json", action="store_true",
-                        help="输出原始 JSON（用于对账审计）")
+    parser.add_argument(
+        "--symbol", type=str, default="300750", help="6 位 A 股代码，默认 300750（宁德时代）"
+    )
+    parser.add_argument("--limit", type=int, default=30, help="分析新闻条数上限（默认 30）")
+    parser.add_argument("--json", action="store_true", help="输出原始 JSON（用于对账审计）")
     args = parser.parse_args(argv)
 
     print(f"\n  正在拉取 {args.symbol} 的多维度舆情数据...")

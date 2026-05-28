@@ -49,18 +49,22 @@ if TYPE_CHECKING:
     from fastapi import Request, Response
     from starlette.types import ASGIApp
 
-_AUTH_EXEMPT_PATHS = frozenset({
-    "/",
-    "/health",
-    "/metrics",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-})
+_AUTH_EXEMPT_PATHS = frozenset(
+    {
+        "/",
+        "/health",
+        "/metrics",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+    }
+)
 
-_REQUEST_TIMEOUT_EXEMPT_PATHS = _AUTH_EXEMPT_PATHS | frozenset({
-    "/api/supervisor/research/stream",
-})
+_REQUEST_TIMEOUT_EXEMPT_PATHS = _AUTH_EXEMPT_PATHS | frozenset(
+    {
+        "/api/supervisor/research/stream",
+    }
+)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -87,7 +91,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         return JSONResponse(
             status_code=401,
-            content={"detail": "Invalid or missing API key. Provide 'Authorization: Bearer <key>'."},
+            content={
+                "detail": "Invalid or missing API key. Provide 'Authorization: Bearer <key>'."
+            },
         )
 
 
@@ -285,7 +291,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         member = f"{now}"
         try:
             result = await self._redis.evalsha(
-                sha, 1, key, str(now), str(self._window), str(self._max_rpm), member,
+                sha,
+                1,
+                key,
+                str(now),
+                str(self._window),
+                str(self._max_rpm),
+                member,
             )
             allowed = int(result[0])
             if allowed:

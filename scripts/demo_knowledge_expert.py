@@ -63,6 +63,7 @@ def _step(msg: str) -> None:
     """
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
+
 from research_agent.config import get_settings
 from research_agent.graph.research_supervisor import build_research_supervisor
 from research_agent.llm.provider import ModelRouter
@@ -116,21 +117,33 @@ def _make_tiny_pdf(pages: list[str]) -> bytes:
     for text in pages:
         stream = _content_stream(text)
         contents_obj_num = _push(
-            b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n"
-            + stream + b"\nendstream"
+            b"<< /Length "
+            + str(len(stream)).encode("ascii")
+            + b" >>\nstream\n"
+            + stream
+            + b"\nendstream"
         )
         page_obj = (
-            b"<< /Type /Page /Parent " + str(pages_obj_num).encode("ascii") + b" 0 R "
+            b"<< /Type /Page /Parent "
+            + str(pages_obj_num).encode("ascii")
+            + b" 0 R "
             + b"/MediaBox [0 0 612 792] "
-            + b"/Resources << /Font << /F1 " + str(font_obj_num).encode("ascii") + b" 0 R >> >> "
-            + b"/Contents " + str(contents_obj_num).encode("ascii") + b" 0 R >>"
+            + b"/Resources << /Font << /F1 "
+            + str(font_obj_num).encode("ascii")
+            + b" 0 R >> >> "
+            + b"/Contents "
+            + str(contents_obj_num).encode("ascii")
+            + b" 0 R >>"
         )
         page_obj_nums.append(_push(page_obj))
 
     kids = b" ".join(str(n).encode("ascii") + b" 0 R" for n in page_obj_nums)
     objects[pages_obj_num - 1] = (
-        b"<< /Type /Pages /Count " + str(len(page_obj_nums)).encode("ascii")
-        + b" /Kids [" + kids + b"] >>"
+        b"<< /Type /Pages /Count "
+        + str(len(page_obj_nums)).encode("ascii")
+        + b" /Kids ["
+        + kids
+        + b"] >>"
     )
 
     buf = io.BytesIO()
@@ -146,9 +159,13 @@ def _make_tiny_pdf(pages: list[str]) -> bytes:
     for off in offsets[1:]:
         buf.write(f"{off:010d} 00000 n \n".encode("ascii"))
     buf.write(
-        b"trailer\n<< /Size " + str(len(objects) + 1).encode("ascii")
-        + b" /Root " + str(catalog_obj_num).encode("ascii")
-        + b" 0 R >>\nstartxref\n" + str(xref_pos).encode("ascii") + b"\n%%EOF\n"
+        b"trailer\n<< /Size "
+        + str(len(objects) + 1).encode("ascii")
+        + b" /Root "
+        + str(catalog_obj_num).encode("ascii")
+        + b" 0 R >>\nstartxref\n"
+        + str(xref_pos).encode("ascii")
+        + b"\n%%EOF\n"
     )
     return buf.getvalue()
 
@@ -283,8 +300,10 @@ async def main() -> int:
     print(f"  消息总数                    : {len(messages)}")
     print(f"  已到达的专家                : {sorted(reached) or ['<无>']}")
     print(f"  工具调用事件总数            : {len(calls)}")
-    print(f"  transfer_to_knowledge_expert: "
-          f"{sum(1 for n in calls if n == 'transfer_to_knowledge_expert')}")
+    print(
+        f"  transfer_to_knowledge_expert: "
+        f"{sum(1 for n in calls if n == 'transfer_to_knowledge_expert')}"
+    )
 
     # -----------------------------------------------------------------
     # 重排序管线可视化
@@ -305,8 +324,7 @@ async def main() -> int:
             print(f"  搜索错误: {search_result['error']}")
         else:
             reranker_active = any(
-                r.get("rerank_score") is not None
-                for r in search_result.get("results", [])
+                r.get("rerank_score") is not None for r in search_result.get("results", [])
             )
             print(f"  质量           : {search_result['quality']}")
             print(f"  最高分（向量） : {search_result['top_score']}")
@@ -314,9 +332,11 @@ async def main() -> int:
             print(f"  重排序器活跃   : {reranker_active}")
             print(f"  返回命中数     : {search_result['top_k_returned']}")
             print()
-            print(f"  {'#':<3} {'rerank':>8} {'vector':>8} {'bm25':>8} "
-                  f"{'rrf':>10}  {'page':>4}  内容（前 60 字符）")
-            print(f"  {'─'*3} {'─'*8} {'─'*8} {'─'*8} {'─'*10}  {'─'*4}  {'─'*40}")
+            print(
+                f"  {'#':<3} {'rerank':>8} {'vector':>8} {'bm25':>8} "
+                f"{'rrf':>10}  {'page':>4}  内容（前 60 字符）"
+            )
+            print(f"  {'─' * 3} {'─' * 8} {'─' * 8} {'─' * 8} {'─' * 10}  {'─' * 4}  {'─' * 40}")
             for i, hit in enumerate(search_result.get("results", []), 1):
                 rs = hit.get("rerank_score")
                 rs_str = f"{rs:8.4f}" if rs is not None else "    n/a "

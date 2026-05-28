@@ -478,9 +478,7 @@ async def ingest_pdf(
         )
     if path.stat().st_size > MAX_INGEST_BYTES:
         return _fmt_error(
-            ValueError(
-                f"PDF size {path.stat().st_size} exceeds limit {MAX_INGEST_BYTES}"
-            ),
+            ValueError(f"PDF size {path.stat().st_size} exceeds limit {MAX_INGEST_BYTES}"),
             context=f"ingest_pdf(local_path={local_path!r})",
         )
 
@@ -491,9 +489,7 @@ async def ingest_pdf(
         )
     if chunk_overlap < 0 or chunk_overlap >= chunk_size:
         return _fmt_error(
-            ValueError(
-                f"chunk_overlap must be 0..chunk_size-1, got {chunk_overlap}"
-            ),
+            ValueError(f"chunk_overlap must be 0..chunk_size-1, got {chunk_overlap}"),
             context="ingest_pdf()",
         )
 
@@ -509,8 +505,7 @@ async def ingest_pdf(
                 "total_chunks_in_collection": _collection_count(collection),
                 "skipped": True,
                 "reason": (
-                    f"PDF content hash already ingested "
-                    f"(original: {existing_hashes[file_hash]})"
+                    f"PDF content hash already ingested (original: {existing_hashes[file_hash]})"
                 ),
             }
 
@@ -561,9 +556,7 @@ async def ingest_pdf(
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,
-            context=(
-                f"ingest_pdf(local_path={local_path!r}, collection={collection!r})"
-            ),
+            context=(f"ingest_pdf(local_path={local_path!r}, collection={collection!r})"),
         )
 
 
@@ -601,9 +594,7 @@ def _classify_quality(top_score: float, mean_score: float, unique_sources: int) 
 from research_agent.rag.retriever import hybrid_rrf_fuse as _hybrid_fuse  # noqa: E402, F811
 
 
-async def _maybe_rerank(
-    query: str, candidates: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+async def _maybe_rerank(query: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """可选地使用本地 cross-encoder 对 ``candidates`` 重排序。
 
     以下情况返回原列表不变：
@@ -632,9 +623,7 @@ async def _maybe_rerank(
             logger.info("Cross-encoder reranker initialised for knowledge_server")
         return await _RERANKER.rerank(query, candidates)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Reranker unavailable ({}); falling back to RRF order", exc
-        )
+        logger.warning("Reranker unavailable ({}); falling back to RRF order", exc)
         for c in candidates:
             c.setdefault("rerank_score", None)
         return candidates
@@ -760,9 +749,7 @@ async def search(
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,
-            context=(
-                f"search(query={query!r}, collection={collection!r}, top_k={top_k})"
-            ),
+            context=(f"search(query={query!r}, collection={collection!r}, top_k={top_k})"),
         )
 
     if early is not None:

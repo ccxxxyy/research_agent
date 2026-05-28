@@ -96,8 +96,10 @@ async def _find_recent_report(
     end_str = end_date.strftime("%Y%m%d")
 
     for cat in PREFERRED_CATEGORIES:
-        _step(f"  search_announcements(symbol={symbol}, category={cat}, "
-              f"window={start_date}..{end_str})")
+        _step(
+            f"  search_announcements(symbol={symbol}, category={cat}, "
+            f"window={start_date}..{end_str})"
+        )
         try:
             resp = await search_announcements(
                 symbol=symbol,
@@ -112,17 +114,12 @@ async def _find_recent_report(
         if "error" in resp:
             _step(f"    category={cat} 搜索返回错误: {resp['error']}")
             continue
-        records = [
-            r for r in resp.get("announcements", []) if r.get("pdf_url")
-        ]
+        records = [r for r in resp.get("announcements", []) if r.get("pdf_url")]
         if not records:
             _step(f"    category={cat} 无 PDF 公告；尝试下一类别。")
             continue
         chosen = records[0]
-        _step(
-            f"  已选择: {chosen.get('publish_date')} | "
-            f"{chosen.get('title', '')[:60]} | size?"
-        )
+        _step(f"  已选择: {chosen.get('publish_date')} | {chosen.get('title', '')[:60]} | size?")
         return chosen
     return None
 
@@ -156,9 +153,7 @@ async def _ingested_sources_for_collection(
 
 
 async def amain(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="灌入 prod_reports 知识库 collection。"
-    )
+    parser = argparse.ArgumentParser(description="灌入 prod_reports 知识库 collection。")
     parser.add_argument(
         "--tickers",
         type=str,
@@ -178,10 +173,7 @@ async def amain(argv: list[str]) -> int:
         "--end-date",
         type=str,
         default="",
-        help=(
-            "cninfo 搜索窗口的截止日期，格式 YYYYMMDD。默认为今天。"
-            "仅在确定性快照测试时覆盖。"
-        ),
+        help=("cninfo 搜索窗口的截止日期，格式 YYYYMMDD。默认为今天。仅在确定性快照测试时覆盖。"),
     )
     args = parser.parse_args(argv)
 
@@ -190,11 +182,7 @@ async def amain(argv: list[str]) -> int:
         _step("失败: 未提供标的。")
         return 1
 
-    end_date = (
-        datetime.strptime(args.end_date, "%Y%m%d")
-        if args.end_date
-        else datetime.now()
-    )
+    end_date = datetime.strptime(args.end_date, "%Y%m%d") if args.end_date else datetime.now()
 
     # --- 延迟导入，使上面的 argparse 错误能快速返回 ---
     _step("正在加载工具模块（会触发 bge embedder 的导入）")
@@ -220,8 +208,7 @@ async def amain(argv: list[str]) -> int:
         knowledge_search=knowledge_search,
     )
     if already:
-        _step(f"  collection 已有 {len(already)} 个不同 source；"
-              f"已有 PDF 将被跳过（幂等重跑）。")
+        _step(f"  collection 已有 {len(already)} 个不同 source；已有 PDF 将被跳过（幂等重跑）。")
 
     seeded = 0
     skipped = 0

@@ -43,10 +43,7 @@ class RetrievalGrader:
         """返回 ``"high"``、``"medium"`` 或 ``"low"``。"""
         if top_score >= self.high_threshold and unique_sources >= 1:
             return "high"
-        if (
-            top_score >= self.medium_threshold
-            and mean_score >= self.medium_threshold * 0.6
-        ):
+        if top_score >= self.medium_threshold and mean_score >= self.medium_threshold * 0.6:
             return "medium"
         return "low"
 

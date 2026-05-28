@@ -51,9 +51,7 @@ def _parse_host_port(uri: str) -> tuple[str, int] | None:
     return host, parsed.port or 5432
 
 
-def is_postgres_reachable(
-    uri: str, timeout_s: float = DEFAULT_PROBE_TIMEOUT_S
-) -> bool:
+def is_postgres_reachable(uri: str, timeout_s: float = DEFAULT_PROBE_TIMEOUT_S) -> bool:
     """当 TCP 连接到 Postgres 主机成功时返回 True。
 
     以下任一情况返回 False（并记录 debug 日志）：

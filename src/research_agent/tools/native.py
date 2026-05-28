@@ -50,11 +50,16 @@ def calculate(expression: str) -> str:
     logger.debug("Tool call: calculate(expression={!r})", expression)
 
     allowed_names: dict[str, object] = {
-        "abs": abs, "round": round, "min": min, "max": max,
-        "pow": pow, "sum": sum,
+        "abs": abs,
+        "round": round,
+        "min": min,
+        "max": max,
+        "pow": pow,
+        "sum": sum,
     }
 
     import math
+
     for name in ("sqrt", "log", "log2", "log10", "exp", "sin", "cos", "tan", "pi", "e"):
         allowed_names[name] = getattr(math, name)
 

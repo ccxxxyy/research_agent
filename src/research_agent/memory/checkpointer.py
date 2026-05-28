@@ -92,9 +92,7 @@ async def init_checkpointer(
             logger.info("Checkpointer initialized: AsyncSqliteSaver at {}", path)
             return checkpointer
         except Exception as e:
-            logger.warning(
-                "AsyncSqliteSaver init failed ({}), falling back to memory", e
-            )
+            logger.warning("AsyncSqliteSaver init failed ({}), falling back to memory", e)
 
     logger.info("Checkpointer initialized: MemorySaver (in-memory, non-persistent)")
     return MemorySaver()

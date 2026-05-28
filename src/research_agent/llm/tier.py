@@ -8,9 +8,9 @@ from enum import StrEnum
 class ModelTier(StrEnum):
     """按任务复杂度划分的模型路由层级。"""
 
-    LIGHT = "light"    # 分类、提取、格式化、评分
+    LIGHT = "light"  # 分类、提取、格式化、评分
     MEDIUM = "medium"  # 摘要、分析、评估
-    HEAVY = "heavy"    # 深度推理、报告撰写、规划
+    HEAVY = "heavy"  # 深度推理、报告撰写、规划
 
 
 class AgentName(StrEnum):

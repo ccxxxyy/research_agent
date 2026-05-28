@@ -65,9 +65,7 @@ class ObservabilityConfig(BaseSettings):
     log_level: str = "INFO"
     log_file_path: str = Field(
         default="logs/research_agent.log",
-        description=(
-            "滚动应用日志文件的路径。设为空字符串则仅输出日志到 stderr （不写入文件）。"
-        ),
+        description=("滚动应用日志文件的路径。设为空字符串则仅输出日志到 stderr （不写入文件）。"),
     )
 
 
