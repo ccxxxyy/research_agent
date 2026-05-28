@@ -1,6 +1,7 @@
-"""LangSmith 评估评分器的离线单元测试。
+"""评估评分器的离线单元测试。
 
-这些测试使用合成输入验证评估器逻辑 —无 LLM 调用、无 LangSmith API、无网络。它们在常规的``pytest -m "not network"`` 门控下运行。
+使用合成输入验证评估器逻辑，无 LLM 调用、无 LangSmith API、无网络。
+在常规 ``pytest -m "not network"`` 门控下运行。
 """
 
 from __future__ import annotations
@@ -12,8 +13,10 @@ import pytest
 
 from evals.evaluators import (
     _build_reply_quality_evaluator,
+    keyword_coverage,
     memory_persistence,
     routing_accuracy,
+    tool_selection_precision,
 )
 
 
@@ -161,7 +164,7 @@ class TestMemoryPersistence:
         example = _make_example({"user_id": "alice"})
         result = memory_persistence(run, example)
         assert result["score"] == 0.0
-        assert "MISSING" in result["comment"]
+        assert "缺失" in result["comment"]
 
     def test_anonymous_not_saved_is_correct(self) -> None:
         run = _make_run({"reply": "answer", "memory_saved": False})
@@ -182,3 +185,85 @@ class TestMemoryPersistence:
         run = _make_run({"reply": "", "memory_saved": True})
         example = _make_example({"user_id": "alice"})
         assert memory_persistence(run, example)["score"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# keyword_coverage（关键词覆盖率）
+# ---------------------------------------------------------------------------
+
+
+class TestKeywordCoverage:
+    def test_all_keywords_present(self) -> None:
+        run = _make_run({"reply": "宁德时代 2023 年营收 4009 亿元，净利润 441 亿"})
+        example = _make_example({"expected_reply_keywords": ["营收", "利润"]})
+        assert keyword_coverage(run, example)["score"] == 1.0
+
+    def test_partial_keywords(self) -> None:
+        run = _make_run({"reply": "宁德时代的营收数据如下"})
+        example = _make_example({"expected_reply_keywords": ["营收", "利润", "ROE"]})
+        result = keyword_coverage(run, example)
+        assert abs(result["score"] - 1 / 3) < 0.01
+
+    def test_no_keywords_expected(self) -> None:
+        run = _make_run({"reply": "你好，有什么可以帮你的？"})
+        example = _make_example({"expected_reply_keywords": []})
+        assert keyword_coverage(run, example)["score"] == 1.0
+
+    def test_none_keywords_expected(self) -> None:
+        run = _make_run({"reply": "some reply"})
+        example = _make_example({})
+        assert keyword_coverage(run, example)["score"] == 1.0
+
+    def test_no_keywords_found(self) -> None:
+        run = _make_run({"reply": "这是一段无关的回复"})
+        example = _make_example({"expected_reply_keywords": ["ROE", "PE"]})
+        assert keyword_coverage(run, example)["score"] == 0.0
+
+    def test_case_insensitive(self) -> None:
+        run = _make_run({"reply": "The ROE of BYD is 20%"})
+        example = _make_example({"expected_reply_keywords": ["roe", "byd"]})
+        assert keyword_coverage(run, example)["score"] == 1.0
+
+    def test_empty_reply(self) -> None:
+        run = _make_run({"reply": ""})
+        example = _make_example({"expected_reply_keywords": ["营收"]})
+        assert keyword_coverage(run, example)["score"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# tool_selection_precision（工具选择精确度）
+# ---------------------------------------------------------------------------
+
+
+class TestToolSelectionPrecision:
+    def test_perfect_precision(self) -> None:
+        run = _make_run({"specialists_reached": ["data_expert", "news_expert"]})
+        example = _make_example({"expected_specialists": ["data_expert", "news_expert"]})
+        assert tool_selection_precision(run, example)["score"] == 1.0
+
+    def test_over_routing(self) -> None:
+        run = _make_run({"specialists_reached": ["data_expert", "news_expert", "coder_expert"]})
+        example = _make_example({"expected_specialists": ["data_expert"]})
+        result = tool_selection_precision(run, example)
+        assert abs(result["score"] - 1 / 3) < 0.01
+        assert "多余" in result["comment"]
+
+    def test_no_actual_no_expected(self) -> None:
+        run = _make_run({"specialists_reached": []})
+        example = _make_example({"expected_specialists": []})
+        assert tool_selection_precision(run, example)["score"] == 1.0
+
+    def test_no_actual_but_expected(self) -> None:
+        run = _make_run({"specialists_reached": []})
+        example = _make_example({"expected_specialists": ["data_expert"]})
+        assert tool_selection_precision(run, example)["score"] == 0.0
+
+    def test_actual_subset_of_expected(self) -> None:
+        run = _make_run({"specialists_reached": ["data_expert"]})
+        example = _make_example({"expected_specialists": ["data_expert", "news_expert"]})
+        assert tool_selection_precision(run, example)["score"] == 1.0
+
+    def test_completely_wrong_routing(self) -> None:
+        run = _make_run({"specialists_reached": ["coder_expert"]})
+        example = _make_example({"expected_specialists": ["data_expert"]})
+        assert tool_selection_precision(run, example)["score"] == 0.0

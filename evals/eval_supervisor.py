@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sys
 from pathlib import Path
 
 from langsmith import Client, evaluate
@@ -25,8 +24,10 @@ from loguru import logger
 
 from evals.evaluators import (
     create_reply_quality_evaluator,
+    keyword_coverage,
     memory_persistence,
     routing_accuracy,
+    tool_selection_precision,
 )
 from evals.targets import build_eval_environment, supervisor_target
 from research_agent.config import get_settings
@@ -99,7 +100,9 @@ async def _run_eval(dataset_name: str, experiment_prefix: str) -> None:
         evaluators=[
             routing_accuracy,
             reply_quality_evaluator,
+            keyword_coverage,
             memory_persistence,
+            tool_selection_precision,
         ],
         experiment_prefix=experiment_prefix,
         max_concurrency=2,
