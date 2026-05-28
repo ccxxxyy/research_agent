@@ -279,8 +279,8 @@ class TestSupervisorPrompt:
                 has_news=flags[4],
                 has_sentiment=flags[5],
             )
-            assert "hand off" in prompt.lower() or "hand-off" in prompt.lower()
-            assert "Never invent" in prompt
+            assert "移交" in prompt
+            assert "不要编造" in prompt
 
     def test_anti_hallucination_rules_present(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -291,10 +291,10 @@ class TestSupervisorPrompt:
             has_news=True,
             has_sentiment=True,
         )
-        assert "NEVER claim" in prompt
-        assert "unavailable" in prompt.lower()
-        assert "NEVER substitute" in prompt
-        assert "NEVER perform arithmetic" in prompt
+        assert "绝不声称" in prompt
+        assert "不可用" in prompt
+        assert "绝不用你自己的知识替代" in prompt
+        assert "绝不自己做算术" in prompt
 
     def test_anti_hallucination_present_single_specialist(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -305,8 +305,8 @@ class TestSupervisorPrompt:
             has_news=False,
             has_sentiment=False,
         )
-        assert "NEVER claim" in prompt
-        assert "NEVER substitute" in prompt
+        assert "绝不声称" in prompt
+        assert "绝不用你自己的知识替代" in prompt
 
     def test_sub_question_decomposition_guidance(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -317,8 +317,7 @@ class TestSupervisorPrompt:
             has_news=True,
             has_sentiment=True,
         )
-        lower = prompt.lower()
-        assert "numbered step" in lower or "numbered steps" in lower
+        assert "编号步骤" in prompt
 
     def test_self_check_before_final_answer(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -329,8 +328,7 @@ class TestSupervisorPrompt:
             has_news=True,
             has_sentiment=True,
         )
-        lower = prompt.lower()
-        assert "self-check" in lower or "re-read" in lower
+        assert "自检" in prompt or "重新阅读" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -411,12 +409,12 @@ class TestBuildResearchSupervisor:
         assert "knowledge_expert" not in node_names
 
     def test_empty_inputs_raise(self, router: ModelRouter) -> None:
-        with pytest.raises(ValueError, match="at least one specialist"):
+        with pytest.raises(ValueError, match="至少需要一个专家的工具列表非空"):
             build_research_supervisor(model_router=router)
 
     def test_all_empty_lists_raise(self, router: ModelRouter) -> None:
         """传递空列表在语义上等同于不传递任何内容 — 构建器应统一拒绝两者。"""
-        with pytest.raises(ValueError, match="at least one specialist"):
+        with pytest.raises(ValueError, match="至少需要一个专家的工具列表非空"):
             build_research_supervisor(
                 model_router=router,
                 data_tools=[],

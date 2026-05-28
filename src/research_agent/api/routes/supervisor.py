@@ -14,6 +14,11 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.types import Command
 from loguru import logger
 
+from research_agent.api.dependencies import (
+    MemoryDep,
+    ResearchSupervisorGraphDep,
+    SupervisorGraphDep,
+)
 from research_agent.api.schemas import (
     ApproveRequest,
     ResearchSupervisorRequest,
@@ -30,11 +35,6 @@ from research_agent.security.prompt_guard import PromptGuard, ThreatLevel
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from research_agent.api.dependencies import (
-        MemoryDep,
-        ResearchSupervisorGraphDep,
-        SupervisorGraphDep,
-    )
     from research_agent.memory.manager import MemoryManager
 
 

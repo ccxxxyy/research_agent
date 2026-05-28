@@ -94,6 +94,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["E402", "SIM105"]
+"src/research_agent/api/routes/*" = ["TC001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["research_agent"]

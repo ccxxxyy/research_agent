@@ -66,7 +66,7 @@ class BM25Index:
     分词策略有意保持简单：转小写 + 按非单词字符拆分。
     CJK 中文字符作为单字符 token 保留，对于与文档共享名词短语的查询，BM25 可以正常处理。
 
-    _SPLIT_RE：正则 \W+，意思是"一个或多个非单词字符"作为分隔符。例如 "Hello, world!" → ["hello", "world"]。
+    _SPLIT_RE：正则 r"\\W+"，意思是"一个或多个非单词字符"作为分隔符。例如 "Hello, world!" → ["hello", "world"]。
 
     __init__：
         接收 [{"content": "...", "metadata": {...}}, ...] 格式的文档列表

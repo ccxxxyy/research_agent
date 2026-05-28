@@ -12,6 +12,9 @@ on:
           - "false"
           - "true"
 
+env:
+  UV_INDEX_URL: https://pypi.org/simple
+
 jobs:
   network-tests:
     name: Network Tests
