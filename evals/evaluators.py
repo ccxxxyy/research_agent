@@ -1,19 +1,22 @@
-"""研究 supervisor 的 LangSmith 评估器。
+"""研究 supervisor 的评估器集合。
 
-三个评估器为每次实验运行评分：
+五个评估器为每次实验运行评分：
 
 1. routing_accuracy — 预期与实际专家集合之间的确定性 Jaccard 相似度。
 2. reply_quality — LLM 作为评判（LIGHT 层），对相关性、完整性和事实性进行 1-5 分评分。
 3. memory_persistence — 确定性检查：长期记忆是否已写入（或对匿名用户正确跳过）。
+4. keyword_coverage — 确定性检查：回复是否包含预期关键词。
+5. tool_selection_precision — 确定性检查：是否路由了不必要的专家（惩罚过度路由）。
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langsmith.schemas import Example, Run
+if TYPE_CHECKING:
+    from langsmith.schemas import Example, Run
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +162,6 @@ def memory_persistence(run: Run, example: Example) -> dict:
     memory_saved = outputs.get("memory_saved", False)
 
     if user_id == "anonymous":
-        # 匿名用户不应触发保存
         score = 0.0 if memory_saved else 1.0
         comment = "匿名用户: 正确跳过" if score == 1.0 else "匿名用户: 意外保存"
     elif not reply.strip():
@@ -170,3 +172,60 @@ def memory_persistence(run: Run, example: Example) -> dict:
         comment = "正确保存" if score == 1.0 else "缺失: 应已保存"
 
     return {"key": "memory_persistence", "score": score, "comment": comment}
+
+
+# ---------------------------------------------------------------------------
+# 4. 关键词覆盖率（确定性）
+# ---------------------------------------------------------------------------
+
+
+def keyword_coverage(run: Run, example: Example) -> dict:
+    """回复中预期关键词的命中率（大小写不敏感）。
+
+    对于没有预期关键词的样本（如纯寒暄），返回 1.0。
+    """
+    outputs = run.outputs or {}
+    reply = (outputs.get("reply") or "").lower()
+    keywords: list[str] = example.inputs.get("expected_reply_keywords") or []
+
+    if not keywords:
+        return {"key": "keyword_coverage", "score": 1.0, "comment": "无预期关键词"}
+
+    hits = [kw for kw in keywords if kw.lower() in reply]
+    score = len(hits) / len(keywords)
+
+    return {
+        "key": "keyword_coverage",
+        "score": round(score, 3),
+        "comment": f"命中 {len(hits)}/{len(keywords)}: {hits}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5. 工具选择精确度（确定性）
+# ---------------------------------------------------------------------------
+
+
+def tool_selection_precision(run: Run, example: Example) -> dict:
+    """惩罚路由了不必要专家的情况。
+
+    precision = |expected ∩ actual| / |actual|（actual 为空时返回 1.0）。
+    与 routing_accuracy（Jaccard）互补：Jaccard 惩罚遗漏，precision 惩罚过度路由。
+    """
+    expected = set(example.inputs.get("expected_specialists") or [])
+    outputs = run.outputs or {}
+    actual = set(outputs.get("specialists_reached") or [])
+
+    if not actual:
+        score = 1.0 if not expected else 0.0
+        comment = "无路由" if not expected else "应路由但未路由"
+    else:
+        score = len(expected & actual) / len(actual)
+        extra = sorted(actual - expected)
+        comment = f"precision={score:.2f}" + (f", 多余: {extra}" if extra else "")
+
+    return {
+        "key": "tool_selection_precision",
+        "score": round(score, 3),
+        "comment": comment,
+    }

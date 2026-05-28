@@ -3,9 +3,12 @@
 > **基于 LangGraph + MCP + Agentic RAG 的多智能体深度研究系统**
 > 面向 A 股二级市场研究：行情、披露公告、新闻舆情、研究报告知识库 —— 一个 supervisor + 六个 specialist 协作完成。
 
+[![CI](https://github.com/your-org/research-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/research-agent/actions/workflows/ci.yml)
+[![Nightly](https://github.com/your-org/research-agent/actions/workflows/nightly.yml/badge.svg)](https://github.com/your-org/research-agent/actions/workflows/nightly.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-281%20passing-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen.svg)](#测试)
+[![Eval Dataset](https://img.shields.io/badge/eval-100%20examples-blueviolet.svg)](#评估体系)
 
 ---
 
@@ -360,12 +363,124 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 ---
 
-## 七、已知限制 / 未来扩展
+## 七、评估体系
+
+本项目具备完整的量化评估流水线，覆盖路由准确率、回复质量、关键词命中、记忆持久化和工具选择精确度五个维度。
+
+### 评估指标
+
+| 评估器 | 类型 | 衡量什么 |
+|---|---|---|
+| `routing_accuracy` | 确定性（Jaccard） | 预期 vs 实际 specialist 路由的集合相似度 |
+| `reply_quality` | LLM-as-judge（LIGHT） | 相关性、完整性、事实性 1-5 分归一化 |
+| `keyword_coverage` | 确定性 | 回复是否包含预期关键词 |
+| `tool_selection_precision` | 确定性 | 是否路由了不必要的 specialist（惩罚过度路由） |
+| `memory_persistence` | 确定性 | 长期记忆是否在该写入时已写入 |
+
+### 数据集
+
+`evals/datasets/supervisor_routing.json` — **100 条标注样本**，覆盖：
+
+| 类别 | 数量 | 说明 |
+|---|---|---|
+| `single_route` | 30 | 每个 specialist 5 条（6 个 specialist） |
+| `multi_route` | 22 | 2-5 个 specialist 的各种组合 |
+| `edge_case` | 15 | 寒暄、英文、模糊查询、股票代码、空输入 |
+| `robustness` | 10 | 口语化、拼写随意、中英混杂 |
+| `adversarial` | 8 | prompt injection、角色劫持、恶意代码注入 |
+| `memory_test` | 5 | 匿名 vs 登录用户的记忆写入验证 |
+
+### 运行评估
+
+```bash
+# 方式 1：LangSmith 在线评估（需要 LANGSMITH_API_KEY）
+python -m evals.eval_supervisor
+
+# 方式 2：本地离线评估，输出 JSON 报告（不依赖 LangSmith）
+python -m evals.run_local
+python -m evals.run_local --limit 10  # 快速验证前 10 条
+
+# 对比两次评估结果（检测 regression）
+python -m evals.compare eval_results/baseline.json eval_results/current.json
+
+# 评估器单元测试（32 个，纯离线）
+pytest evals/test_evaluators.py -q
+```
+
+报告输出到 `eval_results/` 目录，格式示例：
+
+```
+======================================================================
+  EVALUATION REPORT — 2026-05-28T03:00:00
+  Dataset: supervisor_routing.json (100 examples)
+======================================================================
+
+Metric                       Mean      Min      Max      Std     N
+-----------------------------------------------------------------
+  keyword_coverage            0.870   0.000    1.000    0.210   100
+  memory_persistence          0.950   0.000    1.000    0.180   100
+  routing_accuracy            0.940   0.000    1.000    0.120   100
+  tool_selection_precision    0.920   0.000    1.000    0.150   100
+======================================================================
+```
+
+---
+
+## 七点五、CI/CD
+
+三层 GitHub Actions 流水线：
+
+| 流水线 | 触发条件 | 内容 |
+|---|---|---|
+| **CI** (`.github/workflows/ci.yml`) | 每次 PR / push main | ruff lint + format check → pytest 单元测试 → 覆盖率 ≥60% |
+| **Eval & Network** (`.github/workflows/nightly.yml`) | 手动触发（workflow_dispatch） | `pytest -m network` MCP 烟测；勾选 `run_eval=true` 时额外跑 LangSmith 路由评估 |
+| **Docker** (`.github/workflows/docker.yml`) | tag push (`v*`) | Docker 构建 + 缓存（GHCR push 已预留配置） |
+
+Pre-commit 钩子（`.pre-commit-config.yaml`）：ruff check + ruff format + trailing-whitespace + end-of-file-fixer + check-yaml。
+
+```bash
+# 安装 pre-commit 钩子
+pre-commit install
+
+# 手动跑一次全量检查
+pre-commit run --all-files
+```
+
+---
+
+## 七点六、可观测性 Dashboard
+
+`docker compose up` 现在同时启动 **Prometheus + Grafana** 监控栈：
+
+| 端口 | 服务 | 说明 |
+|---|---|---|
+| 9090 | Prometheus | 每 15s 抓取 `/metrics`，存储时序数据 |
+| 3000 | Grafana | 预置 dashboard，匿名可读（admin/admin 可编辑） |
+
+预置 Dashboard（`monitoring/grafana/dashboards/research-agent.json`）包含三行面板：
+
+- **HTTP Overview**：请求总数、QPS、平均延迟（按 path）、错误率
+- **LLM Usage**：LLM 调用总数、按模型的调用速率、token 消耗（prompt/completion 堆叠）、累计费用（CNY）
+- **System**：可用 specialist 数量（Gauge）、请求量 Top 10 端点（表格）
+
+```bash
+# 启动完整栈（app + postgres + redis + prometheus + grafana）
+docker compose up -d
+
+# 访问
+# http://localhost:8080  — 应用 + Chat UI
+# http://localhost:3000  — Grafana Dashboard
+# http://localhost:9090  — Prometheus
+```
+
+---
+
+## 八、已知限制 / 未来扩展
 
 | 项 | 现状 | 计划 |
 |---|---|---|
 | **knowledge_server 不走 MCP-stdio** | 🟡 工程取舍：Windows + Python 3.13 + asyncio + heavy ML import 链有系统性死锁，已切到 in-process 同源代码——业务逻辑不变，MCP 协议契约保留在 `@mcp.tool` 装饰器上作为文档。详见 [ADR-0002](docs/adr/0002-knowledge-server-inprocess.md) | 若未来需跨进程/跨语言，可换 fastmcp 的 SSE/HTTP transport 绕开 stdio JSON-RPC 帧 |
-| **LangSmith 评估集已建但未上 CI** | ✅ `evals/` 下有 supervisor routing 评估套件（30 labeled examples + 路由准确率 / 回复质量两个 evaluator + `python -m evals.eval_supervisor` 入口）；启动时 `setup_tracing()` 自动注入 LangChain env vars | 写一个 GitHub Actions：每个 PR 触发评估、路由准确率回归 >5% 直接红 |
+| **LangSmith 评估集已上 CI** | ✅ `evals/` 下有 100 条标注样本 + 5 个评估器 + 离线评估 runner + regression 对比工具；Nightly CI 自动跑路由评估 | 持续扩充样本 + 增加 RAG 召回率评估 |
 | **pgvector 引擎装了但未用作向量搜索后端** | 🟡 设计取舍：docker-compose 用 `pgvector/pgvector:pg16` 是为给 Postgres checkpointer + KV-style 长期记忆提供后端；RAG 走本地 FAISS 因为 demo 不依赖外部服务 | 当用户研究量 >100 条时，把"语义相似历史研究召回"切到 pgvector + ANN |
 | **LLM 响应缓存** | ❌ 未实现 | 金融场景幻觉缓存有风险（同一问题不同时间答案应不同），上线前需做"按问题类型条件缓存"，工作量中等 |
 | **Reflection 评估 delta** | ✅ 子图已落地（`REFLECTION_ENABLED=true`），但尚未量化 ON/OFF 答案质量差异 | 需 LLM 预算跑 30 examples × 2 组对照 |
@@ -435,16 +550,35 @@ src/research_agent/
 ├── config.py            # pydantic-settings（LLM/Database/Observability 三层子配置）
 └── main.py              # FastAPI app factory + lifespan + CLI 入口
 
-evals/                    # LangSmith 评估套件（30 labeled examples + 路由 + 回复质量 evaluator）
-scripts/                  # 10 demos + 6 smoke tests + 1 seed（seed_real_research_reports.py 灌真实 A 股年报）
-tests/                    # unit（281 passing）+ integration（参见 pytest 徽章）
+evals/                    # 量化评估套件
+├── datasets/
+│   └── supervisor_routing.json  # 100 条标注样本（6 类 × 多场景）
+├── evaluators.py         # 5 个评估器（routing_accuracy / reply_quality / keyword_coverage / memory_persistence / tool_selection_precision）
+├── eval_supervisor.py    # LangSmith 在线评估入口
+├── run_local.py          # 离线评估 runner（输出 JSON 报告）
+├── compare.py            # 评估报告 regression 对比工具
+└── test_evaluators.py    # 评估器单元测试（32 个）
+eval_results/             # 评估报告输出目录（git tracked）
+.github/workflows/        # CI/CD 三层流水线
+├── ci.yml                # PR: lint + test + coverage
+├── nightly.yml           # 每日: network smoke + eval
+└── docker.yml            # Tag: Docker build
+monitoring/               # Prometheus + Grafana 可观测性栈
+├── prometheus.yml        # Prometheus 采集配置
+└── grafana/              # Grafana 预置 dashboard + 数据源
+scripts/                  # 10 demos + 6 smoke tests + 1 seed
+tests/                    # unit（287 passing）+ integration
 ```
 
 ---
 
-## 九、其他
+## 九、其他 / Roadmap
 
 - LLM 响应缓存（条件缓存，避开金融场景的"过期数据"陷阱）
 - 增加更多业务 specialist（如 `macro_expert` / `fund_flow_expert`）
-- LangSmith 自动化评估接入 GitHub Actions（量化 reflection ON / OFF 的答案质量 delta）
+- Reflection A/B 量化对比（ON vs OFF 答案质量 delta）
+- RAG 专项评估（retriever recall@k、reranker NDCG）
+- FAISS → pgvector 迁移（利用已有 pgvector 容器）
 - LangGraph 1.0 → 2.0 弃用迁移（`langgraph.prebuilt.create_react_agent` → `langchain.agents.create_agent`）
+- Guardrails 增强（输入 prompt injection 检测、输出金融风险提示、per-user token 配额）
+- E2E 延迟 benchmark + 并发压测
