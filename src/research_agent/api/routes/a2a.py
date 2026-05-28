@@ -13,21 +13,20 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from loguru import logger
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # A2A Data Models (based on Google A2A spec) 数据模型（基于 Google A2A 规范）
 # ---------------------------------------------------------------------------
 
 
-class TaskState(str, Enum):
+class TaskState(StrEnum):
     """A2A 任务状态机。"""
 
     SUBMITTED = "submitted"
@@ -89,7 +88,7 @@ class TaskStatus(BaseModel):
     state: TaskState
     message: Message | None = None
     timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
 

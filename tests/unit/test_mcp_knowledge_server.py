@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -29,6 +29,9 @@ from research_agent.mcp_servers.knowledge_server import (
     _load_pdf_pages,
     _validate_collection_name,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------
 # 辅助函数 — 合成内存 PDF

@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 
 from research_agent.mcp_servers.news_sentiment_server import (
     analyze_text_sentiment as _analyze,
+)
+from research_agent.mcp_servers.news_sentiment_server import (
     get_stock_sentiment_report as _report,
 )
 

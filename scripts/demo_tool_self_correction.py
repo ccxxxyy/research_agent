@@ -30,7 +30,6 @@ from research_agent.agents.simple import build_simple_agent
 from research_agent.config import get_settings
 from research_agent.llm.provider import ModelRouter
 
-
 # ---------------------------------------------------------------------------
 # 演示用的可观测工具
 # ---------------------------------------------------------------------------

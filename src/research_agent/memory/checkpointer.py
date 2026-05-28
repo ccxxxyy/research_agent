@@ -18,12 +18,15 @@ Checkpointer 在每次节点执行后对图状态进行快照，支持：
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from loguru import logger
 
 from research_agent.memory._pg_reachability import is_postgres_reachable
+
+if TYPE_CHECKING:
+    from langgraph.checkpoint.base import BaseCheckpointSaver
 
 
 async def init_checkpointer(
@@ -55,9 +58,9 @@ async def init_checkpointer(
             )
         else:
             try:
+                from langgraph.checkpoint.postgres import PostgresSaver
                 from psycopg.rows import dict_row
                 from psycopg_pool import ConnectionPool
-                from langgraph.checkpoint.postgres import PostgresSaver
 
                 pool: ConnectionPool = ConnectionPool(
                     conninfo=postgres_uri,

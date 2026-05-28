@@ -16,25 +16,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage, HumanMessage
-
-import research_agent.api.routes.supervisor as supervisor_route
 from langgraph.store.memory import InMemoryStore
 
+import research_agent.api.routes.supervisor as supervisor_route
 from research_agent.api.dependencies import (
     get_memory_manager,
     get_research_supervisor_graph,
     get_supervisor_graph,
 )
-from research_agent.memory.manager import MemoryManager
 from research_agent.api.routes.supervisor import router as supervisor_router
+from research_agent.memory.manager import MemoryManager
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 # ---------------------------------------------------------------------------
 # 模拟图 — 模仿我们实际调用的 CompiledStateGraph 接口。

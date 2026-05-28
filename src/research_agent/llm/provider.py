@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import time
-from enum import Enum
-from typing import Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.runnables.utils import Input, Output
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
-from research_agent.config import LLMConfig
 from research_agent.llm.tier import (
     AGENT_TIER_MAP,
     FALLBACK_CHAIN,
@@ -20,12 +18,16 @@ from research_agent.llm.tier import (
 )
 from research_agent.llm.usage_tracker import UsageCallbackHandler, UsageTracker
 
+if TYPE_CHECKING:
+    from langchain_core.runnables.utils import Input, Output
+
+    from research_agent.config import LLMConfig
 
 # ---------------------------------------------------------------------------
 # Circuit Breaker
 # ---------------------------------------------------------------------------
 
-class CircuitState(str, Enum):
+class CircuitState(StrEnum):
     """熔断器三态。"""
 
     CLOSED = "closed"      # 正常：请求正常通过
@@ -53,9 +55,11 @@ class CircuitBreaker:
 
     @property
     def state(self) -> CircuitState:
-        if self._state == CircuitState.OPEN:
-            if time.monotonic() - self._last_failure_time >= self._recovery_timeout:
-                self._state = CircuitState.HALF_OPEN
+        if (
+            self._state == CircuitState.OPEN
+            and time.monotonic() - self._last_failure_time >= self._recovery_timeout
+        ):
+            self._state = CircuitState.HALF_OPEN
         return self._state
 
     @property
@@ -116,7 +120,7 @@ class CircuitBreakerRunnable(Runnable):
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         if not self._breaker.allow_request():
             raise RuntimeError(
-                f"Circuit breaker OPEN for model: requests blocked until recovery"
+                "Circuit breaker OPEN for model: requests blocked until recovery"
             )
         try:
             result = self._wrapped.invoke(input, config=config, **kwargs)
@@ -129,7 +133,7 @@ class CircuitBreakerRunnable(Runnable):
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         if not self._breaker.allow_request():
             raise RuntimeError(
-                f"Circuit breaker OPEN for model: requests blocked until recovery"
+                "Circuit breaker OPEN for model: requests blocked until recovery"
             )
         try:
             result = await self._wrapped.ainvoke(input, config=config, **kwargs)

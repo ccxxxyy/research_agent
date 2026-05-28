@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Any
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.outputs import LLMResult
 from loguru import logger
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from langchain_core.outputs import LLMResult
 
 
 @dataclass

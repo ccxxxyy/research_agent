@@ -105,14 +105,14 @@ from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
 
 from fastmcp import FastMCP  # noqa: E402
-from loguru import logger  # noqa: E402
 
 # 在模块加载时预先导入重量级依赖（langchain text-splitter + FAISS 包装器），
 # 而非在首次工具调用时。在进程内路径上，这只是将约 9 秒的 langchain-core导入前置到 worker 启动，使第一个 ``ingest_pdf`` 请求不会异常缓慢。
-from langchain_community.vectorstores import FAISS as _PrewarmedFAISS  # noqa: E402, F401
+from langchain_community.vectorstores import FAISS as _PrewarmedFAISS  # noqa: E402, F401, N811
 from langchain_text_splitters import (  # noqa: E402, F401
     RecursiveCharacterTextSplitter as _PrewarmedSplitter,
 )
+from loguru import logger  # noqa: E402
 
 mcp = FastMCP("KnowledgeBase")
 

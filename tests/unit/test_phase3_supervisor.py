@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from research_agent.config import LLMConfig

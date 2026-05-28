@@ -18,15 +18,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
-from langchain_core.runnables import RunnableWithFallbacks
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from langchain_core.callbacks import CallbackManagerForLLMRun
+    from langchain_core.runnables import RunnableWithFallbacks
 
 CALL_LOG: list[str] = []
 """模块级审计跟踪：每次桩模型被调用时追加。

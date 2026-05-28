@@ -8,13 +8,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
-from research_agent.api.dependencies import ModelRouterDep
 from research_agent.observability.metrics import METRICS
+
+if TYPE_CHECKING:
+    from research_agent.api.dependencies import ModelRouterDep
 
 router = APIRouter(prefix="/api", tags=["usage"])
 

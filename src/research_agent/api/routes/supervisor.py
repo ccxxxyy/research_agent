@@ -5,19 +5,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request as FastAPIRequest, status
+from fastapi import APIRouter, HTTPException, status
+from fastapi import Request as FastAPIRequest
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 from loguru import logger
 
-from research_agent.api.dependencies import (
-    MemoryDep,
-    ResearchSupervisorGraphDep,
-    SupervisorGraphDep,
-)
 from research_agent.api.schemas import (
     ApproveRequest,
     ResearchSupervisorRequest,
@@ -29,8 +25,17 @@ from research_agent.api.schemas import (
     SupervisorChatResponse,
 )
 from research_agent.config import get_settings
-from research_agent.memory.manager import MemoryManager
 from research_agent.security.prompt_guard import PromptGuard, ThreatLevel
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from research_agent.api.dependencies import (
+        MemoryDep,
+        ResearchSupervisorGraphDep,
+        SupervisorGraphDep,
+    )
+    from research_agent.memory.manager import MemoryManager
 
 
 def _graph_config(
@@ -349,7 +354,7 @@ def _emit_specialist_internal(
     specialist: str,
     node_name: str,
     node_update: dict,
-    frames: "asyncio.Queue[str | None]",
+    frames: asyncio.Queue[str | None],
 ) -> None:
     """为专家的内部步骤推送 SSE 帧。
 
@@ -647,7 +652,7 @@ async def _research_event_stream(
                     item = await asyncio.wait_for(
                         frames.get(), timeout=heartbeat_interval
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield _format_sse(
                         ResearchSupervisorSSEEvent(
                             phase=(

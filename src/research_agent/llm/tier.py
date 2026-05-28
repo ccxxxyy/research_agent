@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ModelTier(str, Enum):
+class ModelTier(StrEnum):
     """按任务复杂度划分的模型路由层级。"""
 
     LIGHT = "light"    # 分类、提取、格式化、评分
@@ -13,7 +13,7 @@ class ModelTier(str, Enum):
     HEAVY = "heavy"    # 深度推理、报告撰写、规划
 
 
-class AgentName(str, Enum):
+class AgentName(StrEnum):
     """已注册的 Agent 标识符，用于模型路由。"""
 
     SUPERVISOR = "supervisor"

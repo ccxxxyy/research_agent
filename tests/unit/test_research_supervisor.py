@@ -36,7 +36,6 @@ from research_agent.graph.research_supervisor import (
 )
 from research_agent.llm.provider import ModelRouter
 
-
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------

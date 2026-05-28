@@ -124,7 +124,7 @@ async def _call(tool, payload: dict, *, timeout: float, label: str) -> dict:
     t0 = time.time()
     try:
         result = await asyncio.wait_for(tool.ainvoke(payload), timeout=timeout)
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise RuntimeError(f"{label}: 超时，已等待 {timeout:.1f} 秒") from exc
     elapsed = time.time() - t0
     if not isinstance(result, dict):

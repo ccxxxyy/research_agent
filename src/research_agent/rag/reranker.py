@@ -175,7 +175,7 @@ class CrossEncoderReranker:
                 d.setdefault("rerank_score", None)
             return documents
 
-        for doc, score in zip(head, scores):
+        for doc, score in zip(head, scores, strict=False):
             doc["rerank_score"] = round(float(score), 4)
 
         # 超过 max_pairs 上限的条目从未经过模型。保留它们，但由于分数为 None，它们排在所有已重排序条目之后。，遇到 None 就当作 -∞（负无穷大。

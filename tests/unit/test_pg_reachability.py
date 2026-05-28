@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import socket
 from contextlib import contextmanager
-from typing import Iterator
+from typing import TYPE_CHECKING
 
 from research_agent.memory._pg_reachability import (
     _parse_host_port,
     is_postgres_reachable,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @contextmanager

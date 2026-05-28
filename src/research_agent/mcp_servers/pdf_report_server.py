@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -224,7 +224,7 @@ def _format_publish_time(ms_value: Any) -> str:
     """
     try:
         return (
-            datetime.fromtimestamp(int(ms_value) / 1000, tz=timezone.utc)
+            datetime.fromtimestamp(int(ms_value) / 1000, tz=UTC)
             .astimezone(_SHANGHAI_TZ)
             .strftime("%Y-%m-%d")
         )
@@ -378,20 +378,19 @@ async def _download_bytes(url: str) -> bytes:
     async with httpx.AsyncClient(
         timeout=DOWNLOAD_TIMEOUT_SECONDS,
         follow_redirects=True,
-    ) as cli:
-        async with cli.stream("GET", url) as r:
-            r.raise_for_status()
-            total = 0
-            chunks: list[bytes] = []
-            async for chunk in r.aiter_bytes(chunk_size=64 * 1024):
-                total += len(chunk)
-                if total > MAX_DOWNLOAD_BYTES:
-                    raise ValueError(
-                        f"PDF exceeds {MAX_DOWNLOAD_BYTES} byte hard limit "
-                        f"(got >{total}); aborting download of {url!r}"
-                    )
-                chunks.append(chunk)
-            return b"".join(chunks)
+    ) as cli, cli.stream("GET", url) as r:
+        r.raise_for_status()
+        total = 0
+        chunks: list[bytes] = []
+        async for chunk in r.aiter_bytes(chunk_size=64 * 1024):
+            total += len(chunk)
+            if total > MAX_DOWNLOAD_BYTES:
+                raise ValueError(
+                    f"PDF exceeds {MAX_DOWNLOAD_BYTES} byte hard limit "
+                    f"(got >{total}); aborting download of {url!r}"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
 
 @mcp.tool()

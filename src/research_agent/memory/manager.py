@@ -13,11 +13,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
-from langgraph.store.base import BaseStore
 from loguru import logger
+
+if TYPE_CHECKING:
+    from langgraph.store.base import BaseStore
 
 
 class MemoryNamespace:
@@ -46,7 +48,7 @@ class MemoryManager:
     ) -> None:
         """在指定命名空间下存储一条记忆项。"""
         ns = (user_id, namespace)
-        value["_updated_at"] = datetime.now(timezone.utc).isoformat()
+        value["_updated_at"] = datetime.now(UTC).isoformat()
         await self._store.aput(ns, key, value)
         logger.debug("Memory saved: ns={}, key={}", ns, key)
 

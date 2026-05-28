@@ -9,7 +9,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from research_agent.api.dependencies import get_model_router
-from research_agent.api.routes.usage import metrics_router, router as usage_router
+from research_agent.api.routes.usage import metrics_router
+from research_agent.api.routes.usage import router as usage_router
 
 
 @pytest.mark.asyncio

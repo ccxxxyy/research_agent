@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from research_agent.rag.retriever import BM25Index, hybrid_rrf_fuse
 
 

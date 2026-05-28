@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
@@ -30,7 +30,7 @@ def get_current_time(timezone_name: str = "Asia/Shanghai") -> str:
     try:
         tz = ZoneInfo(timezone_name)
     except Exception:
-        tz = timezone.utc
+        tz = UTC
     now = datetime.now(tz)
     return now.isoformat(timespec="seconds")
 

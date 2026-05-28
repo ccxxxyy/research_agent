@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import sys
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -22,7 +21,6 @@ from seed_real_research_reports import (
     PREFERRED_CATEGORIES,
     _find_recent_report,
     _ingested_sources_for_collection,
-    amain,
 )
 
 
@@ -227,7 +225,6 @@ class TestAmainIdempotency:
 
         monkeypatch.setattr(mod, "DEFAULT_TICKERS", {"300308": "中际旭创"})
 
-        original_amain = mod.amain
 
         async def patched_amain(argv: list[str]) -> int:
             from unittest.mock import patch

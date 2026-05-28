@@ -10,13 +10,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from research_agent.api.dependencies import MemoryDep
 from research_agent.memory.manager import MemoryNamespace
+
+if TYPE_CHECKING:
+    from research_agent.api.dependencies import MemoryDep
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 

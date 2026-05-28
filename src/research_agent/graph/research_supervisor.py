@@ -33,15 +33,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Annotated, TypedDict
+from typing import TYPE_CHECKING, Annotated, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.tools import BaseTool
-from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 from langgraph_supervisor import create_supervisor
 from loguru import logger
@@ -55,9 +51,16 @@ from research_agent.agents.specialists import (
     build_sentiment_expert,
 )
 from research_agent.graph.reflection import build_reflection_subgraph
-from research_agent.llm.provider import ModelRouter
 from research_agent.llm.tier import ModelTier
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from langchain_core.tools import BaseTool
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+    from langgraph.graph.state import CompiledStateGraph
+
+    from research_agent.llm.provider import ModelRouter
 
 SUPERVISOR_PROMPT_BASE = """\
 你是金融研究 Supervisor（主管）。你协调一个小型专家团队，为用户提供

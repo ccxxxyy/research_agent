@@ -25,11 +25,8 @@ Corrective-RAG + Reflection 流水线，是完整研究智能体的长期归属�
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from langchain_core.tools import BaseTool
-from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph.state import CompiledStateGraph
 from langgraph_supervisor import create_supervisor
 from loguru import logger
 
@@ -39,9 +36,16 @@ from research_agent.agents.specialists import (
     build_text_analyst,
     build_time_expert,
 )
-from research_agent.llm.provider import ModelRouter
 from research_agent.llm.tier import ModelTier
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from langchain_core.tools import BaseTool
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+    from langgraph.graph.state import CompiledStateGraph
+
+    from research_agent.llm.provider import ModelRouter
 
 SUPERVISOR_PROMPT_BASE = """\
 你是一个小型专家团队的 Supervisor（主管）：

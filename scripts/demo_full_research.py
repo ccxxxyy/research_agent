@@ -87,7 +87,6 @@ from research_agent.mcp_servers.client_factory import (
     load_pdf_report_server_tools,
 )
 
-
 # 默认目标故意对齐已灌入的某个标的。
 # 中际旭创 (300308) 是 CPO/光模块龙头，乘 AI 数据中心互联浪潮 — 其 2025 年报在灌入语料库中叙事最丰富（业绩爆发型故事），
 # 可为 knowledge_expert 提供可引用的内容，也为 supervisor 在 AI 基础设施主题上提供强有力的多专家演示。

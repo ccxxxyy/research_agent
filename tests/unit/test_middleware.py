@@ -231,7 +231,7 @@ class TestRequestTimeoutMiddleware:
 class TestRedisRateLimit:
     @pytest.mark.asyncio
     async def test_redis_allows_under_limit(self) -> None:
-        fakeredis = pytest.importorskip("fakeredis")
+        pytest.importorskip("fakeredis")
         from fakeredis.aioredis import FakeRedis
 
         app = _build_app(max_rpm=3)
@@ -290,7 +290,7 @@ class TestRedisRateLimit:
 
     @pytest.mark.asyncio
     async def test_redis_counts_across_requests(self) -> None:
-        fakeredis = pytest.importorskip("fakeredis")
+        pytest.importorskip("fakeredis")
         from fakeredis.aioredis import FakeRedis
 
         app = _build_app(max_rpm=2)
