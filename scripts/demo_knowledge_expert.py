@@ -40,7 +40,6 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from loguru import logger
@@ -70,7 +69,6 @@ from research_agent.llm.provider import ModelRouter
 from research_agent.mcp_servers.client_factory import (
     load_knowledge_tools_inproc,
 )
-
 
 # ---------------------------------------------------------------------
 # 合成 PDF 构造器
@@ -262,7 +260,7 @@ async def main() -> int:
             ),
             timeout=GRAPH_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error(
             "Graph timed out after {}s — likely an MCP subprocess deadlock or "
             "an LLM stream stall. Re-run with finer logging if this repeats.",

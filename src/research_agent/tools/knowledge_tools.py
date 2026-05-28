@@ -70,12 +70,19 @@ from langchain_core.tools import BaseTool, StructuredTool
 from research_agent.mcp_servers.knowledge_server import (
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
+)
+from research_agent.mcp_servers.knowledge_server import (
     delete_collection as _delete_collection_impl,
+)
+from research_agent.mcp_servers.knowledge_server import (
     ingest_pdf as _ingest_pdf_impl,
+)
+from research_agent.mcp_servers.knowledge_server import (
     list_collections as _list_collections_impl,
+)
+from research_agent.mcp_servers.knowledge_server import (
     search as _search_impl,
 )
-
 
 # ---------------------------------------------------------------------
 # 轻量异步包装器

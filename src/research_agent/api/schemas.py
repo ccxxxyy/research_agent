@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ---------- Supervisor（最小化版） ----------
 
@@ -92,7 +91,7 @@ class ResearchSupervisorResponse(BaseModel):
     message_count: int = 0
 
 
-class ResearchSupervisorSSEPhase(str, Enum):
+class ResearchSupervisorSSEPhase(StrEnum):
     """流式传输期间发出的 SSE 事件阶段标签。
 
     * ``handoff``           — supervisor 调用了 ``transfer_to_<specialist>``。

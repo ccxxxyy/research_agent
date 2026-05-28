@@ -87,14 +87,14 @@ def _df_to_records(df: pd.DataFrame, *, limit: int | None = None) -> list[dict[s
 def _basic_info_from_eastmoney(symbol: str) -> dict[str, Any]:
     import akshare as ak
     df = ak.stock_individual_info_em(symbol=symbol)
-    info = dict(zip(df["item"].astype(str), df["value"].tolist()))
+    info = dict(zip(df["item"].astype(str), df["value"].tolist(), strict=False))
     return {"symbol": symbol, "info": info, "source": "eastmoney"}
 
 
 def _basic_info_from_xueqiu(symbol: str) -> dict[str, Any]:
     import akshare as ak
     df = ak.stock_individual_basic_info_xq(symbol=_prefixed_symbol(symbol, upper=True))
-    info = dict(zip(df["item"].astype(str), df["value"].astype(str).tolist()))
+    info = dict(zip(df["item"].astype(str), df["value"].astype(str).tolist(), strict=False))
     return {"symbol": symbol, "info": info, "source": "xueqiu"}
 
 

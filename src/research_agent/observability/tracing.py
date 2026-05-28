@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from research_agent.config import ObservabilityConfig
+if TYPE_CHECKING:
+    from research_agent.config import ObservabilityConfig
 
 
 def setup_tracing(config: ObservabilityConfig) -> None:

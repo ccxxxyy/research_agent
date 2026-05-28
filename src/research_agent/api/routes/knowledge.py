@@ -17,6 +17,7 @@ FastAPI 层仅处理 HTTP 关注点（文件上传、JSON序列化、状态码�
 
 from __future__ import annotations
 
+import contextlib
 import re
 import tempfile
 from pathlib import Path
@@ -28,8 +29,14 @@ from pydantic import BaseModel, Field
 
 from research_agent.mcp_servers.knowledge_server import (
     delete_collection as _delete_collection,
+)
+from research_agent.mcp_servers.knowledge_server import (
     ingest_pdf as _ingest_pdf,
+)
+from research_agent.mcp_servers.knowledge_server import (
     list_collections as _list_collections,
+)
+from research_agent.mcp_servers.knowledge_server import (
     search as _search,
 )
 
@@ -158,10 +165,8 @@ async def ingest_pdf(
         )
 
     # 成功后清理临时文件
-    try:
+    with contextlib.suppress(OSError):
         Path(tmp_path).unlink(missing_ok=True)
-    except OSError:
-        pass
 
     # 返回面向用户的集合名（不含内部前缀）
     result["collection"] = collection

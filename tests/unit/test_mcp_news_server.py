@@ -23,18 +23,21 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from research_agent.mcp_servers.client_factory import (
     NEWS_SERVER_MODULE,
     extract_text_content,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from langchain_core.tools import BaseTool
 
 pytestmark = pytest.mark.network
 

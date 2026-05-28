@@ -31,15 +31,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from langchain_core.tools import BaseTool
 from langgraph.prebuilt import create_react_agent
 
-from research_agent.llm.provider import ModelRouter
 from research_agent.llm.tier import AgentName
 from research_agent.tools.native import calculate, get_current_time, get_word_count
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from langchain_core.tools import BaseTool
+
+    from research_agent.llm.provider import ModelRouter
 
 MATH_EXPERT_PROMPT = """\
 你是数学专家。你的唯一能力是通过 ``calculate`` 工具计算数学表达式。

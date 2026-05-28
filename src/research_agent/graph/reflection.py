@@ -63,17 +63,19 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
 
-from research_agent.llm.provider import ModelRouter
 from research_agent.llm.tier import ModelTier
 
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
+
+    from research_agent.llm.provider import ModelRouter
 
 # ---------------------------------------------------------------------
 # 提示词
@@ -433,10 +435,7 @@ def _build_finalize_node():
         """
         best = state.get("best_draft", "") or state.get("draft", "")
         critique = state.get("critique", {})
-        if isinstance(critique, dict):
-            score = critique.get("quality_score", 0.0)
-        else:
-            score = 0.0
+        score = critique.get("quality_score", 0.0) if isinstance(critique, dict) else 0.0
 
         final_msg = AIMessage(
             content=best,

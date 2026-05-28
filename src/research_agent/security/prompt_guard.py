@@ -18,12 +18,15 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
-class ThreatLevel(str, Enum):
+class ThreatLevel(StrEnum):
     """威胁等级。"""
 
     SAFE = "safe"

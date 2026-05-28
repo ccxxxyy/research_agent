@@ -38,7 +38,6 @@ from research_agent.graph.minimal_supervisor import build_minimal_supervisor
 from research_agent.llm.provider import ModelRouter
 from research_agent.mcp_servers.client_factory import load_code_server_tools
 
-
 QUESTION = (
     "Use Python code to solve this: given the list "
     "numbers = [7, 2, 9, 4, 11, 6, 13, 8], "

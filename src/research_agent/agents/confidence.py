@@ -20,12 +20,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from dataclasses import dataclass
+from enum import StrEnum
 
 
-class ConfidenceLevel(str, Enum):
+class ConfidenceLevel(StrEnum):
     """置信度等级。"""
 
     HIGH = "high"          # >= 0.8, 可直接采纳
@@ -33,7 +32,7 @@ class ConfidenceLevel(str, Enum):
     LOW = "low"            # < 0.5, supervisor 应降权或丢弃
 
 
-class Recommendation(str, Enum):
+class Recommendation(StrEnum):
     """对 supervisor 的处理建议。"""
 
     ACCEPT = "accept"          # 高置信度，直接使用

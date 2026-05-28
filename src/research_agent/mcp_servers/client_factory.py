@@ -28,10 +28,12 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
 
 
 def _stdio_server_spec(module: str) -> dict[str, Any]:

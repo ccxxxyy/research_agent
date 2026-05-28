@@ -37,14 +37,17 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from loguru import logger
-
-from fastapi import Request, Response
 from fastapi.responses import JSONResponse
+from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from fastapi import Request, Response
+    from starlette.types import ASGIApp
 
 _AUTH_EXEMPT_PATHS = frozenset({
     "/",
@@ -127,7 +130,7 @@ class RequestTimeoutMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         try:
             return await asyncio.wait_for(call_next(request), timeout=self._timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Request timed out after {:.1f}s: {} {}",
                 self._timeout,

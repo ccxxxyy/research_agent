@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import socket
 from urllib.parse import urlparse
 
@@ -77,7 +78,7 @@ def is_postgres_reachable(
     sock.settimeout(timeout_s)
     try:
         sock.connect((host, port))
-    except (socket.timeout, ConnectionRefusedError, OSError) as exc:
+    except (TimeoutError, ConnectionRefusedError, OSError) as exc:
         logger.debug(
             "Postgres TCP probe failed for {}:{} ({}); skipping pool init 跳过池初始化",
             host,
@@ -86,10 +87,8 @@ def is_postgres_reachable(
         )
         return False
     finally:
-        try:
+        with contextlib.suppress(OSError):
             sock.close()
-        except OSError:
-            pass
     return True
 
 

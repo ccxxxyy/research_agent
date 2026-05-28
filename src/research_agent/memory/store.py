@@ -23,12 +23,15 @@ MemoryStore 使 agent 能够在不同对话线程之间记住信息。典型用�
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 from loguru import logger
 
 from research_agent.memory._pg_reachability import is_postgres_reachable
+
+if TYPE_CHECKING:
+    from langgraph.store.base import BaseStore
 
 
 async def init_memory_store(
@@ -57,9 +60,9 @@ async def init_memory_store(
             )
         else:
             try:
+                from langgraph.store.postgres import PostgresStore
                 from psycopg.rows import dict_row
                 from psycopg_pool import ConnectionPool
-                from langgraph.store.postgres import PostgresStore
 
                 pool: ConnectionPool = ConnectionPool(
                     conninfo=postgres_uri,

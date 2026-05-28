@@ -202,7 +202,7 @@ async def main(argv: list[str]) -> int:
     else:
         _print_report(report)
 
-    print(f"  可追加 --json 查看原始 JSON 用于审计。\n")
+    print("  可追加 --json 查看原始 JSON 用于审计。\n")
     return 0
 
 

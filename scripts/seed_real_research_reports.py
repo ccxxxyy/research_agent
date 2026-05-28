@@ -41,7 +41,6 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 # 强制 stdout 使用 UTF-8，防止中文字符在 Windows 代码页上报错。
@@ -203,6 +202,8 @@ async def amain(argv: list[str]) -> int:
         delete_collection,  # noqa: F401  （暴露用于临时清理）
         ingest_pdf,
         list_collections,
+    )
+    from research_agent.mcp_servers.knowledge_server import (
         search as knowledge_search,
     )
     from research_agent.mcp_servers.pdf_report_server import (
@@ -241,7 +242,7 @@ async def amain(argv: list[str]) -> int:
 
         pdf_url = record.get("pdf_url")
         if not pdf_url:
-            _step(f"  记录缺少 pdf_url；跳过。")
+            _step("  记录缺少 pdf_url；跳过。")
             failed.append(sym)
             continue
 

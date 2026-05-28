@@ -18,14 +18,18 @@ ReAct 模式运行以下循环：
 
 from __future__ import annotations
 
-from langchain_core.tools import BaseTool
-from langgraph.checkpoint.base import BaseCheckpointSaver
+from typing import TYPE_CHECKING
+
 from langgraph.prebuilt import create_react_agent
 
-from research_agent.llm.provider import ModelRouter
 from research_agent.llm.tier import AgentName
 from research_agent.tools.native import DEFAULT_TOOLS
 
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+
+    from research_agent.llm.provider import ModelRouter
 
 SIMPLE_AGENT_PROMPT = """\
 你是一个拥有小型工具箱的智能助手。

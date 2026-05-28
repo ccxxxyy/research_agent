@@ -10,8 +10,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fastapi import FastAPI
@@ -24,9 +23,11 @@ from research_agent.api.dependencies import (
     get_supervisor_graph,
 )
 from research_agent.api.routes.supervisor import router as supervisor_router
-from research_agent.memory.manager import MemoryManager
-from langgraph.store.memory import InMemoryStore
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from research_agent.memory.manager import MemoryManager
 
 # ---------------------------------------------------------------------------
 # 用于 HITL 测试的模拟图

@@ -37,12 +37,14 @@ from __future__ import annotations
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from fastapi import Request, Response
 
 # ---------------------------------------------------------------------------
 # 进程内计数器

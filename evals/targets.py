@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 from langgraph.store.memory import InMemoryStore
 
 from research_agent.api.routes.supervisor import (
@@ -18,7 +18,6 @@ from research_agent.api.routes.supervisor import (
     _specialists_reached,
 )
 from research_agent.memory.manager import MemoryManager
-
 
 _GRAPH = None
 _MEMORY: MemoryManager | None = None

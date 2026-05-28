@@ -10,11 +10,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langgraph.graph.state import CompiledStateGraph
 
 from research_agent.graph.reflection import (
     _extract_json,
@@ -24,6 +23,9 @@ from research_agent.graph.reflection import (
     build_reflection_subgraph,
 )
 from research_agent.llm.tier import ModelTier
+
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
 
 
 # ---------------------------------------------------------------------

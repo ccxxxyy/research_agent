@@ -25,8 +25,8 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import contextlib
+import io
 import subprocess
 import sys
 import tempfile
@@ -252,11 +252,11 @@ async def execute_python_inproc(code: str, timeout_seconds: int = 30) -> dict:
         }
     }
 
-    import math
-    import statistics
-    import json
     import collections
     import itertools
+    import json
+    import math
+    import statistics
 
     safe_globals.update({
         "math": math,
@@ -277,7 +277,7 @@ async def execute_python_inproc(code: str, timeout_seconds: int = 30) -> dict:
         )
         result["stdout"] = stdout_capture.getvalue()
         result["return_value"] = safe_globals.get("result")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         result["error"] = f"TimeoutError: execution exceeded {timeout_seconds}s limit"
     except Exception as e:
         result["error"] = f"{type(e).__name__}: {e}"

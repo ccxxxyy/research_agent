@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langchain_core.tools import BaseTool
 from langgraph.prebuilt import create_react_agent
 
-from research_agent.llm.provider import ModelRouter
-from research_agent.llm.tier import AgentName
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
+
+    from research_agent.llm.provider import ModelRouter
+    from research_agent.llm.tier import AgentName
 
 
 @dataclass(frozen=True)

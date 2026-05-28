@@ -45,7 +45,6 @@ from research_agent.mcp_servers.client_factory import (
     load_pdf_report_server_tools,
 )
 
-
 COMPANY_NAME = "宁德时代"
 COMPANY_TICKER = "300750"
 

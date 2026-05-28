@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import AsyncIterator
+from typing import TYPE_CHECKING
 
 import uvicorn
 from fastapi import FastAPI
@@ -15,6 +14,10 @@ from loguru import logger
 from research_agent.api.routes import a2a, health, knowledge, memory, sentiment, supervisor, usage
 from research_agent.config import get_settings
 from research_agent.observability.logging import setup_logging
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+    from pathlib import Path
 
 
 async def _try_build_research_supervisor(model_router, checkpointer, settings=None):
@@ -59,7 +62,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         "news_sentiment_server",
     )
     tools: dict[str, list] = {}
-    for name, r in zip(names, results):
+    for name, r in zip(names, results, strict=False):
         if isinstance(r, Exception):
             logger.warning("Tool discovery failed for {}: {}", name, r)
             tools[name] = []
@@ -74,7 +77,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         )
         return None, []
 
-    _TOOL_SOURCE_TO_SPECIALIST = {
+    tool_source_to_specialist = {
         "fin_data_server": "data_expert",
         "pdf_report_server": "report_expert",
         "code_server": "coder_expert",
@@ -84,7 +87,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
     }
     roster = [
         spec
-        for src, spec in _TOOL_SOURCE_TO_SPECIALIST.items()
+        for src, spec in tool_source_to_specialist.items()
         if tools.get(src)
     ]
 

@@ -34,7 +34,6 @@ from pathlib import Path
 from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 
-
 DB_PATH = Path("data/demo_resume.sqlite")
 THREAD_ID = "demo-resume-codename"
 
@@ -111,7 +110,7 @@ async def role_reader() -> None:
     )
     result = await agent.ainvoke({"messages": [HumanMessage(content=probe)]}, config=cfg)
 
-    print(f"\n  读取者探测")
+    print("\n  读取者探测")
     print(f"    用户 : {probe}")
     print(f"    AI   : {_last_ai_text(result)}")
 

@@ -12,11 +12,9 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -25,6 +23,10 @@ from langgraph.prebuilt import create_react_agent
 
 from research_agent.memory.checkpointer import init_checkpointer
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from langchain_core.callbacks import CallbackManagerForLLMRun
 
 # ---------------------------------------------------------------------------
 # 预设脚本的桩聊天模型
@@ -50,7 +52,7 @@ class _ScriptedChatModel(BaseChatModel):
         reply = self.answers.pop(0)
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=reply))])
 
-    def bind_tools(self, tools: list[Any], **kwargs: Any) -> "_ScriptedChatModel":  # noqa: ARG002
+    def bind_tools(self, tools: list[Any], **kwargs: Any) -> _ScriptedChatModel:  # noqa: ARG002
         """create_react_agent 会探测此方法；直接忽略工具。"""
         return self
 
