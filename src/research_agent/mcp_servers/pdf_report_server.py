@@ -261,16 +261,12 @@ async def search_announcements(
     """
     if category not in _CNINFO_VALID_CATEGORIES:
         return _fmt_error(
-            ValueError(
-                f"category must be one of {_CNINFO_VALID_CATEGORIES!r}, got {category!r}"
-            ),
+            ValueError(f"category must be one of {_CNINFO_VALID_CATEGORIES!r}, got {category!r}"),
             context=f"search_announcements(symbol={symbol!r}, category={category!r})",
         )
     if market not in CNINFO_MARKET_COLUMN:
         return _fmt_error(
-            ValueError(
-                f"market must be one of {tuple(CNINFO_MARKET_COLUMN)!r}, got {market!r}"
-            ),
+            ValueError(f"market must be one of {tuple(CNINFO_MARKET_COLUMN)!r}, got {market!r}"),
             context=f"search_announcements(symbol={symbol!r}, market={market!r})",
         )
     limit = max(1, min(limit, 100))
@@ -318,9 +314,7 @@ async def search_announcements(
                     "sortType": "",
                     "isHLtitle": "true",
                 }
-                r = await client.post(
-                    CNINFO_QUERY_URL, data=form, headers=_CNINFO_HEADERS
-                )
+                r = await client.post(CNINFO_QUERY_URL, data=form, headers=_CNINFO_HEADERS)
                 r.raise_for_status()
                 payload = r.json()
                 anns = payload.get("announcements") or []
@@ -375,10 +369,13 @@ async def search_announcements(
 # 工具 2：将 PDF 下载到磁盘缓存
 # ---------------------------------------------------------------------
 async def _download_bytes(url: str) -> bytes:
-    async with httpx.AsyncClient(
-        timeout=DOWNLOAD_TIMEOUT_SECONDS,
-        follow_redirects=True,
-    ) as cli, cli.stream("GET", url) as r:
+    async with (
+        httpx.AsyncClient(
+            timeout=DOWNLOAD_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        ) as cli,
+        cli.stream("GET", url) as r,
+    ):
         r.raise_for_status()
         total = 0
         chunks: list[bytes] = []
@@ -481,9 +478,7 @@ async def parse_pdf_pages(
     """
     if start_page < 1 or end_page < start_page:
         return _fmt_error(
-            ValueError(
-                f"invalid range: start_page={start_page}, end_page={end_page}"
-            ),
+            ValueError(f"invalid range: start_page={start_page}, end_page={end_page}"),
             context="parse_pdf_pages()",
         )
     if (end_page - start_page + 1) > MAX_PAGE_WINDOW:

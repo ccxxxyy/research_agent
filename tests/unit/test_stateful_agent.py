@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 # 预设脚本的桩聊天模型
 # ---------------------------------------------------------------------------
 
+
 class _ScriptedChatModel(BaseChatModel):
     """确定性聊天模型，依次弹出预设的 ``AIMessage`` 回答。
 
@@ -71,6 +72,7 @@ def _build_agent_with(checkpointer, answers: list[str]):
 # init_checkpointer 测试
 # ---------------------------------------------------------------------------
 
+
 class TestInitCheckpointer:
     @pytest.mark.asyncio
     async def test_no_args_returns_memory_saver(self) -> None:
@@ -78,9 +80,7 @@ class TestInitCheckpointer:
         assert isinstance(saver, MemorySaver)
 
     @pytest.mark.asyncio
-    async def test_sqlite_path_creates_file_and_returns_async_saver(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_sqlite_path_creates_file_and_returns_async_saver(self, tmp_path: Path) -> None:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
         db_path = tmp_path / "nested" / "dir" / "cp.sqlite"
@@ -91,9 +91,7 @@ class TestInitCheckpointer:
         assert db_path.parent.is_dir(), "父目录应被自动创建"
 
     @pytest.mark.asyncio
-    async def test_unreachable_postgres_falls_back_to_sqlite(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_unreachable_postgres_falls_back_to_sqlite(self, tmp_path: Path) -> None:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
         saver = await init_checkpointer(
@@ -114,6 +112,7 @@ class TestInitCheckpointer:
 # ---------------------------------------------------------------------------
 # 使用 MemorySaver 的多轮记忆
 # ---------------------------------------------------------------------------
+
 
 class TestMemorySaverMultiTurn:
     @pytest.mark.asyncio
@@ -144,9 +143,7 @@ class TestMemorySaverMultiTurn:
 
         await agent.ainvoke({"messages": [HumanMessage(content="a1")]}, config=cfg_a)
         await agent.ainvoke({"messages": [HumanMessage(content="b1")]}, config=cfg_b)
-        r_alice2 = await agent.ainvoke(
-            {"messages": [HumanMessage(content="a2")]}, config=cfg_a
-        )
+        r_alice2 = await agent.ainvoke({"messages": [HumanMessage(content="a2")]}, config=cfg_a)
 
         alice_snapshot = await agent.aget_state(cfg_a)
         bob_snapshot = await agent.aget_state(cfg_b)
@@ -163,6 +160,7 @@ class TestMemorySaverMultiTurn:
 # ---------------------------------------------------------------------------
 # 使用 AsyncSqliteSaver 在同一文件上跨 saver 持久化
 # ---------------------------------------------------------------------------
+
 
 class TestSqlitePersistence:
     @pytest.mark.asyncio
@@ -191,6 +189,7 @@ class TestSqlitePersistence:
 # build_simple_agent 集成外形
 # ---------------------------------------------------------------------------
 
+
 def test_build_simple_agent_exposes_checkpointer_param() -> None:
     """签名级别检查：Phase-2 参数表面保持稳定。"""
     import inspect
@@ -206,6 +205,7 @@ def test_build_simple_agent_exposes_checkpointer_param() -> None:
 # ---------------------------------------------------------------------------
 # pytest 异步支持的辅助函数
 # ---------------------------------------------------------------------------
+
 
 def _ensure_event_loop() -> asyncio.AbstractEventLoop:  # pragma: no cover
     try:

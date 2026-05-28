@@ -25,6 +25,7 @@ from research_agent.tools.native import calculate
 # 辅助函数
 # ---------------------------------------------------------------------------
 
+
 def _inspect_co_names(expression: str) -> tuple[str, ...]:
     """返回 Python 编译器在运行时将要解析的名称。
 
@@ -57,17 +58,19 @@ def _run(label: str, expression: str) -> None:
 # 第 1 部分 — 正常路径（基线：合法数学运算应正常工作）
 # ---------------------------------------------------------------------------
 
+
 def demo_happy_path() -> None:
     _banner("第 1 部分 — 合法数学运算（应全部放行）")
 
-    _run("基本算术",            "2 + 3 * 4")
-    _run("白名单内置函数",      "round(3.14159, 2)")
-    _run("白名单 math 模块",    "sqrt(16) + pi")
+    _run("基本算术", "2 + 3 * 4")
+    _run("白名单内置函数", "round(3.14159, 2)")
+    _run("白名单 math 模块", "sqrt(16) + pi")
 
 
 # ---------------------------------------------------------------------------
 # 第 2 部分 — 攻击目录（每个都必须被拦截）
 # ---------------------------------------------------------------------------
+
 
 def demo_attacks() -> None:
     _banner("第 2 部分 — 攻击目录（应全部拦截）")
@@ -94,7 +97,7 @@ def demo_attacks() -> None:
     )
     _run(
         "嵌套 eval",
-        "eval(\"1+1\")",
+        'eval("1+1")',
     )
     _run(
         "globals 检查",
@@ -110,6 +113,7 @@ def demo_attacks() -> None:
 # 第 3 部分 — 语法无效的载荷（在任一安全门之前就被拒绝）
 # ---------------------------------------------------------------------------
 
+
 def demo_garbage() -> None:
     _banner("第 3 部分 — 畸形载荷（SyntaxError 处理）")
 
@@ -120,6 +124,7 @@ def demo_garbage() -> None:
 # ---------------------------------------------------------------------------
 # 第 4 部分 — 消融实验：为什么需要两道安全门
 # ---------------------------------------------------------------------------
+
 
 def _unsafe_gate1_only(expression: str) -> str:
     """假设的 ``calculate`` 变体，**仅有** 安全门 1（名称白名单）。
@@ -150,10 +155,7 @@ def _unsafe_gate2_only(expression: str) -> str:
 def demo_ablation() -> None:
     _banner("第 4 部分 — 消融实验：为什么需要两道安全门")
 
-    print(
-        "\n  场景 A — 开发者不小心将 '__import__' 加入了白名单。"
-        "\n  仅靠安全门 2 还能救我们吗？"
-    )
+    print("\n  场景 A — 开发者不小心将 '__import__' 加入了白名单。\n  仅靠安全门 2 还能救我们吗？")
     evil = "__import__('os').system('echo should-not-run')"
 
     # 仅安全门 1，但白名单配置错误：
@@ -169,18 +171,12 @@ def demo_ablation() -> None:
     except Exception as e:
         print(f"    安全门 2 裁决: 已拦截 — {type(e).__name__}: {e}")
 
-    print(
-        "\n  场景 B — 开发者忘记设置 __builtins__={}。"
-        "\n  仅靠安全门 1 还能救我们吗？"
-    )
+    print("\n  场景 B — 开发者忘记设置 __builtins__={}。\n  仅靠安全门 1 还能救我们吗？")
     evil = "__import__('os').system('echo should-not-run')"
     result = _unsafe_gate1_only(evil)
     print(f"    安全门 1 裁决: {result}")
 
-    print(
-        "\n  场景 C — 开发者忘记了名称白名单。"
-        "\n  仅靠安全门 2 能否阻止字面量属性链攻击？"
-    )
+    print("\n  场景 C — 开发者忘记了名称白名单。\n  仅靠安全门 2 能否阻止字面量属性链攻击？")
     evil = "(1).__class__.__bases__[0].__subclasses__()"
     result = _unsafe_gate2_only(evil)
     print(f"    安全门 2 裁决: {result}")
@@ -189,6 +185,7 @@ def demo_ablation() -> None:
 # ---------------------------------------------------------------------------
 # 第 5 部分 — 要点总结
 # ---------------------------------------------------------------------------
+
 
 def demo_summary() -> None:
     _banner("第 5 部分 — 要点总结")

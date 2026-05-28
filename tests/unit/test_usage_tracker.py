@@ -32,7 +32,9 @@ class TestUsageTracker:
 
     def test_cost_estimation_deepseek_v4_pro(self):
         tracker = UsageTracker()
-        tracker.record("test", "deepseek-v4-pro", prompt_tokens=1_000_000, completion_tokens=1_000_000)
+        tracker.record(
+            "test", "deepseek-v4-pro", prompt_tokens=1_000_000, completion_tokens=1_000_000
+        )
         summary = tracker.summary()
         assert abs(summary["total_cost_cny"] - 36.00) < 0.01
 

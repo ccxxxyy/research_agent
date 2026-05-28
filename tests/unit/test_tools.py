@@ -49,9 +49,7 @@ class TestToolSchemas:
 
 
 class TestGetCurrentTime:
-    ISO_8601 = re.compile(
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$"
-    )
+    ISO_8601 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$")
 
     def test_default_timezone_returns_iso8601(self) -> None:
         result = get_current_time.invoke({})

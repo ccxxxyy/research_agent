@@ -45,10 +45,7 @@ class _FakeModel:
         self.prompts.append(list(messages))
         if not self._responses:
             # 脚本用完意味着测试提供了不完整的伪造对象 —— 大声失败而非静默复用最后一个响应。
-            raise AssertionError(
-                "fake model out of canned responses; "
-                "test setup is incomplete"
-            )
+            raise AssertionError("fake model out of canned responses; test setup is incomplete")
         text = self._responses.pop(0)
         return AIMessage(content=text)
 
@@ -82,11 +79,11 @@ class TestExtractJson:
         assert _extract_json('{"a": 1}') == {"a": 1}
 
     def test_fenced_json_block(self) -> None:
-        text = "Here is the verdict:\n```json\n{\"quality_score\": 0.9}\n```"
+        text = 'Here is the verdict:\n```json\n{"quality_score": 0.9}\n```'
         assert _extract_json(text) == {"quality_score": 0.9}
 
     def test_embedded_object_after_prose(self) -> None:
-        text = "Some prose. {\"quality_score\": 0.5, \"issues\": []}"
+        text = 'Some prose. {"quality_score": 0.5, "issues": []}'
         assert _extract_json(text) == {"quality_score": 0.5, "issues": []}
 
     def test_unparseable_returns_empty(self) -> None:
@@ -122,9 +119,12 @@ class TestExtractSupervisorDraft:
     def test_last_assistant_without_toolcalls_wins(self) -> None:
         msgs: list[BaseMessage] = [
             HumanMessage(content="Q"),
-            AIMessage(content="", tool_calls=[
-                {"name": "transfer_to_data_expert", "args": {}, "id": "1"},
-            ]),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "transfer_to_data_expert", "args": {}, "id": "1"},
+                ],
+            ),
             AIMessage(content="data found", name="data_expert"),
             AIMessage(content="final synthesis", name="supervisor"),
         ]
@@ -134,9 +134,12 @@ class TestExtractSupervisorDraft:
         msgs: list[BaseMessage] = [
             HumanMessage(content="Q"),
             AIMessage(content="real draft"),
-            AIMessage(content="ignored because tool call", tool_calls=[
-                {"name": "x", "args": {}, "id": "y"},
-            ]),
+            AIMessage(
+                content="ignored because tool call",
+                tool_calls=[
+                    {"name": "x", "args": {}, "id": "y"},
+                ],
+            ),
         ]
         # "ignored because tool call" 消息含有 tool_calls， 因此跳过它，返回其上方的真正草稿。
         assert _extract_supervisor_draft(msgs) == "real draft"
@@ -169,7 +172,9 @@ class TestFormatTranscript:
 async def test_high_score_first_pass_skips_rewrite() -> None:
     """得分 ≥ 阈值的草稿不应触发 writer。"""
     router = _FakeRouter(
-        light_responses=['{"quality_score": 0.95, "reasoning": "good", "feedback": "", "issues": []}'],
+        light_responses=[
+            '{"quality_score": 0.95, "reasoning": "good", "feedback": "", "issues": []}'
+        ],
         heavy_responses=[],
     )
     graph: CompiledStateGraph = build_reflection_subgraph(
@@ -178,12 +183,14 @@ async def test_high_score_first_pass_skips_rewrite() -> None:
         max_iterations=2,
     )
 
-    out = await graph.ainvoke({
-        "messages": [
-            HumanMessage(content="What is X?"),
-            AIMessage(content="X is the answer.", name="supervisor"),
-        ],
-    })
+    out = await graph.ainvoke(
+        {
+            "messages": [
+                HumanMessage(content="What is X?"),
+                AIMessage(content="X is the answer.", name="supervisor"),
+            ],
+        }
+    )
 
     assert len(router.light.prompts) == 1, "critic should have been called exactly once"
     assert len(router.heavy.prompts) == 0, "writer should NOT have been called"
@@ -212,12 +219,14 @@ async def test_low_score_triggers_rewrite_then_passes() -> None:
         max_iterations=2,
     )
 
-    out = await graph.ainvoke({
-        "messages": [
-            HumanMessage(content="Q"),
-            AIMessage(content="weak draft", name="supervisor"),
-        ],
-    })
+    out = await graph.ainvoke(
+        {
+            "messages": [
+                HumanMessage(content="Q"),
+                AIMessage(content="weak draft", name="supervisor"),
+            ],
+        }
+    )
 
     assert len(router.light.prompts) == 2
     assert len(router.heavy.prompts) == 1
@@ -249,12 +258,14 @@ async def test_max_iterations_enforced_when_critic_never_satisfied() -> None:
         max_iterations=2,
     )
 
-    out = await graph.ainvoke({
-        "messages": [
-            HumanMessage(content="Q"),
-            AIMessage(content="initial draft", name="supervisor"),
-        ],
-    })
+    out = await graph.ainvoke(
+        {
+            "messages": [
+                HumanMessage(content="Q"),
+                AIMessage(content="initial draft", name="supervisor"),
+            ],
+        }
+    )
 
     # max_iterations=2 时，最多运行 3 次 critic + 2 次 writer。
     assert len(router.light.prompts) == 3
@@ -288,12 +299,14 @@ async def test_best_draft_preserved_on_regression() -> None:
         max_iterations=2,
     )
 
-    out = await graph.ainvoke({
-        "messages": [
-            HumanMessage(content="Q"),
-            AIMessage(content="initial supervisor draft", name="supervisor"),
-        ],
-    })
+    out = await graph.ainvoke(
+        {
+            "messages": [
+                HumanMessage(content="Q"),
+                AIMessage(content="initial supervisor draft", name="supervisor"),
+            ],
+        }
+    )
 
     # 最高分（0.6）是 supervisor 的原始草稿，因此 finalize 应返回该草稿而非重写版本。
     assert out["messages"][-1].content == "initial supervisor draft"
@@ -336,12 +349,14 @@ async def test_zero_max_iterations_makes_critic_only_pass() -> None:
         max_iterations=0,
     )
 
-    out = await graph.ainvoke({
-        "messages": [
-            HumanMessage(content="Q"),
-            AIMessage(content="draft", name="supervisor"),
-        ],
-    })
+    out = await graph.ainvoke(
+        {
+            "messages": [
+                HumanMessage(content="Q"),
+                AIMessage(content="draft", name="supervisor"),
+            ],
+        }
+    )
 
     assert len(router.light.prompts) == 1
     assert len(router.heavy.prompts) == 0

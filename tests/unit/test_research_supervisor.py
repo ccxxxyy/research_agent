@@ -369,12 +369,8 @@ class TestBuildResearchSupervisor:
         assert "knowledge_expert" in node_names
         assert "news_expert" in node_names
 
-    def test_data_only_compiles(
-        self, router: ModelRouter, fake_data_tools: list[BaseTool]
-    ) -> None:
-        graph = build_research_supervisor(
-            model_router=router, data_tools=fake_data_tools
-        )
+    def test_data_only_compiles(self, router: ModelRouter, fake_data_tools: list[BaseTool]) -> None:
+        graph = build_research_supervisor(model_router=router, data_tools=fake_data_tools)
         node_names = set(graph.get_graph().nodes.keys())
         assert "data_expert" in node_names
         assert "report_expert" not in node_names
@@ -385,9 +381,7 @@ class TestBuildResearchSupervisor:
     def test_report_only_compiles(
         self, router: ModelRouter, fake_report_tools: list[BaseTool]
     ) -> None:
-        graph = build_research_supervisor(
-            model_router=router, report_tools=fake_report_tools
-        )
+        graph = build_research_supervisor(model_router=router, report_tools=fake_report_tools)
         node_names = set(graph.get_graph().nodes.keys())
         assert "report_expert" in node_names
         assert "data_expert" not in node_names
@@ -398,9 +392,7 @@ class TestBuildResearchSupervisor:
         self, router: ModelRouter, fake_knowledge_tools: list[BaseTool]
     ) -> None:
         """仅含 knowledge 的团队是 Phase-4.6 RAG 闭环的冒烟配置 —守护其能独立编译。"""
-        graph = build_research_supervisor(
-            model_router=router, knowledge_tools=fake_knowledge_tools
-        )
+        graph = build_research_supervisor(model_router=router, knowledge_tools=fake_knowledge_tools)
         node_names = set(graph.get_graph().nodes.keys())
         assert "knowledge_expert" in node_names
         assert "data_expert" not in node_names
@@ -408,13 +400,9 @@ class TestBuildResearchSupervisor:
         assert "coder_expert" not in node_names
         assert "news_expert" not in node_names
 
-    def test_news_only_compiles(
-        self, router: ModelRouter, fake_news_tools: list[BaseTool]
-    ) -> None:
+    def test_news_only_compiles(self, router: ModelRouter, fake_news_tools: list[BaseTool]) -> None:
         """仅含 news 的团队是新闻平面的冒烟配置 — 同样守护其能独立编译。"""
-        graph = build_research_supervisor(
-            model_router=router, news_tools=fake_news_tools
-        )
+        graph = build_research_supervisor(model_router=router, news_tools=fake_news_tools)
         node_names = set(graph.get_graph().nodes.keys())
         assert "news_expert" in node_names
         assert "data_expert" not in node_names
@@ -460,9 +448,7 @@ class TestBuildResearchSupervisor:
     ) -> None:
         """默认设置（``enable_reflection=False``）不得引入反射包装器。 旧版 supervisor 已将其路由节点命名为 ``supervisor``（这是``langgraph_supervisor`` 的契约），
         因此区分"已包装"与"未包装"的标志是 ``reflection`` 节点的存在，以及专家节点位于顶层（未被封装）。"""
-        graph = build_research_supervisor(
-            model_router=router, data_tools=fake_data_tools
-        )
+        graph = build_research_supervisor(model_router=router, data_tools=fake_data_tools)
         node_names = set(graph.get_graph().nodes.keys())
         # 在未包装的图中，专家节点位于顶层。
         assert "data_expert" in node_names

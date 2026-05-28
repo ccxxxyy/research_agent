@@ -72,8 +72,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
 
     if not any(tools.values()):
         logger.error(
-            "All tool sources failed to provide tools; "
-            "research supervisor will be unavailable."
+            "All tool sources failed to provide tools; research supervisor will be unavailable."
         )
         return None, []
 
@@ -85,11 +84,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         "news_server": "news_expert",
         "news_sentiment_server": "sentiment_expert",
     }
-    roster = [
-        spec
-        for src, spec in tool_source_to_specialist.items()
-        if tools.get(src)
-    ]
+    roster = [spec for src, spec in tool_source_to_specialist.items() if tools.get(src)]
 
     # ``settings`` 可选以便单独做单测；生产 lifespan 中总会传入。
     reflect = bool(getattr(settings, "reflection_enabled", False))
@@ -136,13 +131,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from research_agent.memory.store import init_memory_store
 
     checkpoint_sqlite = settings.checkpoint_sqlite_path.strip()
-    checkpoint_sqlite_arg: Path | str | None = (
-        checkpoint_sqlite if checkpoint_sqlite else None
-    )
+    checkpoint_sqlite_arg: Path | str | None = checkpoint_sqlite if checkpoint_sqlite else None
     store_sqlite = settings.memory_store_sqlite_path.strip()
-    store_sqlite_arg: Path | str | None = (
-        store_sqlite if store_sqlite else None
-    )
+    store_sqlite_arg: Path | str | None = store_sqlite if store_sqlite else None
 
     checkpointer = await init_checkpointer(
         settings.database.postgres_sync_uri,
@@ -170,6 +161,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     from research_agent.observability.metrics import METRICS
+
     METRICS.set_specialists(specialist_roster)
 
     app.state.supervisor_graph = supervisor_graph
@@ -188,9 +180,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async def _close_conn(owner_name: str, conn: object) -> None:
         """关闭类连接对象：若 ``close`` 为协程函数则 await。
 
-        Postgres 连接池暴露同步 ``close``；
-        ``aiosqlite.Connection`` 及若干 LangGraph 异步存储暴露异步 ``close`` —— 不带 ``await`` 调用会触发 ``RuntimeWarning``
-       （「coroutine was never awaited」）且底层套接字可能泄漏。运行时识别类型并正确分发。
+         Postgres 连接池暴露同步 ``close``；
+         ``aiosqlite.Connection`` 及若干 LangGraph 异步存储暴露异步 ``close`` —— 不带 ``await`` 调用会触发 ``RuntimeWarning``
+        （「coroutine was never awaited」）且底层套接字可能泄漏。运行时识别类型并正确分发。
         """
         close_fn = getattr(conn, "close", None)
         if close_fn is None:
@@ -282,6 +274,7 @@ def create_app() -> FastAPI:
 
     _static_dir = _Path(__file__).parent / "static"
     if _static_dir.is_dir():
+
         @app.get("/", include_in_schema=False)
         async def _root():
             return FileResponse(_static_dir / "index.html")

@@ -210,9 +210,7 @@ async def test_parse_and_metadata() -> None:
         assert "error" not in dl, dl
         local_path = dl["local_path"]
 
-        meta = _parse(
-            await tools["extract_pdf_metadata"].ainvoke({"local_path": local_path})
-        )
+        meta = _parse(await tools["extract_pdf_metadata"].ainvoke({"local_path": local_path}))
         assert "error" not in meta, meta
         assert meta["local_path"] == local_path
         assert meta["num_pages"] >= 1

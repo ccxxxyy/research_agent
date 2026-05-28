@@ -51,16 +51,12 @@ class ResearchSupervisorRequest(BaseModel):
         default="anonymous",
         min_length=1,
         max_length=64,
-        description=(
-            "用于长期记忆隔离的用户标识。省略则为匿名"
-            "（无跨会话持久化）。"
-        ),
+        description=("用于长期记忆隔离的用户标识。省略则为匿名（无跨会话持久化）。"),
     )
     thread_id: str | None = Field(
         None,
         description=(
-            "会话线程；省略则开启新的独立会话。跨调用复用同一"
-            " thread_id 可从检查点恢复之前的对话。"
+            "会话线程；省略则开启新的独立会话。跨调用复用同一 thread_id 可从检查点恢复之前的对话。"
         ),
     )
     recursion_limit: int | None = Field(
@@ -129,8 +125,8 @@ class ResearchSupervisorSSEEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-
 # ---------- 健康检查 ----------
+
 
 class HealthResponse(BaseModel):
     status: str = "ok"

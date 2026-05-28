@@ -59,9 +59,7 @@ def get_memory_manager(request: Request) -> MemoryManager:
 
 
 SupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_supervisor_graph)]
-ResearchSupervisorGraphDep = Annotated[
-    CompiledStateGraph, Depends(get_research_supervisor_graph)
-]
+ResearchSupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_research_supervisor_graph)]
 ModelRouterDep = Annotated[ModelRouter, Depends(get_model_router)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 MemoryDep = Annotated[MemoryManager, Depends(get_memory_manager)]

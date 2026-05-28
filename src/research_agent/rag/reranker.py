@@ -43,9 +43,7 @@ from typing import Any
 
 from loguru import logger
 
-_MODELSCOPE_CACHE_PATH = os.path.expanduser(
-    "~/.cache/modelscope/hub/models/BAAI/bge-reranker-base"
-)
+_MODELSCOPE_CACHE_PATH = os.path.expanduser("~/.cache/modelscope/hub/models/BAAI/bge-reranker-base")
 """ModelScope 缓存目录的预计算路径。
 
 在中国网络环境下 HuggingFace Hub 的 Xet S3 后端经常不可达。

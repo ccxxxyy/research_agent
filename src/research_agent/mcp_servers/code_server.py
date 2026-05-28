@@ -172,6 +172,7 @@ async def execute_python(code: str, timeout_seconds: int = 30) -> dict:
                 }
 
             import json
+
             try:
                 return json.loads(proc.stdout)
             except (json.JSONDecodeError, ValueError):
@@ -258,13 +259,15 @@ async def execute_python_inproc(code: str, timeout_seconds: int = 30) -> dict:
     import math
     import statistics
 
-    safe_globals.update({
-        "math": math,
-        "statistics": statistics,
-        "json": json,
-        "collections": collections,
-        "itertools": itertools,
-    })
+    safe_globals.update(
+        {
+            "math": math,
+            "statistics": statistics,
+            "json": json,
+            "collections": collections,
+            "itertools": itertools,
+        }
+    )
 
     def _run_code() -> None:
         with contextlib.redirect_stdout(stdout_capture):

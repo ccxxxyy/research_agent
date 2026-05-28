@@ -86,6 +86,7 @@ def _df_to_records(df: pd.DataFrame, *, limit: int | None = None) -> list[dict[s
 # ---------------------------------------------------------------------
 def _basic_info_from_eastmoney(symbol: str) -> dict[str, Any]:
     import akshare as ak
+
     df = ak.stock_individual_info_em(symbol=symbol)
     info = dict(zip(df["item"].astype(str), df["value"].tolist(), strict=False))
     return {"symbol": symbol, "info": info, "source": "eastmoney"}
@@ -93,6 +94,7 @@ def _basic_info_from_eastmoney(symbol: str) -> dict[str, Any]:
 
 def _basic_info_from_xueqiu(symbol: str) -> dict[str, Any]:
     import akshare as ak
+
     df = ak.stock_individual_basic_info_xq(symbol=_prefixed_symbol(symbol, upper=True))
     info = dict(zip(df["item"].astype(str), df["value"].astype(str).tolist(), strict=False))
     return {"symbol": symbol, "info": info, "source": "xueqiu"}
@@ -157,6 +159,7 @@ def _summarize_bars(
 
 def _price_history_from_eastmoney(symbol: str, days: int, adjust: str) -> dict[str, Any]:
     import akshare as ak
+
     end = datetime.now()
     start = end - timedelta(days=days)
     df = ak.stock_zh_a_hist(
@@ -177,6 +180,7 @@ def _price_history_from_eastmoney(symbol: str, days: int, adjust: str) -> dict[s
 
 def _price_history_from_sina(symbol: str, days: int, adjust: str) -> dict[str, Any]:
     import akshare as ak
+
     end = datetime.now()
     start = end - timedelta(days=days)
     df = ak.stock_zh_a_daily(
@@ -280,6 +284,7 @@ async def get_financial_abstract(symbol: str, last_n_periods: int = 4) -> dict:
 
     def _call() -> dict[str, Any]:
         import akshare as ak
+
         df = ak.stock_financial_abstract(symbol=symbol)
         if df is None or df.empty:
             return {"symbol": symbol, "periods": [], "metrics": {}}
@@ -292,9 +297,7 @@ async def get_financial_abstract(symbol: str, last_n_periods: int = 4) -> dict:
         indicator_col = "指标" if "指标" in df.columns else df.columns[1]
 
         for metric in _ABSTRACT_KEY_METRICS:
-            mask = df[indicator_col].astype(str).str.contains(
-                metric, na=False, regex=False
-            )
+            mask = df[indicator_col].astype(str).str.contains(metric, na=False, regex=False)
             if not mask.any():
                 continue
             row = df[mask].iloc[0]
@@ -363,6 +366,7 @@ async def get_financial_indicators(symbol: str, start_year: str = "2023") -> dic
 
     def _call() -> dict[str, Any]:
         import akshare as ak
+
         df = ak.stock_financial_analysis_indicator(symbol=symbol, start_year=start_year)
         if df is None or df.empty:
             return {"symbol": symbol, "periods": [], "ratios": {}}
@@ -427,19 +431,15 @@ async def search_stock_by_name(keyword: str, limit: int = 10) -> dict:
         global _ALL_STOCKS_CACHE
         if _ALL_STOCKS_CACHE is None:
             import akshare as ak
+
             _ALL_STOCKS_CACHE = ak.stock_info_a_code_name()
 
         df = _ALL_STOCKS_CACHE
         if "name" not in df.columns or "code" not in df.columns:
-            raise RuntimeError(
-                f"unexpected schema from stock_info_a_code_name: {list(df.columns)}"
-            )
+            raise RuntimeError(f"unexpected schema from stock_info_a_code_name: {list(df.columns)}")
         mask = df["name"].astype(str).str.contains(keyword, na=False, regex=False)
         hits = df[mask].head(limit)
-        matches = [
-            {"code": str(r["code"]), "name": str(r["name"])}
-            for _, r in hits.iterrows()
-        ]
+        matches = [{"code": str(r["code"]), "name": str(r["name"])} for _, r in hits.iterrows()]
         return {"keyword": keyword, "matches": matches}
 
     try:

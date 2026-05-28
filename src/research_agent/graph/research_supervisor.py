@@ -215,6 +215,7 @@ class _ResearchState(TypedDict, total=False):
 # HITL 人工审核节点
 # ---------------------------------------------------------------------------
 
+
 def _build_human_review_node():
     """创建一个暂停执行以进行人工审核的图节点。
 
@@ -238,21 +239,17 @@ def _build_human_review_node():
                     draft = content
                     break
 
-        decision = interrupt({
-            "draft": draft,
-            "action_required": "approve_or_revise",
-        })
+        decision = interrupt(
+            {
+                "draft": draft,
+                "action_required": "approve_or_revise",
+            }
+        )
 
         if isinstance(decision, dict) and decision.get("action") == "revise":
             feedback = decision.get("feedback", "")
             if feedback:
-                return {
-                    "messages": [
-                        HumanMessage(
-                            content=f"[REVIEWER FEEDBACK]\n{feedback}"
-                        )
-                    ]
-                }
+                return {"messages": [HumanMessage(content=f"[REVIEWER FEEDBACK]\n{feedback}")]}
 
         return {"messages": []}
 
@@ -401,8 +398,7 @@ def build_research_supervisor(
 
     if not (has_data or has_report or has_coder or has_knowledge or has_news or has_sentiment):
         raise ValueError(
-            "build_research_supervisor 至少需要一个专家的工具列表非空，"
-            "但六组工具全部为空。"
+            "build_research_supervisor 至少需要一个专家的工具列表非空，但六组工具全部为空。"
         )
 
     agents: list = []

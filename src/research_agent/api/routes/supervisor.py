@@ -53,6 +53,7 @@ def _graph_config(
         cfg["recursion_limit"] = get_settings().default_recursion_limit
     return cfg
 
+
 router = APIRouter(prefix="/api/supervisor", tags=["supervisor"])
 _prompt_guard = PromptGuard()
 
@@ -84,11 +85,7 @@ def _specialists_reached(messages: list) -> list[str]:
     for m in messages:
         tool_calls = getattr(m, "tool_calls", None) if isinstance(m, AIMessage) else None
         for tc in tool_calls or []:
-            name = (
-                tc.get("name")
-                if isinstance(tc, dict)
-                else getattr(tc, "name", None) or ""
-            )
+            name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None) or ""
             if (
                 isinstance(name, str)
                 and name.startswith("transfer_to_")
@@ -117,18 +114,14 @@ async def _build_user_context_messages(
         user_ctx = await memory.get_user_context(user_id)
         context_parts: list[str] = []
         if user_ctx.get("preferences"):
-            prefs = "; ".join(
-                p.get("content", str(p)) for p in user_ctx["preferences"]
-            )
+            prefs = "; ".join(p.get("content", str(p)) for p in user_ctx["preferences"])
             context_parts.append(f"User preferences: {prefs}")
         if user_ctx.get("recent_research"):
             history_lines = [
                 f"- {r.get('query', '?')}: {r.get('summary', '')[:100]}"
                 for r in user_ctx["recent_research"][:3]
             ]
-            context_parts.append(
-                "Recent research history:\n" + "\n".join(history_lines)
-            )
+            context_parts.append("Recent research history:\n" + "\n".join(history_lines))
         if context_parts:
             messages.append(SystemMessage(content="\n\n".join(context_parts)))
 
@@ -137,7 +130,7 @@ async def _build_user_context_messages(
 
 
 # ---------------------------------------------------------------------------
-#最小主管 —— 为交接教学演示保留
+# 最小主管 —— 为交接教学演示保留
 # ---------------------------------------------------------------------------
 
 
@@ -230,13 +223,13 @@ async def supervisor_research(
 
     config = _graph_config(thread_id, request.recursion_limit)
 
-    logger.info(
-        "Research-supervisor invoke: user={}, thread={}", user_id, thread_id
-    )
+    logger.info("Research-supervisor invoke: user={}, thread={}", user_id, thread_id)
 
     # --- 长期记忆：加载用户上下文 ---
     messages_input = await _build_user_context_messages(
-        memory, user_id, request.query,
+        memory,
+        user_id,
+        request.query,
     )
 
     result = await graph.ainvoke(
@@ -310,9 +303,7 @@ def _extract_update_snippet(node_update: dict) -> tuple[str, str]:
         if tool_calls:
             first = tool_calls[0]
             name = (
-                first.get("name")
-                if isinstance(first, dict)
-                else getattr(first, "name", "") or ""
+                first.get("name") if isinstance(first, dict) else getattr(first, "name", "") or ""
             )
             return (str(name), str(last.content or ""))
         return ("", str(last.content or ""))
@@ -323,11 +314,19 @@ def _extract_update_snippet(node_update: dict) -> tuple[str, str]:
 
 _SYNTH_NODES_FOR_HISTORY = frozenset({"supervisor", "reflection"})
 
-_KNOWN_SPECIALISTS = frozenset({
-    "data_expert", "report_expert", "coder_expert",
-    "knowledge_expert", "news_expert", "sentiment_expert",
-    "math_expert", "time_expert", "text_analyst",
-})
+_KNOWN_SPECIALISTS = frozenset(
+    {
+        "data_expert",
+        "report_expert",
+        "coder_expert",
+        "knowledge_expert",
+        "news_expert",
+        "sentiment_expert",
+        "math_expert",
+        "time_expert",
+        "text_analyst",
+    }
+)
 
 
 def _namespace_specialist(namespace: tuple) -> str | None:
@@ -370,21 +369,11 @@ def _emit_specialist_internal(
     if not tool_calls:
         return
     for tc in tool_calls:
-        name = (
-            tc.get("name")
-            if isinstance(tc, dict)
-            else getattr(tc, "name", "") or ""
-        )
-        args = (
-            tc.get("args", {})
-            if isinstance(tc, dict)
-            else getattr(tc, "args", {}) or {}
-        )
+        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "") or ""
+        args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {}) or {}
         if not name or name.startswith("transfer_to_"):
             continue
-        args_preview = ", ".join(
-            f"{k}={v!r}" for k, v in (args or {}).items()
-        )[:200]
+        args_preview = ", ".join(f"{k}={v!r}" for k, v in (args or {}).items())[:200]
         frames.put_nowait(
             _format_sse(
                 ResearchSupervisorSSEEvent(
@@ -436,9 +425,7 @@ async def _persist_stream_research_to_memory(
             thread_id,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Failed to persist research stream to long-term memory: {}", exc
-        )
+        logger.warning("Failed to persist research stream to long-term memory: {}", exc)
 
 
 async def _research_event_stream(
@@ -530,9 +517,7 @@ async def _research_event_stream(
                             )
                             continue
 
-                        tool_call_name, snippet = _extract_update_snippet(
-                            node_update
-                        )
+                        tool_call_name, snippet = _extract_update_snippet(node_update)
 
                         if tool_call_name.startswith("transfer_to_") and (
                             tool_call_name != "transfer_to_supervisor"
@@ -541,9 +526,7 @@ async def _research_event_stream(
                             await frames.put(
                                 _format_sse(
                                     ResearchSupervisorSSEEvent(
-                                        phase=(
-                                            ResearchSupervisorSSEPhase.HANDOFF
-                                        ),
+                                        phase=(ResearchSupervisorSSEPhase.HANDOFF),
                                         node=str(node_name),
                                         content=f"→ {specialist}",
                                         metadata={"specialist": specialist},
@@ -555,24 +538,16 @@ async def _research_event_stream(
                         if not snippet:
                             continue
 
-                        if (
-                            not tool_call_name
-                            and str(node_name) in _SYNTH_NODES_FOR_HISTORY
-                        ):
+                        if not tool_call_name and str(node_name) in _SYNTH_NODES_FOR_HISTORY:
                             outcome["last_plain_synthesis"] = snippet
 
-                        is_supervisor_final = (
-                            node_name == "supervisor"
-                            and not tool_call_name
-                        )
+                        is_supervisor_final = node_name == "supervisor" and not tool_call_name
                         if is_supervisor_final and not final_emitted_local:
                             final_emitted_local = True
                             await frames.put(
                                 _format_sse(
                                     ResearchSupervisorSSEEvent(
-                                        phase=(
-                                            ResearchSupervisorSSEPhase.FINAL
-                                        ),
+                                        phase=(ResearchSupervisorSSEPhase.FINAL),
                                         node=str(node_name),
                                         content=snippet,
                                     )
@@ -596,9 +571,7 @@ async def _research_event_stream(
                     _state = await graph.aget_state(cfg)
                     if _state and getattr(_state, "next", None):
                         outcome["graph_astream_ok"] = False
-                        draft = str(
-                            outcome.get("last_plain_synthesis") or ""
-                        )
+                        draft = str(outcome.get("last_plain_synthesis") or "")
                         await frames.put(
                             _format_sse(
                                 ResearchSupervisorSSEEvent(
@@ -620,9 +593,7 @@ async def _research_event_stream(
                     pass
 
             except Exception as exc:  # noqa: BLE001
-                logger.exception(
-                    "Research-supervisor streaming crashed: {}", exc
-                )
+                logger.exception("Research-supervisor streaming crashed: {}", exc)
                 await frames.put(
                     _format_sse(
                         ResearchSupervisorSSEEvent(
@@ -649,15 +620,11 @@ async def _research_event_stream(
         while True:
             if heartbeat_interval > 0:
                 try:
-                    item = await asyncio.wait_for(
-                        frames.get(), timeout=heartbeat_interval
-                    )
+                    item = await asyncio.wait_for(frames.get(), timeout=heartbeat_interval)
                 except TimeoutError:
                     yield _format_sse(
                         ResearchSupervisorSSEEvent(
-                            phase=(
-                                ResearchSupervisorSSEPhase.HEARTBEAT
-                            ),
+                            phase=(ResearchSupervisorSSEPhase.HEARTBEAT),
                             node="sse",
                             content="ping",
                             metadata={"thread_id": thread_id},
@@ -726,17 +693,15 @@ async def supervisor_research_stream(
             detail="Request blocked by security filter.",
         )
 
-    logger.info(
-        "Research-supervisor stream: user={}, thread={}", user_id, thread_id
-    )
+    logger.info("Research-supervisor stream: user={}, thread={}", user_id, thread_id)
 
     messages_input = await _build_user_context_messages(
-        memory, user_id, request.query,
+        memory,
+        user_id,
+        request.query,
     )
 
-    specialists: list[str] = getattr(
-        raw_request.app.state, "available_specialists", None
-    ) or []
+    specialists: list[str] = getattr(raw_request.app.state, "available_specialists", None) or []
 
     return StreamingResponse(
         _research_event_stream(
@@ -763,9 +728,7 @@ async def supervisor_research_stream(
 # ---------------------------------------------------------------------------
 
 
-async def _verify_thread_interrupted(
-    graph, thread_id: str
-) -> None:
+async def _verify_thread_interrupted(graph, thread_id: str) -> None:
     """若线程未处于待审核状态，则抛出正确的 HTTP 错误。
     状态码矩阵：
     * ``404`` —— 检查点器无 ``thread_id`` 记录（``aget_state`` 返回 ``None`` 或 ``values`` 和 ``next`` 均为空的状态）。线程从未存在。
@@ -778,9 +741,7 @@ async def _verify_thread_interrupted(
     except Exception as exc:
         # 底层检查点器 / 数据库故障 —— 与缺失线程不同，
         # 因此作为真正的 500 返回。
-        logger.exception(
-            "HITL: checkpointer failed reading thread state: {}", thread_id
-        )
+        logger.exception("HITL: checkpointer failed reading thread state: {}", thread_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Cannot read graph state: {exc}",

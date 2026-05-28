@@ -142,11 +142,7 @@ def _trace_tool_calls(messages: list) -> list[str]:
                 names.append(nm)
         elif isinstance(m, AIMessage):
             for tc in getattr(m, "tool_calls", None) or []:
-                nm = (
-                    tc.get("name")
-                    if isinstance(tc, dict)
-                    else getattr(tc, "name", None)
-                )
+                nm = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
                 if nm:
                     names.append(str(nm))
     return names
@@ -208,20 +204,15 @@ async def _verify_collection_seeded(collection: str) -> bool:
             )
             return True
     logger.error(
-        "Collection {!r} is missing or empty. Run "
-        "`scripts/seed_real_research_reports.py` first.",
+        "Collection {!r} is missing or empty. Run `scripts/seed_real_research_reports.py` first.",
         collection,
     )
     return False
 
 
 async def amain(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="四专家研究 supervisor 端到端演示。"
-    )
-    parser.add_argument(
-        "--company", default=DEFAULT_COMPANY, help="公司中文名称。"
-    )
+    parser = argparse.ArgumentParser(description="四专家研究 supervisor 端到端演示。")
+    parser.add_argument("--company", default=DEFAULT_COMPANY, help="公司中文名称。")
     parser.add_argument(
         "--ticker",
         default=DEFAULT_TICKER,
@@ -235,9 +226,7 @@ async def amain(argv: list[str]) -> int:
     parser.add_argument(
         "--no-verify-seed",
         action="store_true",
-        help=(
-            "跳过 collection 已灌入的前置检查。仅在故意测试 Agent 空知识库处理时使用。"
-        ),
+        help=("跳过 collection 已灌入的前置检查。仅在故意测试 Agent 空知识库处理时使用。"),
     )
     args = parser.parse_args(argv)
 
@@ -329,10 +318,7 @@ async def amain(argv: list[str]) -> int:
     print(f"  已路由到 knowledge_expert : {ok_knowledge}")
 
     if all((ok_answer, ok_subject, ok_data, ok_report, ok_coder, ok_knowledge)):
-        print(
-            "\n  [PASS] Supervisor 路由到全部四个专家，"
-            "并产生了非空且切题的回答。"
-        )
+        print("\n  [PASS] Supervisor 路由到全部四个专家，并产生了非空且切题的回答。")
         return 0
     print(
         "\n  [WARN] 启发式校验失败 — 请检查上方跟踪信息。"

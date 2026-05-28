@@ -92,10 +92,12 @@ class TestReplyQuality:
 
         evaluator = _build_reply_quality_evaluator(fake_llm)
         run = _make_run({"reply": "宁德时代 2023 年营收 4009 亿元"})
-        example = _make_example({
-            "query": "宁德时代营收",
-            "expected_reply_keywords": ["营收"],
-        })
+        example = _make_example(
+            {
+                "query": "宁德时代营收",
+                "expected_reply_keywords": ["营收"],
+            }
+        )
         result = await evaluator(run, example)
         assert result["score"] == 1.0
         assert result["comment"] == "perfect"

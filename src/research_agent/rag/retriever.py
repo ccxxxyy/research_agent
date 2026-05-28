@@ -135,7 +135,7 @@ def hybrid_rrf_fuse(
 
     RRF 公式核心：
     单个文档的 rrf_score = Σ (weight / (k + rank))
-    
+
     举例：如果一个文档在向量结果中排第 2，在 BM25 中排第 5：
     rrf_score = 0.6/(60+2) + 0.4/(60+5) = 0.00968 + 0.00615 = 0.01583
     去重策略（_key 函数）：按 (来源文件名, 页码, content前80字符) 生成唯一键。同一个文档在向量和 BM25 中都命中时，只保留一条记录，分数累加。
@@ -179,9 +179,7 @@ def hybrid_rrf_fuse(
             },
         )
         rec["bm25_score"] = max(rec["bm25_score"], score)
-        rec["bm25_rank"] = (
-            rank if rec["bm25_rank"] is None else min(rec["bm25_rank"], rank)
-        )
+        rec["bm25_rank"] = rank if rec["bm25_rank"] is None else min(rec["bm25_rank"], rank)
         rec["rrf_score"] += bm25_weight / (k_rrf + rank)
 
     return sorted(fused.values(), key=lambda r: r["rrf_score"], reverse=True)

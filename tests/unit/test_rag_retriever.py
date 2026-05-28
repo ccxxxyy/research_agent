@@ -11,9 +11,18 @@ from research_agent.rag.retriever import BM25Index, hybrid_rrf_fuse
 class TestBM25Index:
     def _sample_docs(self) -> list[dict]:
         return [
-            {"content": "宁德时代 2023 年报 电池出货量创历史新高", "metadata": {"source": "ndt.pdf", "page": 1}},
-            {"content": "比亚迪 新能源汽车 销量超预期 毛利率提升", "metadata": {"source": "byd.pdf", "page": 1}},
-            {"content": "锂电池 上游材料 碳酸锂 价格波动 分析", "metadata": {"source": "lithium.pdf", "page": 3}},
+            {
+                "content": "宁德时代 2023 年报 电池出货量创历史新高",
+                "metadata": {"source": "ndt.pdf", "page": 1},
+            },
+            {
+                "content": "比亚迪 新能源汽车 销量超预期 毛利率提升",
+                "metadata": {"source": "byd.pdf", "page": 1},
+            },
+            {
+                "content": "锂电池 上游材料 碳酸锂 价格波动 分析",
+                "metadata": {"source": "lithium.pdf", "page": 3},
+            },
         ]
 
     def test_basic_search_returns_ranked_results(self):
@@ -91,9 +100,7 @@ class TestHybridRRFFuse:
         bm25_hits = [
             (0, 8.0, {"content": "BM1", "metadata": {"source": "b.pdf", "page": 1}}),
         ]
-        result = hybrid_rrf_fuse(
-            vec_hits, bm25_hits, vector_weight=0.9, bm25_weight=0.1
-        )
+        result = hybrid_rrf_fuse(vec_hits, bm25_hits, vector_weight=0.9, bm25_weight=0.1)
         assert result[0]["content"] == "Vec1"
 
     def test_empty_inputs(self):
@@ -106,9 +113,18 @@ class TestHybridRRFFuse:
 class TestBM25ToFusion:
     def test_end_to_end_pipeline(self):
         docs = [
-            {"content": "Financial report Q3 revenue growth", "metadata": {"source": "q3.pdf", "page": 1}},
-            {"content": "Annual ESG sustainability report", "metadata": {"source": "esg.pdf", "page": 1}},
-            {"content": "Revenue and profit analysis for Q3", "metadata": {"source": "q3.pdf", "page": 5}},
+            {
+                "content": "Financial report Q3 revenue growth",
+                "metadata": {"source": "q3.pdf", "page": 1},
+            },
+            {
+                "content": "Annual ESG sustainability report",
+                "metadata": {"source": "esg.pdf", "page": 1},
+            },
+            {
+                "content": "Revenue and profit analysis for Q3",
+                "metadata": {"source": "q3.pdf", "page": 5},
+            },
         ]
         bm25 = BM25Index(docs)
         bm25_raw = bm25.search("Q3 revenue", top_k=3)

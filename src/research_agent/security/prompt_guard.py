@@ -31,7 +31,7 @@ class ThreatLevel(StrEnum):
 
     SAFE = "safe"
     SUSPICIOUS = "suspicious"  # 可能误报，建议日志记录但放行
-    BLOCKED = "blocked"        # 高置信度注入，应拦截
+    BLOCKED = "blocked"  # 高置信度注入，应拦截
 
 
 @dataclass(frozen=True)
@@ -182,9 +182,7 @@ class PromptGuard:
             raw_output.extend(extra_output_patterns)
         self._output_rules = _compile_rules(raw_output)
 
-        self._system_fingerprints: tuple[str, ...] = tuple(
-            system_prompt_fingerprints or []
-        )
+        self._system_fingerprints: tuple[str, ...] = tuple(system_prompt_fingerprints or [])
 
     def check_input(self, text: str) -> InputVerdict:
         """检测用户输入是否包含 prompt 注入尝试。"""
@@ -249,5 +247,5 @@ def _level_severity(level: ThreatLevel) -> int:
 
 def _extract_fingerprint_chunks(prompt: str, min_len: int = 30) -> list[str]:
     """从系统提示词中提取有辨识度的片段，用于检测逐字泄漏。"""
-    sentences = re.split(r'[。.!！?\?\n]', prompt)
+    sentences = re.split(r"[。.!！?\?\n]", prompt)
     return [s.strip() for s in sentences if len(s.strip()) >= min_len]

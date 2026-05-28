@@ -144,7 +144,10 @@ class UsageCallbackHandler(BaseCallbackHandler):
         )
         logger.trace(
             "LLM usage: tier={} model={} prompt={} completion={}",
-            self._tier_label, model_name, prompt, completion,
+            self._tier_label,
+            model_name,
+            prompt,
+            completion,
         )
 
 

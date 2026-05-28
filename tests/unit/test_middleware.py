@@ -29,7 +29,9 @@ from research_agent.api.middleware import (
 def _build_app(*, max_rpm: int = 3, redis_url: str | None = None) -> FastAPI:
     app = FastAPI()
     app.add_middleware(
-        RateLimitMiddleware, max_rpm=max_rpm, redis_url=redis_url,
+        RateLimitMiddleware,
+        max_rpm=max_rpm,
+        redis_url=redis_url,
     )
 
     @app.get("/health")
@@ -65,9 +67,7 @@ class TestInMemoryRateLimit:
     @pytest.mark.asyncio
     async def test_allows_under_limit(self) -> None:
         app = _build_app(max_rpm=5)
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for _ in range(5):
                 r = await client.get("/api/test")
                 assert r.status_code == 200
@@ -75,9 +75,7 @@ class TestInMemoryRateLimit:
     @pytest.mark.asyncio
     async def test_rejects_over_limit_with_429(self) -> None:
         app = _build_app(max_rpm=2)
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.get("/api/test")
             await client.get("/api/test")
             r = await client.get("/api/test")
@@ -88,9 +86,7 @@ class TestInMemoryRateLimit:
     @pytest.mark.asyncio
     async def test_health_exempt_from_limit(self) -> None:
         app = _build_app(max_rpm=1)
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.get("/api/test")  # 用掉 1 次允许额度
             for _ in range(5):
                 r = await client.get("/health")
@@ -103,9 +99,7 @@ class TestInMemoryRateLimit:
 
         monkeypatch.setattr(time, "time", lambda: fake_time)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.get("/api/test")
             assert r.status_code == 200
             r = await client.get("/api/test")
@@ -188,9 +182,7 @@ class TestRequestTimeoutMiddleware:
     @pytest.mark.asyncio
     async def test_zero_timeout_disabled(self) -> None:
         app = self._build_slow_app(0.0, sleep_s=0.05)
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r = await client.get("/slow")
             assert r.status_code == 200
 
@@ -198,7 +190,8 @@ class TestRequestTimeoutMiddleware:
     async def test_timeout_returns_504(self) -> None:
         app = self._build_slow_app(timeout=0.1, sleep_s=0.25)
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test",
+            transport=ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
             r = await client.get("/slow")
             assert r.status_code == 504
@@ -208,7 +201,8 @@ class TestRequestTimeoutMiddleware:
     async def test_quick_request_not_affected(self) -> None:
         app = self._build_slow_app(timeout=0.1, sleep_s=0.0)
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test",
+            transport=ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
             r = await client.get("/quick")
             assert r.status_code == 200
@@ -217,7 +211,8 @@ class TestRequestTimeoutMiddleware:
     async def test_sse_stream_path_exempt(self) -> None:
         app = self._build_slow_app(timeout=0.1, sleep_s=0.25)
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test",
+            transport=ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
             r = await client.get("/api/supervisor/research/stream")
             assert r.status_code == 200
@@ -237,9 +232,7 @@ class TestRedisRateLimit:
         app = _build_app(max_rpm=3)
 
         # 触发中间件栈构建
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.get("/health")
 
         rl = _find_rate_limit_middleware(app)
@@ -249,9 +242,7 @@ class TestRedisRateLimit:
         rl._redis = fake_client
         rl._lua_sha = None
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for _ in range(3):
                 r = await client.get("/api/test")
                 assert r.status_code == 200
@@ -265,9 +256,7 @@ class TestRedisRateLimit:
     async def test_redis_failure_falls_back_to_memory(self) -> None:
         app = _build_app(max_rpm=3)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.get("/health")
 
         rl = _find_rate_limit_middleware(app)
@@ -278,9 +267,7 @@ class TestRedisRateLimit:
         broken_redis.script_load = AsyncMock(return_value="fakeSHA")
         rl._redis = broken_redis
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for _ in range(3):
                 r = await client.get("/api/test")
                 assert r.status_code == 200
@@ -295,9 +282,7 @@ class TestRedisRateLimit:
 
         app = _build_app(max_rpm=2)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.get("/health")
 
         rl = _find_rate_limit_middleware(app)
@@ -307,9 +292,7 @@ class TestRedisRateLimit:
         rl._redis = fake_client
         rl._lua_sha = None
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r1 = await client.get("/api/test")
             r2 = await client.get("/api/test")
             r3 = await client.get("/api/test")

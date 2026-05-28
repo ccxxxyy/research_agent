@@ -44,9 +44,7 @@ def _reset_reranker_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(reranker_module, "_CROSS_ENCODER", None)
 
 
-def _install_fake_encoder(
-    monkeypatch: pytest.MonkeyPatch, encoder: _FakeCrossEncoder
-) -> None:
+def _install_fake_encoder(monkeypatch: pytest.MonkeyPatch, encoder: _FakeCrossEncoder) -> None:
     """在测试持续期间将伪造编码器固定为单例。"""
     monkeypatch.setattr(reranker_module, "_CROSS_ENCODER", encoder)
 
@@ -86,18 +84,14 @@ class TestTrivialCases:
 
 class TestOrdering:
     @pytest.mark.asyncio
-    async def test_reranks_docs_by_predicted_score(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_reranks_docs_by_predicted_score(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_encoder(monkeypatch, _FakeCrossEncoder())
         docs = [
             {"content": "totally unrelated content"},  # 0 token overlap
             {"content": "carbon neutrality scope two emissions"},  # 3 overlap
             {"content": "carbon neutrality"},  # 2 overlap
         ]
-        out = await CrossEncoderReranker().rerank(
-            "carbon neutrality scope", docs
-        )
+        out = await CrossEncoderReranker().rerank("carbon neutrality scope", docs)
         contents = [d["content"] for d in out]
         # 重叠度最高的文档必须排第一，然后是中等，最后是零。
         assert contents[0] == "carbon neutrality scope two emissions"
@@ -108,9 +102,7 @@ class TestOrdering:
         assert scores == sorted(scores, reverse=True)
 
     @pytest.mark.asyncio
-    async def test_metadata_is_preserved(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_metadata_is_preserved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_encoder(monkeypatch, _FakeCrossEncoder())
         docs = [
             {"content": "alpha beta", "metadata": {"source": "a.pdf", "page": 7}},
@@ -156,9 +148,7 @@ class TestFallback:
 
 class TestMaxPairs:
     @pytest.mark.asyncio
-    async def test_only_first_max_pairs_are_scored(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_only_first_max_pairs_are_scored(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_encoder(monkeypatch, _FakeCrossEncoder())
         docs = [{"content": f"doc {i}"} for i in range(10)]
         # 上限为 4 — 剩余 6 个不得丢失位置，但其 rerank_score应为 None 且排在最后。
@@ -192,9 +182,7 @@ class TestMaybeRerankIntegration:
     """
 
     @pytest.mark.asyncio
-    async def test_env_var_off_short_circuits(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_env_var_off_short_circuits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from research_agent.mcp_servers import knowledge_server as ks
 
         monkeypatch.setenv("KNOWLEDGE_RERANKER_ENABLED", "0")
@@ -210,9 +198,7 @@ class TestMaybeRerankIntegration:
         assert all(d["rerank_score"] is None for d in out)
 
     @pytest.mark.asyncio
-    async def test_env_var_on_reranks(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_env_var_on_reranks(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from research_agent.mcp_servers import knowledge_server as ks
 
         monkeypatch.setenv("KNOWLEDGE_RERANKER_ENABLED", "1")
@@ -284,9 +270,7 @@ class TestRealModel:
             },
             {"content": "Quarterly board meeting agenda placeholder."},
         ]
-        out = await CrossEncoderReranker().rerank(
-            "carbon neutrality 2030 target", docs
-        )
+        out = await CrossEncoderReranker().rerank("carbon neutrality 2030 target", docs)
         assert len(out) == 3
         # 碳中和文档必须排第 1 — 如果没有，说明集成 存在结构性问题（模型名称、max_pairs、评分方向）。
         assert "scope" in out[0]["content"].lower()

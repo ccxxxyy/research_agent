@@ -27,11 +27,12 @@ if TYPE_CHECKING:
 # Circuit Breaker
 # ---------------------------------------------------------------------------
 
+
 class CircuitState(StrEnum):
     """熔断器三态。"""
 
-    CLOSED = "closed"      # 正常：请求正常通过
-    OPEN = "open"          # 熔断：直接拒绝，走 fallback
+    CLOSED = "closed"  # 正常：请求正常通过
+    OPEN = "open"  # 熔断：直接拒绝，走 fallback
     HALF_OPEN = "half_open"  # 半开：允许一次试探
 
 
@@ -119,9 +120,7 @@ class CircuitBreakerRunnable(Runnable):
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         if not self._breaker.allow_request():
-            raise RuntimeError(
-                "Circuit breaker OPEN for model: requests blocked until recovery"
-            )
+            raise RuntimeError("Circuit breaker OPEN for model: requests blocked until recovery")
         try:
             result = self._wrapped.invoke(input, config=config, **kwargs)
             self._breaker.record_success()
@@ -132,9 +131,7 @@ class CircuitBreakerRunnable(Runnable):
 
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         if not self._breaker.allow_request():
-            raise RuntimeError(
-                "Circuit breaker OPEN for model: requests blocked until recovery"
-            )
+            raise RuntimeError("Circuit breaker OPEN for model: requests blocked until recovery")
         try:
             result = await self._wrapped.ainvoke(input, config=config, **kwargs)
             self._breaker.record_success()
@@ -164,8 +161,7 @@ class ModelRouter:
         self._config = config
         self._usage = UsageTracker()
         self._breakers: dict[ModelTier, CircuitBreaker] = {
-            tier: CircuitBreaker(failure_threshold=3, recovery_timeout=30.0)
-            for tier in ModelTier
+            tier: CircuitBreaker(failure_threshold=3, recovery_timeout=30.0) for tier in ModelTier
         }
         self._registry: dict[ModelTier, ChatOpenAI] = self._build_registry()
 
@@ -186,12 +182,8 @@ class ModelRouter:
         if tier_key and tier_base:
             return tier_key, tier_base
 
-        fallback_key = (
-            cfg.dashscope_api_key or cfg.deepseek_api_key or cfg.openai_api_key
-        )
-        fallback_base = (
-            cfg.dashscope_api_base or cfg.deepseek_api_base or cfg.openai_api_base
-        )
+        fallback_key = cfg.dashscope_api_key or cfg.deepseek_api_key or cfg.openai_api_key
+        fallback_base = cfg.dashscope_api_base or cfg.deepseek_api_base or cfg.openai_api_base
 
         return tier_key or fallback_key, tier_base or fallback_base
 
@@ -225,9 +217,7 @@ class ModelRouter:
 
     def get_model(self, tier: ModelTier) -> Runnable:
         """按层级获取模型，附带熔断器 + 自动降级链。"""
-        primary = CircuitBreakerRunnable(
-            self._registry[tier], self._breakers[tier]
-        )
+        primary = CircuitBreakerRunnable(self._registry[tier], self._breakers[tier])
         if tier in FALLBACK_CHAIN:
             fallback_tier = FALLBACK_CHAIN[tier]
             fallback = CircuitBreakerRunnable(

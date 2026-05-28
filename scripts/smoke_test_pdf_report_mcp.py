@@ -116,9 +116,7 @@ async def main() -> int:
 
     # ---- 工具 2: download_pdf（第二次调用测试缓存） ----
     logger.info("\n[2/4] pdf_download_pdf(pdf_url=...) ...")
-    dl_first = _parse(
-        await tool_map["pdf_download_pdf"].ainvoke({"pdf_url": pdf_url})
-    )
+    dl_first = _parse(await tool_map["pdf_download_pdf"].ainvoke({"pdf_url": pdf_url}))
     if "error" in dl_first:
         if _is_structured_error(dl_first):
             logger.warning("  STRUCTURED FAILURE: {}", dl_first["error"])
@@ -133,9 +131,7 @@ async def main() -> int:
         dl_first["local_path"],
     )
 
-    dl_second = _parse(
-        await tool_map["pdf_download_pdf"].ainvoke({"pdf_url": pdf_url})
-    )
+    dl_second = _parse(await tool_map["pdf_download_pdf"].ainvoke({"pdf_url": pdf_url}))
     if dl_second.get("from_cache") is not True:
         logger.error("  FAIL: 2nd call should have hit cache, got: {}", dl_second)
         all_ok = False
@@ -146,9 +142,7 @@ async def main() -> int:
 
     # ---- 工具 3: extract_pdf_metadata ----
     logger.info("\n[3/4] pdf_extract_pdf_metadata(local_path=...) ...")
-    meta = _parse(
-        await tool_map["pdf_extract_pdf_metadata"].ainvoke({"local_path": local_path})
-    )
+    meta = _parse(await tool_map["pdf_extract_pdf_metadata"].ainvoke({"local_path": local_path}))
     if "error" in meta:
         logger.error("  FAIL: {}", meta)
         all_ok = False

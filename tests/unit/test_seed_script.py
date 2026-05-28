@@ -225,7 +225,6 @@ class TestAmainIdempotency:
 
         monkeypatch.setattr(mod, "DEFAULT_TICKERS", {"300308": "中际旭创"})
 
-
         async def patched_amain(argv: list[str]) -> int:
             from unittest.mock import patch
 

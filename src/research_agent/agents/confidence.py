@@ -27,17 +27,17 @@ from enum import StrEnum
 class ConfidenceLevel(StrEnum):
     """置信度等级。"""
 
-    HIGH = "high"          # >= 0.8, 可直接采纳
-    MEDIUM = "medium"      # 0.5-0.8, 建议交叉验证
-    LOW = "low"            # < 0.5, supervisor 应降权或丢弃
+    HIGH = "high"  # >= 0.8, 可直接采纳
+    MEDIUM = "medium"  # 0.5-0.8, 建议交叉验证
+    LOW = "low"  # < 0.5, supervisor 应降权或丢弃
 
 
 class Recommendation(StrEnum):
     """对 supervisor 的处理建议。"""
 
-    ACCEPT = "accept"          # 高置信度，直接使用
+    ACCEPT = "accept"  # 高置信度，直接使用
     DOWNWEIGHT = "downweight"  # 中置信度，综合时降低权重
-    REJECT = "reject"          # 低置信度，不纳入最终报告
+    REJECT = "reject"  # 低置信度，不纳入最终报告
 
 
 @dataclass(frozen=True)
@@ -60,29 +60,49 @@ class ConfidenceVerdict:
 # ---------------------------------------------------------------------------
 
 _HALLUCINATION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("fabricated_citation", re.compile(
-        r"(?:根据|来源|引用|参考|出处)[：:]\s*(?:无|暂无|不详|未知)",
-        re.IGNORECASE,
-    )),
-    ("hedging_overload", re.compile(
-        r"(?:可能|大概|也许|或许|似乎|应该是|据推测){3,}",
-    )),
-    ("round_number_suspicious", re.compile(
-        r"(?:约|大约|接近)\s*\d+(?:\.0+)?\s*(?:亿|万|%)",
-    )),
-    ("self_contradiction", re.compile(
-        r"(?:但是|然而|不过).{0,50}(?:相反|矛盾|不一致)",
-    )),
-    ("tool_unavailable_claim", re.compile(
-        r"(?:工具|功能|接口)\s*(?:不可用|受限|无法访问|暂不支持)",
-        re.IGNORECASE,
-    )),
+    (
+        "fabricated_citation",
+        re.compile(
+            r"(?:根据|来源|引用|参考|出处)[：:]\s*(?:无|暂无|不详|未知)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "hedging_overload",
+        re.compile(
+            r"(?:可能|大概|也许|或许|似乎|应该是|据推测){3,}",
+        ),
+    ),
+    (
+        "round_number_suspicious",
+        re.compile(
+            r"(?:约|大约|接近)\s*\d+(?:\.0+)?\s*(?:亿|万|%)",
+        ),
+    ),
+    (
+        "self_contradiction",
+        re.compile(
+            r"(?:但是|然而|不过).{0,50}(?:相反|矛盾|不一致)",
+        ),
+    ),
+    (
+        "tool_unavailable_claim",
+        re.compile(
+            r"(?:工具|功能|接口)\s*(?:不可用|受限|无法访问|暂不支持)",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 _NUMERIC_SANITY: list[tuple[str, re.Pattern[str], float, float]] = [
     ("pe_ratio_extreme", re.compile(r"(?:市盈率|PE|P/E)[：:\s]*([+-]?\d+\.?\d*)"), -100, 10000),
     ("roe_extreme", re.compile(r"(?:ROE|净资产收益率)[：:\s]*([+-]?\d+\.?\d*)%?"), -200, 200),
-    ("revenue_negative", re.compile(r"(?:营收|营业收入|总收入)[：:\s]*([+-]?\d+\.?\d*)"), 0, float("inf")),
+    (
+        "revenue_negative",
+        re.compile(r"(?:营收|营业收入|总收入)[：:\s]*([+-]?\d+\.?\d*)"),
+        0,
+        float("inf"),
+    ),
     ("stock_price_extreme", re.compile(r"(?:股价|收盘价|现价)[：:\s]*([+-]?\d+\.?\d*)"), 0, 100000),
 ]
 
@@ -163,9 +183,7 @@ class ConfidenceValidator:
         all_flags.extend(_run_numeric_checks(expert_output))
 
         if context_snippets:
-            contradiction_flags = _check_source_consistency(
-                expert_output, context_snippets
-            )
+            contradiction_flags = _check_source_consistency(expert_output, context_snippets)
             all_flags.extend(contradiction_flags)
 
         score = _compute_base_score(expert_output, all_flags)
@@ -221,16 +239,14 @@ def _check_source_consistency(output: str, sources: list[str]) -> list[str]:
     """
     flags: list[str] = []
 
-    output_numbers = set(re.findall(r'\d+\.?\d*', output))
+    output_numbers = set(re.findall(r"\d+\.?\d*", output))
     if not output_numbers or not sources:
         return flags
 
     source_text = " ".join(sources)
-    source_numbers = set(re.findall(r'\d+\.?\d*', source_text))
+    source_numbers = set(re.findall(r"\d+\.?\d*", source_text))
 
-    large_numbers_in_output = {
-        n for n in output_numbers if float(n) > 100
-    }
+    large_numbers_in_output = {n for n in output_numbers if float(n) > 100}
 
     if large_numbers_in_output:
         ungrounded = large_numbers_in_output - source_numbers

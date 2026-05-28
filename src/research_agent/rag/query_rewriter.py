@@ -67,20 +67,18 @@ class QueryRewriter:
             user_content += f"\nContext: {context}"
 
         try:
-            response = await self._model.ainvoke([
-                SystemMessage(content=_SYSTEM_PROMPT),
-                HumanMessage(content=user_content),
-            ])
+            response = await self._model.ainvoke(
+                [
+                    SystemMessage(content=_SYSTEM_PROMPT),
+                    HumanMessage(content=user_content),
+                ]
+            )
             rewritten = (
-                response.content
-                if isinstance(response.content, str)
-                else str(response.content)
+                response.content if isinstance(response.content, str) else str(response.content)
             ).strip()
             if not rewritten:
                 return original_query
-            logger.debug(
-                "QueryRewriter: '{}' → '{}'", original_query, rewritten
-            )
+            logger.debug("QueryRewriter: '{}' → '{}'", original_query, rewritten)
             return rewritten
         except Exception as exc:  # noqa: BLE001
             logger.warning("QueryRewriter failed ({}); using original", exc)
