@@ -10,6 +10,7 @@ from langgraph.graph.state import CompiledStateGraph
 from research_agent.config import Settings
 from research_agent.llm.provider import ModelRouter
 from research_agent.memory.manager import MemoryManager
+from research_agent.security.token_quota import TokenQuotaManager
 
 
 def get_supervisor_graph(request: Request) -> CompiledStateGraph:
@@ -58,8 +59,17 @@ def get_memory_manager(request: Request) -> MemoryManager:
     return MemoryManager(store)
 
 
+def get_token_quota(request: Request) -> TokenQuotaManager:
+    quota = getattr(request.app.state, "token_quota", None)
+    if quota is None:
+        quota = TokenQuotaManager(daily_limit=0)
+        request.app.state.token_quota = quota
+    return quota
+
+
 SupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_supervisor_graph)]
 ResearchSupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_research_supervisor_graph)]
 ModelRouterDep = Annotated[ModelRouter, Depends(get_model_router)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 MemoryDep = Annotated[MemoryManager, Depends(get_memory_manager)]
+TokenQuotaDep = Annotated[TokenQuotaManager, Depends(get_token_quota)]

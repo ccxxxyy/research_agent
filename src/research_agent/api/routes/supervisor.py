@@ -30,7 +30,7 @@ from research_agent.api.schemas import (
     SupervisorChatResponse,
 )
 from research_agent.config import get_settings
-from research_agent.security.prompt_guard import PromptGuard, ThreatLevel
+from research_agent.security.prompt_guard import FINANCIAL_DISCLAIMER, PromptGuard, ThreatLevel
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -249,6 +249,16 @@ async def supervisor_research(
             out_verdict.triggered_rules,
         )
         reply = "[输出已过滤：检测到敏感信息泄漏风险]"
+
+    if out_verdict.level == ThreatLevel.SUSPICIOUS:
+        logger.info(
+            "Suspicious output in research: user={}, rules={}",
+            user_id,
+            out_verdict.triggered_rules,
+        )
+
+    # --- 金融免责声明 ---
+    reply += FINANCIAL_DISCLAIMER
 
     # --- 长期记忆：保存研究结果 ---
     if user_id != "anonymous" and reply:
@@ -549,7 +559,7 @@ async def _research_event_stream(
                                     ResearchSupervisorSSEEvent(
                                         phase=(ResearchSupervisorSSEPhase.FINAL),
                                         node=str(node_name),
-                                        content=snippet,
+                                        content=snippet + FINANCIAL_DISCLAIMER,
                                     )
                                 )
                             )
