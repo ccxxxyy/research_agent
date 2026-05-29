@@ -161,9 +161,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     from research_agent.observability.metrics import METRICS
+    from research_agent.security.token_quota import TokenQuotaManager
 
     METRICS.set_specialists(specialist_roster)
 
+    redis_client = None
+    if settings.database.redis_url:
+        try:
+            import redis
+
+            redis_client = redis.Redis.from_url(
+                settings.database.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=2,
+            )
+            redis_client.ping()
+        except Exception:  # noqa: BLE001
+            redis_client = None
+
+    token_quota = TokenQuotaManager(
+        daily_limit=settings.user_token_quota_daily,
+        redis_client=redis_client,
+    )
+
+    app.state.token_quota = token_quota
     app.state.supervisor_graph = supervisor_graph
     app.state.research_supervisor_graph = research_supervisor_graph
     app.state.available_specialists = specialist_roster

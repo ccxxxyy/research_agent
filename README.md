@@ -508,7 +508,8 @@ src/research_agent/
 │   │   └── usage.py     # /api/usage + /metrics
 │   └── schemas.py       # Pydantic 请求/响应（含 SSE 8 类事件枚举）
 ├── security/
-│   └── prompt_guard.py  # Prompt 注入检测（输入/输出规则）
+│   ├── prompt_guard.py  # Prompt 注入检测（中英文 15+ 规则 + 金融输出安全 + 免责声明）
+│   └── token_quota.py   # Per-user Token 配额管理（Redis / 内存双后端）
 ├── graph/
 │   ├── minimal_supervisor.py    # Phase-3 教学版（math/time/text 三 toy 工具）
 │   ├── research_supervisor.py   # Phase-4 产品版（六 specialist + HEAVY supervisor + 可选 reflection + 可选 HITL human_review 节点）
@@ -566,13 +567,55 @@ eval_results/             # 评估报告输出目录（git tracked）
 monitoring/               # Prometheus + Grafana 可观测性栈
 ├── prometheus.yml        # Prometheus 采集配置
 └── grafana/              # Grafana 预置 dashboard + 数据源
-scripts/                  # 10 demos + 6 smoke tests + 1 seed
-tests/                    # unit（287 passing）+ integration
+scripts/                  # 10 demos + 6 smoke tests + 1 seed + benchmark_e2e.py
+benchmark_results/        # 性能基准测试报告输出目录
+docs/
+├── architecture.md       # 系统架构设计文档
+├── failure-modes.md      # 故障模式分析
+└── adr/                  # 架构决策记录（4 篇）
+tests/                    # unit（323 passing）+ integration
 ```
 
 ---
 
-## 九、其他 / Roadmap
+## 九、安全 Guardrails
+
+多层安全防御体系（详见 [ADR-0004](docs/adr/0004-guardrails-security-layers.md)）：
+
+| 层 | 机制 | 位置 |
+|---|---|---|
+| **输入安全** | PromptGuard 正则引擎：15+ 种中英文注入模式检测（指令覆盖、角色劫持、系统提示词提取、越狱、间接注入、编码绕过） | `security/prompt_guard.py` |
+| **输出安全** | 凭据泄漏检测 + 金融不当投资建议检测（"建议买入"、"保证收益"等） | `security/prompt_guard.py` |
+| **金融免责声明** | 每次研究回答自动附加 AI 免责声明（同步 + SSE 两种响应模式） | `api/routes/supervisor.py` |
+| **Per-user Token 配额** | 滑动窗口 24h 配额（默认 50 万 token/天），支持 Redis 分布式 / 内存兜底 | `security/token_quota.py` |
+| **IP 限流** | 滑动窗口 60s RPM 限制，Redis Lua 原子脚本 / 内存兜底 | `api/middleware.py` |
+| **认证** | Bearer Token 校验（`API_SECRET_KEY` 环境变量，空值时禁用） | `api/middleware.py` |
+| **请求超时** | 可配置 ASGI 层超时，SSE 流豁免 | `api/middleware.py` |
+
+## 十、性能 Benchmark
+
+```bash
+# 快速冒烟测试（仅无 LLM 端点）
+python scripts/benchmark_e2e.py --quick
+
+# 完整测试（含 LLM 调用，需启动服务）
+python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
+
+# 报告输出到 benchmark_results/（JSON 格式，含 P50/P95/P99 延迟 + 吞吐量）
+```
+
+## 十一、架构文档
+
+| 文档 | 内容 |
+|---|---|
+| [系统架构设计](docs/architecture.md) | 全景图、核心设计决策矩阵、数据流详解、可靠性设计、安全层、可扩展性 |
+| [故障模式分析](docs/failure-modes.md) | 12+ 种故障模式矩阵、三级降级策略、可观测性信号、灾难恢复 |
+| [ADR-0001: FAISS > Chroma](docs/adr/0001-faiss-over-chroma.md) | 向量存储选型 |
+| [ADR-0002: Knowledge in-process](docs/adr/0002-knowledge-server-inprocess.md) | MCP stdio 死锁规避 |
+| [ADR-0003: Reflection Loop](docs/adr/0003-reflection-loop.md) | 反思循环设计 |
+| [ADR-0004: Guardrails](docs/adr/0004-guardrails-security-layers.md) | 多层安全防御体系 |
+
+## 十二、其他 / Roadmap
 
 - LLM 响应缓存（条件缓存，避开金融场景的"过期数据"陷阱）
 - 增加更多业务 specialist（如 `macro_expert` / `fund_flow_expert`）
@@ -580,5 +623,3 @@ tests/                    # unit（287 passing）+ integration
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - FAISS → pgvector 迁移（利用已有 pgvector 容器）
 - LangGraph 1.0 → 2.0 弃用迁移（`langgraph.prebuilt.create_react_agent` → `langchain.agents.create_agent`）
-- Guardrails 增强（输入 prompt injection 检测、输出金融风险提示、per-user token 配额）
-- E2E 延迟 benchmark + 并发压测

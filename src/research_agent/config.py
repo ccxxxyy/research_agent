@@ -84,6 +84,14 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     api_secret_key: str = ""
     rate_limit_rpm: int = 30
+    user_token_quota_daily: int = Field(
+        default=500_000,
+        ge=0,
+        description=(
+            "每用户 24 小时内可消耗的最大 Token 数。"
+            "设为 0 则禁用配额检查。匿名用户共享同一配额池。"
+        ),
+    )
 
     http_request_timeout_seconds: float = Field(
         default=0.0,

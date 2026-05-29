@@ -75,6 +75,7 @@ def _compile_rules(raw: list[tuple[str, str, ThreatLevel]]) -> list[_Rule]:
 
 
 _INPUT_RULES_RAW: list[tuple[str, str, ThreatLevel]] = [
+    # === 英文注入模式 ===
     # --- 直接注入：指令覆盖 ---
     (
         "ignore_instructions",
@@ -126,6 +127,42 @@ _INPUT_RULES_RAW: list[tuple[str, str, ThreatLevel]] = [
         r"(?:base64|rot13|hex\s+encode|unicode\s+escape|url\s+encode).*(?:decode|convert|translate)",
         ThreatLevel.SUSPICIOUS,
     ),
+    # === 中文注入模式 ===
+    (
+        "zh_ignore_instructions",
+        r"(?:忽略|无视|忘记|覆盖|丢弃)(?:所有|全部|之前|上面|以上|先前)?(?:的)?(?:指令|指示|提示词|规则|系统提示|系统消息|约束)",
+        ThreatLevel.BLOCKED,
+    ),
+    (
+        "zh_new_instructions",
+        r"(?:新的|更新的|修改后的|以下是新的)(?:指令|指示|提示词|规则|系统提示)[\s：:]+",
+        ThreatLevel.BLOCKED,
+    ),
+    (
+        "zh_role_hijack",
+        r"(?:你现在是|你扮演|假装你是|切换角色|从现在起你是|请?以(?:.*?)身份|你的新角色是)",
+        ThreatLevel.BLOCKED,
+    ),
+    (
+        "zh_system_prompt_extraction",
+        r"(?:(?:输出|打印|显示|展示|重复|复述|泄露)(?:你的|系统的?)(?:系统提示|初始指令|原始提示词|系统消息|内部指令))",
+        ThreatLevel.BLOCKED,
+    ),
+    (
+        "zh_system_prompt_extraction_v2",
+        r"(?:你的系统提示(?:词)?是什么|告诉我你的(?:初始|系统)(?:指令|提示))",
+        ThreatLevel.SUSPICIOUS,
+    ),
+    (
+        "zh_jailbreak",
+        r"(?:开发者模式|越狱|无限制模式|上帝模式|解除(?:所有)?限制)",
+        ThreatLevel.BLOCKED,
+    ),
+    (
+        "zh_indirect_injection",
+        r"(?:重要(?:的)?新指令|注入(?:的)?提示|隐藏指令|秘密指令)",
+        ThreatLevel.BLOCKED,
+    ),
 ]
 
 _OUTPUT_RULES_RAW: list[tuple[str, str, ThreatLevel]] = [
@@ -144,7 +181,29 @@ _OUTPUT_RULES_RAW: list[tuple[str, str, ThreatLevel]] = [
         r"(?:/(?:home|root|var|etc|usr)/\S{5,}|[A-Z]:\\\\(?:Users|Windows)\\\\\S{5,})",
         ThreatLevel.SUSPICIOUS,
     ),
+    # --- 金融合规：不当投资建议检测 ---
+    (
+        "direct_buy_sell_advice",
+        r"(?:(?:建议|推荐|应该|赶紧|必须|一定要|强烈建议)(?:你)?(?:立即|马上|尽快)?(?:买入|卖出|清仓|满仓|加仓|减仓|做多|做空|all\s*in))",
+        ThreatLevel.SUSPICIOUS,
+    ),
+    (
+        "guaranteed_return",
+        r"(?:(?:保证|确保|一定能|肯定会|稳赚|包赚|零风险|无风险)(?:.*?)(?:收益|回报|赚钱|盈利|翻倍|涨))",
+        ThreatLevel.SUSPICIOUS,
+    ),
 ]
+
+# ---------------------------------------------------------------------------
+# 金融免责声明 — 附加到研究类输出
+# ---------------------------------------------------------------------------
+
+FINANCIAL_DISCLAIMER = (
+    "\n\n---\n"
+    "**免责声明：** 以上内容由 AI 研究助手自动生成，仅供参考，不构成任何投资建议。"
+    "金融市场存在风险，投资需谨慎。数据来源于第三方接口，可能存在延迟或误差，"
+    "请以官方披露信息为准。用户应独立判断并自行承担投资决策的全部责任。"
+)
 
 
 class PromptGuard:
