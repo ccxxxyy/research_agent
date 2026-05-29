@@ -88,8 +88,7 @@ class Settings(BaseSettings):
         default=500_000,
         ge=0,
         description=(
-            "每用户 24 小时内可消耗的最大 Token 数。"
-            "设为 0 则禁用配额检查。匿名用户共享同一配额池。"
+            "每用户 24 小时内可消耗的最大 Token 数。设为 0 则禁用配额检查。匿名用户共享同一配额池。"
         ),
     )
 
