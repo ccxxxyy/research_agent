@@ -117,17 +117,17 @@ from loguru import logger  # noqa: E402
 mcp = FastMCP("KnowledgeBase")
 
 # ---------------------------------------------------------------------
-# 配置
+# 配置 — 嵌入 & FAISS 存储委托给 rag 子包的共享模块
 # ---------------------------------------------------------------------
-DEFAULT_DB_DIR = Path("./data/knowledge_db").resolve()
-"""持久化知识库根目录。
+from research_agent.rag import faiss_store as _faiss  # noqa: E402
+from research_agent.rag.embeddings import get_embedder as _get_embedder  # noqa: E402
 
-首次导入时为每个集合创建一个子目录。每个子目录包含一个 LangChain-FAISS 索引对（``index.faiss`` + ``index.pkl``）。
-模块级以便测试可 monkey-patch，且子进程无论启动进程的 CWD 如何都继承相同路径。
+DEFAULT_DB_DIR = _faiss.DEFAULT_DB_DIR
+"""持久化知识库根目录（来自 ``rag.faiss_store``）。
+
+保留为本模块属性以兼容测试 monkey-patch（``monkeypatch.setattr(knowledge_server, "DEFAULT_DB_DIR", ...)``）。
+修改后会同步到 ``_faiss.DEFAULT_DB_DIR``。
 """
-
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
-"""默认嵌入模型。本地、免费、双语。"""
 
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 120
@@ -166,18 +166,11 @@ _RERANKER: Any | None = None
 # ---------------------------------------------------------------------
 # 延迟模块级缓存
 #
-# 三个缓存在 MCP 子进程的整个生命周期内保持存活。
-# 构建代价高（模型加载约 3 秒；FAISS 加载 + BM25 重建 = O(语料库大小)）而复用代价低。
+# FAISS 存储和 Embedder 缓存已迁移到 rag.faiss_store / rag.embeddings。
+# 仅 BM25 缓存仍属于本模块（BM25 索引从 FAISS docstore 在内存中构建，是 knowledge_server 特有的混合检索逻辑）。
 # ---------------------------------------------------------------------
-_EMBEDDER: Any | None = None
-"""HuggingFaceEmbeddings 单例。首次使用前为 ``None``。"""
-
-_FAISS_STORES: dict[str, Any] = {}
-"""``collection_name -> langchain_community.vectorstores.FAISS`` 缓存。
-
-每个集合在内存中保持一个预热的 FAISS，以便连续搜索不必重新读取索引文件。
-每次成功导入后缓存会被清除/重新加载（FAISS 不支持并发原地修改）。
-"""
+_FAISS_STORES = _faiss._FAISS_STORES
+"""指向 ``rag.faiss_store._FAISS_STORES`` 的别名，兼容现有测试 monkey-patch。"""
 
 _BM25_CACHE: dict[str, Any] = {}
 """``collection_name -> 内存 BM25 索引`` 缓存。
@@ -209,86 +202,30 @@ def _validate_collection_name(name: str) -> None:
 
 
 # ---------------------------------------------------------------------
-# 嵌入器 & FAISS 辅助函数（延迟加载）
+# 嵌入器 & FAISS 辅助函数 — 委托给 rag 子包共享模块
 # ---------------------------------------------------------------------
-def _get_embedder() -> Any:
-    """返回单例嵌入器，首次调用时构建。
-
-    import 是延迟的，即使 sentence-transformers 需要下载模型权重，模块加载也很快 —
-     约 3 秒的开销在首次 ``knowledge_ingest_pdf`` / ``knowledge_search`` 时支付，而非在 import 时。
-
-    标准输出安全：聊天式 ML 库（``transformers``、``tqdm``、 ``huggingface_hub``）已通过模块导入时设置的环境变量静默（见本文件顶部的 env-var 块），
-    因此不需要内联 ``redirect_stdout``包装器，即使 ``transformers`` 历史上在权重加载期间会打印"BertModel LOAD REPORT" 横幅。
-    """
-    global _EMBEDDER
-    if _EMBEDDER is None:
-        from langchain_huggingface import HuggingFaceEmbeddings
-
-        logger.info("Loading embedding model: {}", DEFAULT_EMBEDDING_MODEL)
-        _EMBEDDER = HuggingFaceEmbeddings(
-            model_name=DEFAULT_EMBEDDING_MODEL,
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
-    return _EMBEDDER
+# _get_embedder 已在文件顶部从 rag.embeddings 导入。
+# 以下为兼容薄包装器，保持模块内调用点和测试 monkey-patch 不变。
 
 
 def _collection_dir(collection: str, *, db_dir: Path | None = None) -> Path:
-    """返回 ``collection`` 的持久化路径。
-
-    通过这一辅助函数统一解析路径，模块其余部分无需拼写约定 （``DEFAULT_DB_DIR / collection``）。
-    测试可 monkey-patch``DEFAULT_DB_DIR``，此函数会自动使用。
-    """
-    base = db_dir or DEFAULT_DB_DIR
-    return base / collection
+    """委托给 ``rag.faiss_store.collection_dir``。"""
+    return _faiss.collection_dir(collection, db_dir=db_dir)
 
 
 def _faiss_index_exists(collection: str, *, db_dir: Path | None = None) -> bool:
-    """当且仅当 ``collection`` 的已保存 FAISS 文件对存在于磁盘时返回 True。
-
-    LangChain 的 ``FAISS.save_local(path)`` 始终同时写入``index.faiss`` 和 ``index.pkl``；任一缺失都表示写入不完整/损坏，
-    此时将该集合视为不存在（而非半加载后以模糊方式失败）。
-    """
-    cdir = _collection_dir(collection, db_dir=db_dir)
-    return (cdir / "index.faiss").exists() and (cdir / "index.pkl").exists()
+    """委托给 ``rag.faiss_store.index_exists``。"""
+    return _faiss.index_exists(collection, db_dir=db_dir)
 
 
 def _load_faiss_store(collection: str, *, db_dir: Path | None = None) -> Any | None:
-    """加载（并缓存）``collection`` 的 FAISS 存储，未导入过则返回 None。
-
-    从未导入过的集合返回 ``None``（而非抛异常）。调用者须处理此情况 ——搜索工具将其转为 ``quality='low'`` 的空响应，导入工具将其视为 "创建"分支。
-
-    ``allow_dangerous_deserialization=True`` 是必需的，因为 LangChain 的 FAISS 附属文件是 ``pickle`` 格式。
-    本仓库只加载自己写入``DEFAULT_DB_DIR`` 的文件，从不加载来自互联网的不可信数据，因此 审计风险范围仅限于"已能写入数据目录的攻击者" —— 到那时候 pickle 已是最不值得担心的。
-    """
-    cached = _FAISS_STORES.get(collection)
-    if cached is not None:
-        return cached
-    if not _faiss_index_exists(collection, db_dir=db_dir):
-        return None
-
-    from langchain_community.vectorstores import FAISS
-
-    cdir = _collection_dir(collection, db_dir=db_dir)
-    store = FAISS.load_local(
-        folder_path=str(cdir),
-        embeddings=_get_embedder(),
-        allow_dangerous_deserialization=True,
-    )
-    _FAISS_STORES[collection] = store
-    return store
+    """委托给 ``rag.faiss_store.load_store``。"""
+    return _faiss.load_store(collection, db_dir=db_dir)
 
 
 def _save_faiss_store(collection: str, store: Any, *, db_dir: Path | None = None) -> None:
-    """持久化 ``store`` 并原子刷新内存缓存。
-
-    始终在 ``save_local`` 成功后才更新 ``_FAISS_STORES[collection]``，
-    因此写入失败（如磁盘已满）时内存缓存仍指向磁盘上的先前状态 ——绝不会出现仅存在于内存中而磁盘上没有的幽灵存储。
-    """
-    cdir = _collection_dir(collection, db_dir=db_dir)
-    cdir.mkdir(parents=True, exist_ok=True)
-    store.save_local(folder_path=str(cdir))
-    _FAISS_STORES[collection] = store
+    """委托给 ``rag.faiss_store.save_store``。"""
+    _faiss.save_store(collection, store, db_dir=db_dir)
 
 
 # ---------------------------------------------------------------------
@@ -561,18 +498,8 @@ async def ingest_pdf(
 
 
 def _collection_count(collection: str) -> int:
-    """返回 ``collection`` 的分块数量（尽力而为，出错返回 0）。
-
-    FAISS 中计数 ``index_to_docstore_id`` 的条目而非 ``index.ntotal``：
-    两者应相等，但前者与构建 BM25 时使用的数量一致，在未来可能添加的"软删除"下保持两层一致。
-    """
-    try:
-        store = _load_faiss_store(collection)
-        if store is None:
-            return 0
-        return len(store.index_to_docstore_id)
-    except Exception:  # noqa: BLE001
-        return 0
+    """委托给 ``rag.faiss_store.chunk_count``。"""
+    return _faiss.chunk_count(collection)
 
 
 # ---------------------------------------------------------------------

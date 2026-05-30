@@ -49,6 +49,7 @@ dependencies = [
     "aiosqlite>=0.20",
     "akshare>=1.18.56",
     "snownlp",
+    "pgvector>=0.4.2",
 ]
 
 [project.optional-dependencies]
