@@ -1,26 +1,22 @@
 # ADR 0001: 使用 FAISS（文件存储）代替 ChromaDB 作为知识库
 
 - **状态**: Accepted
-- **日期**: 2026-05-10
 - **决策者**: research-agent 维护者
-- **阶段**: 4.6（RAG 收尾）
+- **阶段**: RAG 收尾
 
 ## 背景
 
-`research_agent` 在 `knowledge_expert` 专家后面提供了一个按用户隔离的
-PDF 知识库。用户上传 PDF，服务器执行 解析 → 分块 → 嵌入 → 存储，搜索时
-Agent 执行混合检索（向量 + BM25）并重排序。向量存储位于每个研究会话的热路径上，
-因此其运营特性主导了开发者体验。
+`research_agent` 在 `knowledge_expert` 专家后面提供了一个按用户隔离的 PDF 知识库。
+用户上传 PDF，服务器执行 解析 → 分块 → 嵌入 → 存储，搜索时 Agent 执行混合检索（向量 + BM25）并重排序。
+向量存储位于每个研究会话的热路径上， 因此其运营特性主导了开发者体验。
 
 最初的 Phase-0 计划选择了 **ChromaDB** 担任此角色，因为：
 
-- 持久化磁盘存储，无需单独进程 — 符合我们首先期望的"单用户、
-  单笔记本"部署模式。
+- 持久化磁盘存储，无需单独进程 — 符合我们首先期望的"单用户、 单笔记本"部署模式。
 - 开箱即用的基于 HNSW 的近似最近邻搜索。
-- 熟悉的 API 接口（`langchain-chroma`），与 LangChain 生态系统的
-  其余部分映射清晰。
+- 熟悉的 API 接口（`langchain-chroma`），与 LangChain 生态系统的 其余部分映射清晰。
 
-Phase-4 期间发生了三件事，迫使我们重新审视这一选择：
+Phase-4 期间发生了三件事，迫使重新审视这一选择：
 
 1. **Windows 上的 stdio 管道损坏。** `knowledge_server` MCP 子进程
    通过 `stdin`/`stdout` 上的 JSON-RPC 运行。导入 `chromadb` 会拉入一个
@@ -54,13 +50,10 @@ Phase-4 期间发生了三件事，迫使我们重新审视这一选择：
 - 每个 collection 是磁盘上的一个目录
   （`./data/knowledge_db/<collection_name>/`），包含
   `index.faiss` + `index.pkl`。加载使用 `FAISS.load_local(...)`，
-  保存使用 `vs.save_local(...)`。无守护进程、无遥测、无后台线程、
-  无需绑定端口。
-- 现有的双路检索逻辑（向量 + BM25 + 重排序器）保持不变 —
-  仅更换向量后端。
-- Collection 删除即 `shutil.rmtree` 目录；collection 列举即
-  `os.listdir` 根目录，以 FAISS 索引文件存在为门控。两个操作
-  都是 O(1) 系统调用，而非到 ChromaDB 客户端的往返。
+  保存使用 `vs.save_local(...)`。无守护进程、无遥测、无后台线程、 无需绑定端口。
+- 现有的双路检索逻辑（向量 + BM25 + 重排序器）保持不变 — 仅更换向量后端。
+  - Collection 删除即 `shutil.rmtree` 目录；collection 列举即 `os.listdir` 根目录，以 FAISS 索引文件存在为门控。
+    两个操作 都是 O(1) 系统调用，而非到 ChromaDB 客户端的往返。
 
 ## 考虑过的替代方案
 
@@ -72,8 +65,7 @@ Phase-4 期间发生了三件事，迫使我们重新审视这一选择：
 2. **将 ChromaDB 作为独立 HTTP 服务器运行。** 官方 `chromadb run`
    模式可以完全绕开 stdio 问题（Agent 和向量存储之间不共享 `stdout`）。
    否决原因：它使单用户开发环境回到多进程部署，最低限度地增加了
-   `docker-compose` 复杂度，但在 README 中增加了一个端口，以及项目
-   不愿拥有的权限管理。
+   `docker-compose` 复杂度，但在 README 中增加了一个端口，以及项目 不愿拥有的权限管理。
 3. **Pinecone / Weaviate / Qdrant 云。** 生产级但需要 API 密钥、
    网络和逐调用延迟。对于为"克隆即运行"优化的项目来说是错误选择。
 4. **在现有 Postgres 容器中使用 pgvector。** 有吸引力，因为项目已经
@@ -116,14 +108,10 @@ Phase-4 期间发生了三件事，迫使我们重新审视这一选择：
 
 ### 中性
 
-- 嵌入模型（`BAAI/bge-small-zh-v1.5`）和重排序器（`BAAI/bge-reranker-base`）
-  不受影响 — 它们从未与向量存储选择绑定。
-- BM25 辅助索引（从向量存储持有的同一文档库构建）保持不变；唯一的编辑
-  是从 FAISS 的 docstore 而非 ChromaDB 的 collection 加载文档。
+- 嵌入模型（`BAAI/bge-small-zh-v1.5`）和重排序器（`BAAI/bge-reranker-base`） 不受影响 — 它们从未与向量存储选择绑定。
+- BM25 辅助索引（从向量存储持有的同一文档库构建）保持不变；唯一的编辑是从 FAISS 的 docstore 而非 ChromaDB 的 collection 加载文档。
 
 ## 状态
 
-在提交 `<git rev-parse HEAD>`（Phase 4.6）中实现。Linux 和 Windows
-冒烟测试通过；灌入 + 搜索 + 删除 + 列举 循环在
-`tests/unit/test_mcp_echo_server.py` 风格的测试框架中为绿色（知识库测试
-在进程内运行，参见 ADR 0002）。
+在提交 `<git rev-parse HEAD>`（Phase 4.6）中实现。Linux 和 Windows 冒烟测试通过；灌入 + 搜索 + 删除 + 列举 循环在
+`tests/unit/test_mcp_echo_server.py` 风格的测试框架中为绿色（知识库测试 在进程内运行，参见 ADR 0002）。

@@ -1,7 +1,6 @@
 # ADR 0004: 多层安全防御体系（Guardrails）
 
 - **状态**: Accepted
-- **日期**: 2026-05
 - **决策者**: research-agent 维护者
 
 ## 背景

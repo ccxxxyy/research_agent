@@ -18,6 +18,7 @@ from research_agent.api.dependencies import (
     MemoryDep,
     ResearchSupervisorGraphDep,
     SupervisorGraphDep,
+    TokenQuotaDep,
 )
 from research_agent.api.schemas import (
     ApproveRequest,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from research_agent.memory.manager import MemoryManager
+    from research_agent.security.token_quota import TokenQuotaManager
 
 
 def _graph_config(
@@ -56,6 +58,24 @@ def _graph_config(
 
 router = APIRouter(prefix="/api/supervisor", tags=["supervisor"])
 _prompt_guard = PromptGuard()
+
+_ESTIMATED_TOKENS_PER_RESEARCH = 4000
+
+
+def _check_token_quota(quota: TokenQuotaManager, user_id: str) -> None:
+    """Pre-flight token quota check; raises 429 if budget exhausted. 如果用户的每日配额已用尽，则引发 HTTP 429 错误。"""
+    if quota.daily_limit <= 0:
+        return
+    ok, remaining = quota.check_and_consume(user_id, _ESTIMATED_TOKENS_PER_RESEARCH)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Daily token quota exhausted (limit={quota.daily_limit}, "
+                f"remaining={remaining}). Try again tomorrow."
+            ),
+            headers={"Retry-After": "3600"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +217,7 @@ async def supervisor_research(
     request: ResearchSupervisorRequest,
     graph: ResearchSupervisorGraphDep,
     memory: MemoryDep,
+    quota: TokenQuotaDep,
 ) -> ResearchSupervisorResponse:
     """同步调用金融研究主管。
 
@@ -207,6 +228,8 @@ async def supervisor_research(
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
+
+    _check_token_quota(quota, user_id)
 
     verdict = _prompt_guard.check_input(request.query)
     if verdict.level == ThreatLevel.BLOCKED:
@@ -675,6 +698,7 @@ async def supervisor_research_stream(
     raw_request: FastAPIRequest,
     graph: ResearchSupervisorGraphDep,
     memory: MemoryDep,
+    quota: TokenQuotaDep,
 ) -> StreamingResponse:
     """通过 SSE 流式传输研究主管工作流。
 
@@ -689,6 +713,8 @@ async def supervisor_research_stream(
     """
     thread_id = request.thread_id or str(uuid.uuid4())
     user_id = request.user_id
+
+    _check_token_quota(quota, user_id)
 
     verdict = _prompt_guard.check_input(request.query)
     if verdict.level == ThreatLevel.BLOCKED:

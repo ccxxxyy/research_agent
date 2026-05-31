@@ -29,9 +29,11 @@ from research_agent.api.dependencies import (
     get_memory_manager,
     get_research_supervisor_graph,
     get_supervisor_graph,
+    get_token_quota,
 )
 from research_agent.api.routes.supervisor import router as supervisor_router
 from research_agent.memory.manager import MemoryManager
+from research_agent.security.token_quota import TokenQuotaManager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -151,6 +153,7 @@ def _build_test_app(
     graph: _FakeGraph | None,
     *,
     memory: MemoryManager | None = None,
+    quota: TokenQuotaManager | None = None,
 ) -> FastAPI:
     """构建一个仅包含 supervisor 路由的精简 FastAPI 应用。
 
@@ -167,6 +170,9 @@ def _build_test_app(
 
     if memory is not None:
         app.dependency_overrides[get_memory_manager] = lambda: memory
+
+    disabled_quota = quota or TokenQuotaManager(daily_limit=0)
+    app.dependency_overrides[get_token_quota] = lambda: disabled_quota
 
     # minimal-supervisor 依赖在这里不会被执行，但不设置的话测试 URL 中的拼写错误会表现为令人困惑的 500 而非 404；注入一个简单覆盖以确保路由表完整。
     app.dependency_overrides[get_supervisor_graph] = lambda: graph
@@ -219,6 +225,22 @@ class TestResearchJSON:
 
         assert r.status_code == 200
         assert r.json()["thread_id"] == "my-fixed-thread"
+
+    @pytest.mark.asyncio
+    async def test_token_quota_exceeded_returns_429(self) -> None:
+        graph = _FakeGraph([_supervisor_final("ok")])
+        quota = TokenQuotaManager(daily_limit=1000)
+        quota.check_and_consume("alice", 900)
+        app = _build_test_app(graph, quota=quota)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.post(
+                "/api/supervisor/research",
+                json={"query": "分析宁德时代", "user_id": "alice"},
+            )
+
+        assert r.status_code == 429
+        assert "quota" in r.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_503_when_graph_unavailable(self) -> None:

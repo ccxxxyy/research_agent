@@ -615,11 +615,10 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 | [ADR-0003: Reflection Loop](docs/adr/0003-reflection-loop.md) | 反思循环设计 |
 | [ADR-0004: Guardrails](docs/adr/0004-guardrails-security-layers.md) | 多层安全防御体系 |
 
-## 十二、其他 / Roadmap
+## 十二、Roadmap（待做）
 
 - LLM 响应缓存（条件缓存，避开金融场景的"过期数据"陷阱）
 - 增加更多业务 specialist（如 `macro_expert` / `fund_flow_expert`）
-- Reflection A/B 量化对比（ON vs OFF 答案质量 delta）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
-- FAISS → pgvector 迁移（利用已有 pgvector 容器）
+- knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）
 - LangGraph 1.0 → 2.0 弃用迁移（`langgraph.prebuilt.create_react_agent` → `langchain.agents.create_agent`）

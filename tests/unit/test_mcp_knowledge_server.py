@@ -29,6 +29,7 @@ from research_agent.mcp_servers.knowledge_server import (
     _load_pdf_pages,
     _validate_collection_name,
 )
+from research_agent.rag import faiss_store
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -311,7 +312,7 @@ class TestIngestAndSearch:
         # 将持久化 + 缓存的单例重定向到干净的临时目录， 使此测试永远不会与用户的真实数据库冲突。
         # 注意：fastmcp 中的 ``@mcp.tool()`` 返回原始未包装的异步函数 — 我们可以直接 ``await`` 它而无需通过 stdio。
         monkeypatch.setattr(knowledge_server, "DEFAULT_DB_DIR", tmp_path / "kb")
-        monkeypatch.setattr(knowledge_server, "_FAISS_STORES", {})
+        monkeypatch.setattr(faiss_store, "_FAISS_STORES", {})
         monkeypatch.setattr(knowledge_server, "_BM25_CACHE", {})
 
         ingest_result = await knowledge_server.ingest_pdf(
@@ -342,7 +343,7 @@ class TestIngestAndSearch:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(knowledge_server, "DEFAULT_DB_DIR", tmp_path / "kb")
-        monkeypatch.setattr(knowledge_server, "_FAISS_STORES", {})
+        monkeypatch.setattr(faiss_store, "_FAISS_STORES", {})
         monkeypatch.setattr(knowledge_server, "_BM25_CACHE", {})
 
         result = await knowledge_server.search(
@@ -360,7 +361,7 @@ class TestIngestAndSearch:
         self, tiny_pdf_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(knowledge_server, "DEFAULT_DB_DIR", tmp_path / "kb")
-        monkeypatch.setattr(knowledge_server, "_FAISS_STORES", {})
+        monkeypatch.setattr(faiss_store, "_FAISS_STORES", {})
         monkeypatch.setattr(knowledge_server, "_BM25_CACHE", {})
 
         await knowledge_server.ingest_pdf(local_path=str(tiny_pdf_path), collection="to-delete")
