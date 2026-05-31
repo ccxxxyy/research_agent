@@ -622,4 +622,3 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 - 增加更多业务 specialist（如 `macro_expert` / `fund_flow_expert`）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）
-- LangGraph 1.0 → 2.0 弃用迁移（`langgraph.prebuilt.create_react_agent` → `langchain.agents.create_agent`）

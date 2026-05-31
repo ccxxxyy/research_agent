@@ -91,7 +91,7 @@ class CircuitBreakerRunnable(Runnable):
     当主模型连续失败达到阈值后，直接跳过主模型调用，立即抛出异常让 LangChain 的 with_fallbacks 机制接管。
 
     透明代理：所有未在本类定义的属性/方法（如 ``bind_tools``、 ``with_structured_output`` 等）自动委托给内部的 ChatOpenAI 实例，
-    确保与 LangGraph 的 ``create_react_agent`` 等高层 API 兼容。
+    确保与 ``langchain.agents.create_agent`` 等高层 API 兼容。
     """
 
     def __init__(

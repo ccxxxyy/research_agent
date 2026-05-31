@@ -42,9 +42,9 @@ from research_agent.llm.provider import ModelRouter
 
 
 def _fake_tool(name: str) -> BaseTool:
-    """创建一个适用于 ``create_react_agent`` 的最小 BaseTool。
+    """创建一个适用于 ``create_agent`` 的最小 BaseTool。
 
-    使用 ``@tool`` 装饰器保持与 ``create_react_agent`` 期望的相同契约，
+    使用 ``@tool`` 装饰器保持与 ``create_agent`` 期望的相同契约，
     而无需引入真实的 MCP 子进程。函数体在这些测试中不会被调用 —仅检查图能否在附加这些工具后成功编译。
     """
 
@@ -149,7 +149,7 @@ class TestSpecialistBuilders:
         self, router: ModelRouter, fake_data_tools: list[BaseTool]
     ) -> None:
         agent = build_data_expert(router, fake_data_tools)
-        # ``create_react_agent`` 返回一个包含 ``ainvoke`` 的已编译图。
+        # ``create_agent`` 返回一个包含 ``ainvoke`` 的已编译图。
         assert hasattr(agent, "ainvoke")
         # ``name`` 是 ``langgraph_supervisor`` 用来匹配的键。
         assert getattr(agent, "name", None) == "data_expert"

@@ -1,4 +1,4 @@
-"""使用 LangGraph create_react_agent 的单 Agent 工厂。
+"""使用 langchain create_agent 的单 Agent 工厂。
 
 本模块提供最简单的 Agent 设置，用于验证
 LLM → Function Calling → 工具执行 的端到端流程是否正常工作。
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 from research_agent.llm.tier import AgentName
 from research_agent.tools.native import DEFAULT_TOOLS
@@ -80,9 +80,9 @@ def build_simple_agent(
     tools = tools if tools is not None else DEFAULT_TOOLS
     model = model_router.for_agent(AgentName.RETRIEVER)
 
-    return create_react_agent(
+    return create_agent(
         model=model,
         tools=tools,
-        prompt=prompt,
+        system_prompt=prompt,
         checkpointer=checkpointer,
     )

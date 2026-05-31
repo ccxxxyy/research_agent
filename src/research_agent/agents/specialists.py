@@ -21,7 +21,7 @@
        report_expert    — 拥有 4 个 ``pdf_*`` 巨潮资讯公告工具
        knowledge_expert — 拥有 4 个 ``knowledge_*`` 用户 PDF 知识库工具，内置基于每次调用 ``quality`` 信号驱动的显式 corrective-RAG 循环。
 
-每个专家都是一个 ``create_react_agent`` 编译图，包含：
+每个专家都是一个 ``create_agent`` 编译图，包含：
   * 自己的 ``name``（被 ``langgraph_supervisor`` 用作移交标识）
   * 专注的工具集
   * 仅列举该能力的 prompt
@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 from research_agent.llm.tier import AgentName
 from research_agent.tools.native import calculate, get_current_time, get_word_count
@@ -93,30 +93,30 @@ CODER_EXPERT_PROMPT = """\
 
 def build_math_expert(model_router: ModelRouter):
     """纯数学专家：单工具、精简 prompt、LIGHT 层级。"""
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.RETRIEVER),
         tools=[calculate],
-        prompt=MATH_EXPERT_PROMPT,
+        system_prompt=MATH_EXPERT_PROMPT,
         name="math_expert",
     )
 
 
 def build_time_expert(model_router: ModelRouter):
     """纯时间专家。"""
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.RETRIEVER),
         tools=[get_current_time],
-        prompt=TIME_EXPERT_PROMPT,
+        system_prompt=TIME_EXPERT_PROMPT,
         name="time_expert",
     )
 
 
 def build_text_analyst(model_router: ModelRouter):
     """纯文本长度统计专家。"""
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.RETRIEVER),
         tools=[get_word_count],
-        prompt=TEXT_ANALYST_PROMPT,
+        system_prompt=TEXT_ANALYST_PROMPT,
         name="text_analyst",
     )
 
@@ -247,10 +247,10 @@ def build_coder_expert(
             "是否忘记调用 ``await load_code_server_tools()``？"
         )
 
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.RETRIEVER),
         tools=list(mcp_tools),
-        prompt=CODER_EXPERT_PROMPT,
+        system_prompt=CODER_EXPERT_PROMPT,
         name="coder_expert",
     )
 
@@ -282,10 +282,10 @@ def build_data_expert(
             "收到了空序列。是否忘记调用 "
             "``await load_fin_data_server_tools()``？"
         )
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.ANALYST),
         tools=list(mcp_tools),
-        prompt=DATA_EXPERT_PROMPT,
+        system_prompt=DATA_EXPERT_PROMPT,
         name="data_expert",
     )
 
@@ -317,10 +317,10 @@ def build_report_expert(
             "收到了空序列。是否忘记调用 "
             "``await load_pdf_report_server_tools()``？"
         )
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.ANALYST),
         tools=list(mcp_tools),
-        prompt=REPORT_EXPERT_PROMPT,
+        system_prompt=REPORT_EXPERT_PROMPT,
         name="report_expert",
     )
 
@@ -353,10 +353,10 @@ def build_news_expert(
             "收到了空序列。是否忘记调用 "
             "``await load_news_server_tools()``？"
         )
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.ANALYST),
         tools=list(mcp_tools),
-        prompt=NEWS_EXPERT_PROMPT,
+        system_prompt=NEWS_EXPERT_PROMPT,
         name="news_expert",
     )
 
@@ -389,10 +389,10 @@ def build_knowledge_expert(
             "收到了空序列。是否忘记调用 "
             "``await load_knowledge_tools_inproc()``？"
         )
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.ANALYST),
         tools=list(mcp_tools),
-        prompt=KNOWLEDGE_EXPERT_PROMPT,
+        system_prompt=KNOWLEDGE_EXPERT_PROMPT,
         name="knowledge_expert",
     )
 
@@ -442,10 +442,10 @@ def build_sentiment_expert(
             "收到了空序列。是否忘记调用 "
             "``await load_news_sentiment_server_tools()``？"
         )
-    return create_react_agent(
+    return create_agent(
         model=model_router.for_agent(AgentName.ANALYST),
         tools=list(mcp_tools),
-        prompt=SENTIMENT_EXPERT_PROMPT,
+        system_prompt=SENTIMENT_EXPERT_PROMPT,
         name="sentiment_expert",
     )
 
