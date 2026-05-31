@@ -143,3 +143,150 @@ class TestDeleteCollectionTool:
         result = await kt._delete_collection(collection="old")
         assert result == fake_result
         mock.assert_awaited_once_with(collection="old")
+
+
+# -----------------------------------------------------------------------
+# Multi-tenant isolation tests
+# -----------------------------------------------------------------------
+
+
+class TestMultiTenantHelpers:
+    """验证 user_id scoping / unscoping 辅助函数。"""
+
+    def test_get_user_id_none_config(self) -> None:
+        assert kt._get_user_id(None) == "anonymous"
+
+    def test_get_user_id_empty_configurable(self) -> None:
+        assert kt._get_user_id({"configurable": {}}) == "anonymous"
+
+    def test_get_user_id_present(self) -> None:
+        config = {"configurable": {"user_id": "alice"}}
+        assert kt._get_user_id(config) == "alice"
+
+    def test_scoped_collection_anonymous_no_prefix(self) -> None:
+        assert kt._scoped_collection("anonymous", "reports") == "reports"
+
+    def test_scoped_collection_named_user(self) -> None:
+        assert kt._scoped_collection("alice", "reports") == "alice__reports"
+
+    def test_unscoped_collection_anonymous_passthrough(self) -> None:
+        assert kt._unscoped_collection("anonymous", "reports") == "reports"
+
+    def test_unscoped_collection_own(self) -> None:
+        assert kt._unscoped_collection("alice", "alice__reports") == "reports"
+
+    def test_unscoped_collection_other_user_returns_none(self) -> None:
+        assert kt._unscoped_collection("alice", "bob__reports") is None
+
+    def test_unscoped_collection_no_prefix_returns_none(self) -> None:
+        assert kt._unscoped_collection("alice", "reports") is None
+
+
+class TestMultiTenantIngest:
+    """ingest_pdf 在有 user_id 时应传 scoped collection 给底层实现。"""
+
+    @pytest.mark.asyncio
+    async def test_ingest_scopes_collection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake_result: dict[str, Any] = {
+            "collection": "alice__docs",
+            "source": "/tmp/x.pdf",
+            "num_pages": 1,
+            "num_chunks_added": 5,
+            "total_chunks_in_collection": 5,
+        }
+        mock = AsyncMock(return_value=fake_result)
+        monkeypatch.setattr(kt, "_ingest_pdf_impl", mock)
+
+        config = {"configurable": {"user_id": "alice"}}
+        result = await kt._ingest_pdf(local_path="/tmp/x.pdf", collection="docs", config=config)
+
+        mock.assert_awaited_once_with(
+            local_path="/tmp/x.pdf",
+            collection="alice__docs",
+            chunk_size=kt.DEFAULT_CHUNK_SIZE,
+            chunk_overlap=kt.DEFAULT_CHUNK_OVERLAP,
+        )
+        assert result["collection"] == "docs"
+
+
+class TestMultiTenantSearch:
+    """search 在有 user_id 时应传 scoped collection 给底层实现。"""
+
+    @pytest.mark.asyncio
+    async def test_search_scopes_collection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake_result: dict[str, Any] = {
+            "collection": "bob__default",
+            "query": "revenue",
+            "top_k_returned": 1,
+            "quality": "high",
+            "results": [],
+        }
+        mock = AsyncMock(return_value=fake_result)
+        monkeypatch.setattr(kt, "_search_impl", mock)
+
+        config = {"configurable": {"user_id": "bob"}}
+        result = await kt._search(query="revenue", collection="default", top_k=5, config=config)
+
+        mock.assert_awaited_once_with(query="revenue", collection="bob__default", top_k=5)
+        assert result["collection"] == "default"
+
+
+class TestMultiTenantListCollections:
+    """list_collections 应只返回属于当前 user_id 的集合。"""
+
+    @pytest.mark.asyncio
+    async def test_list_filters_by_user(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake_result: dict[str, Any] = {
+            "db_dir": "/tmp/kb",
+            "collections": [
+                {"name": "alice__notes", "chunk_count": 10},
+                {"name": "alice__reports", "chunk_count": 20},
+                {"name": "bob__docs", "chunk_count": 30},
+                {"name": "shared", "chunk_count": 5},
+            ],
+        }
+        mock = AsyncMock(return_value=fake_result)
+        monkeypatch.setattr(kt, "_list_collections_impl", mock)
+
+        config = {"configurable": {"user_id": "alice"}}
+        result = await kt._list_collections(config=config)
+
+        names = [c["name"] for c in result["collections"]]
+        assert names == ["notes", "reports"]
+
+    @pytest.mark.asyncio
+    async def test_list_anonymous_sees_all(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake_result: dict[str, Any] = {
+            "db_dir": "/tmp/kb",
+            "collections": [
+                {"name": "alice__notes", "chunk_count": 10},
+                {"name": "shared", "chunk_count": 5},
+            ],
+        }
+        mock = AsyncMock(return_value=fake_result)
+        monkeypatch.setattr(kt, "_list_collections_impl", mock)
+
+        result = await kt._list_collections(config=None)
+
+        names = [c["name"] for c in result["collections"]]
+        assert names == ["alice__notes", "shared"]
+
+
+class TestMultiTenantDeleteCollection:
+    """delete_collection 应传 scoped 名给底层。"""
+
+    @pytest.mark.asyncio
+    async def test_delete_scopes_collection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake_result: dict[str, Any] = {
+            "collection": "carol__old",
+            "existed": True,
+            "deleted": True,
+        }
+        mock = AsyncMock(return_value=fake_result)
+        monkeypatch.setattr(kt, "_delete_collection_impl", mock)
+
+        config = {"configurable": {"user_id": "carol"}}
+        result = await kt._delete_collection(collection="old", config=config)
+
+        mock.assert_awaited_once_with(collection="carol__old")
+        assert result["collection"] == "old"

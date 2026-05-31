@@ -27,7 +27,6 @@ dependencies = [
     "rank-bm25",
     # === LLM 提供商 ===
     "openai",
-    "litellm",
     # === Web 框架 ===
     "fastapi>=0.115",
     "uvicorn[standard]",

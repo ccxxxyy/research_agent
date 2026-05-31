@@ -43,12 +43,14 @@ if TYPE_CHECKING:
 def _graph_config(
     thread_id: str,
     recursion_limit: int | None,
+    *,
+    user_id: str = "anonymous",
 ) -> dict:
     """构建 LangGraph 配置字典，设置安全的递归上限。
 
     当调用方未指定上限时，回退到 ``Settings.default_recursion_limit``（默认 50），而非 LangGraph 内置的 25 —— 后者对 6 个专家的研究主管 + 可选反思循环而言过低。
     """
-    cfg: dict = {"configurable": {"thread_id": thread_id}}
+    cfg: dict = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
     if recursion_limit is not None:
         cfg["recursion_limit"] = recursion_limit
     else:
@@ -244,7 +246,7 @@ async def supervisor_research(
             detail="Request blocked by security filter.",
         )
 
-    config = _graph_config(thread_id, request.recursion_limit)
+    config = _graph_config(thread_id, request.recursion_limit, user_id=user_id)
 
     logger.info("Research-supervisor invoke: user={}, thread={}", user_id, thread_id)
 
@@ -467,6 +469,7 @@ async def _research_event_stream(
     thread_id: str,
     recursion_limit: int | None,
     *,
+    user_id: str = "anonymous",
     memory: MemoryManager | None = None,
     persist_user_id: str | None = None,
     persist_original_query: str | None = None,
@@ -496,7 +499,7 @@ async def _research_event_stream(
         "graph_astream_ok": False,
         "last_plain_synthesis": None,
     }
-    cfg = _graph_config(thread_id, recursion_limit)
+    cfg = _graph_config(thread_id, recursion_limit, user_id=user_id)
 
     frames: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -745,6 +748,7 @@ async def supervisor_research_stream(
             messages_input,
             thread_id,
             request.recursion_limit,
+            user_id=user_id,
             memory=memory,
             persist_user_id=user_id,
             persist_original_query=request.query,

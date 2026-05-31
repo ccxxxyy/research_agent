@@ -573,7 +573,7 @@ docs/
 ├── architecture.md       # 系统架构设计文档
 ├── failure-modes.md      # 故障模式分析
 └── adr/                  # 架构决策记录（4 篇）
-tests/                    # unit（323 passing）+ integration
+tests/                    # unit（346 passing）+ integration
 ```
 
 ---
@@ -591,6 +591,7 @@ tests/                    # unit（323 passing）+ integration
 | **IP 限流** | 滑动窗口 60s RPM 限制，Redis Lua 原子脚本 / 内存兜底 | `api/middleware.py` |
 | **认证** | Bearer Token 校验（`API_SECRET_KEY` 环境变量，空值时禁用） | `api/middleware.py` |
 | **请求超时** | 可配置 ASGI 层超时，SSE 流豁免 | `api/middleware.py` |
+| **Multi-tenant 知识库隔离** | `{user_id}__{collection}` 命名空间前缀；搜索/列表/删除全路径自动 scope，anonymous 用户透明共享 | `tools/knowledge_tools.py` |
 
 ## 十、性能 Benchmark
 
