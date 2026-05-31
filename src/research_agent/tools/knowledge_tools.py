@@ -18,7 +18,7 @@
 这样 ``KNOWLEDGE_EXPERT_PROMPT``无需修改即可工作——无论工具以进程内还是跨进程方式交付，Agent 看到的工具集完全一致。
 
 为何这样做是安全的
-----------------
+-----------------
 fastmcp 3.x 的 ``@mcp.tool()`` 装饰器会将函数注册到 FastMCP 实例上，
 但不会改变函数本身（``type(ingest_pdf)`` 仍是 ``types.FunctionType``，无 ``.fn`` 垫片）。
 因此直接import并调用它们与 MCP 传输层调用的代码路径完全一致，包括用于保护事件循环不被阻塞的 ``asyncio.to_thread`` 跳转。
@@ -59,12 +59,17 @@ Agent 运行时：LLM 看到 4 个工具的名字和描述 → 决定调哪个 �
 
 工具命名为 knowledge_search、knowledge_ingest_pdf 等。这和 MCP 路径生成的前缀一致（如果走 MCP，工具名自动变成 knowledge_search）。
 这样 Agent 的提示词里写的工具名不需要任何修改——无论工具是通过 MCP 子进程还是进程内直接调用交付的。
+
+Multi-tenant 隔离
+-----------------
+所有工具自动从 LangGraph configurable 中读取 ``user_id``，并以 ``{user_id}__{collection}``前缀存储/检索数据，确保不同用户的知识库互不可见。
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig  # noqa: TC002
 from langchain_core.tools import BaseTool, StructuredTool
 
 from research_agent.mcp_servers.knowledge_server import (
@@ -85,22 +90,57 @@ from research_agent.mcp_servers.knowledge_server import (
 )
 
 # ---------------------------------------------------------------------
-# 轻量异步包装器
+# Multi-tenant 隔离辅助
+# ---------------------------------------------------------------------
+
+
+def _get_user_id(config: RunnableConfig | None) -> str:
+    """从 LangGraph configurable 中提取 user_id，缺省为 anonymous。"""
+    if config is None:
+        return "anonymous"
+    configurable = config.get("configurable") or {}
+    return configurable.get("user_id", "anonymous") or "anonymous"
+
+
+def _scoped_collection(user_id: str, collection: str) -> str:
+    """为集合名添加 user_id 前缀以实现磁盘级隔离。"""
+    if user_id == "anonymous":
+        return collection
+    return f"{user_id}__{collection}"
+
+
+def _unscoped_collection(user_id: str, name: str) -> str | None:
+    """从磁盘集合名中去除 user_id 前缀；不属于该用户则返回 None。"""
+    if user_id == "anonymous":
+        return name
+    prefix = f"{user_id}__"
+    if name.startswith(prefix):
+        return name[len(prefix) :]
+    return None
+
+
+# ---------------------------------------------------------------------
+# 轻量异步包装器（注入 user_id scope）
 #
 # StructuredTool 需要一个可等待对象，将 LLM 提供的参数映射到底层协程。
 # 虽然可以直接传入导入的协程，但通过包装器可以获得以下好处：
 #   1. 一个稳定的位置，用提示词友好的语言为每个工具重新编写文档（MCP 的文档字符串是权威的，但部分措辞针对 LLM 消费者做了调整）。
 #   2. 一个横切关注点的汇聚点（限流、审计日志、缓存），无需修改 MCP 模块或 Agent 提示词。
+#   3. Multi-tenant 隔离：自动从 LangGraph config 读取 user_id，对 collection 名加前缀。
 
 
 # 直接调用 knowledge_server.py 里的同名函数，一行包装。
 # 为什么不直接用原函数？ 两个原因：可以重写文档字符串——原函数的文档是给 MCP 协议看的，包装层可以写更适合 LLM 阅读的版本；将来加限流、审计日志、缓存，只需要改这一层，不动 MCP 模块
 # ---------------------------------------------------------------------
+
+
 async def _ingest_pdf(
     local_path: str,
     collection: str = "default",
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    *,
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """将单个本地 PDF 导入到持久化 FAISS 集合中。
 
@@ -114,18 +154,25 @@ async def _ingest_pdf(
         成功时返回 ``{collection, source, num_pages, num_chunks_added,total_chunks_in_collection}``，
         校验失败时返回``{error, context}``。
     """
-    return await _ingest_pdf_impl(
+    user_id = _get_user_id(config)
+    scoped = _scoped_collection(user_id, collection)
+    result = await _ingest_pdf_impl(
         local_path=local_path,
-        collection=collection,
+        collection=scoped,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
     )
+    if "error" not in result:
+        result["collection"] = collection
+    return result
 
 
 async def _search(
     query: str,
     collection: str = "default",
     top_k: int = 5,
+    *,
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """对已导入的集合执行混合（向量 + BM25）检索。
 
@@ -140,15 +187,23 @@ async def _search(
     Returns:
         ``{collection, query, top_k_returned, quality, top_score, mean_score, unique_sources, results: [...]}``。
     """
-    return await _search_impl(
+    user_id = _get_user_id(config)
+    scoped = _scoped_collection(user_id, collection)
+    result = await _search_impl(
         query=query,
-        collection=collection,
+        collection=scoped,
         top_k=top_k,
     )
+    if "error" not in result:
+        result["collection"] = collection
+    return result
 
 
-async def _list_collections() -> dict[str, Any]:
-    """列出当前持久化在磁盘上的所有 FAISS 集合。
+async def _list_collections(
+    *,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """列出当前用户拥有的所有 FAISS 集合。
 
     当用户暗示了某个知识库但未指定集合名称时（例如"我的 ESG 知识库里有什么？"），适合作为 Agent 的首次调用。每个条目包含 ``name`` 和 ``chunk_count``；
     如果 FAISS 文件对不可读则 chunk_count 为 ``-1``。
@@ -156,10 +211,27 @@ async def _list_collections() -> dict[str, Any]:
     Returns:
         ``{db_dir, collections: [{name, chunk_count}]}``。
     """
-    return await _list_collections_impl()
+    user_id = _get_user_id(config)
+    result = await _list_collections_impl()
+
+    if "error" in result:
+        return result
+
+    # 仅返回当前用户的集合
+    user_collections = []
+    for c in result.get("collections", []):
+        unscoped = _unscoped_collection(user_id, c["name"])
+        if unscoped is not None:
+            user_collections.append({"name": unscoped, "chunk_count": c["chunk_count"]})
+    result["collections"] = user_collections
+    return result
 
 
-async def _delete_collection(collection: str) -> dict[str, Any]:
+async def _delete_collection(
+    collection: str,
+    *,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
     """删除集合及其内存缓存。幂等操作。
 
     仅在用户明确要求清除集合时使用。不存在的集合不会抛出异常,响应仅报告 ``existed=False``。
@@ -167,7 +239,12 @@ async def _delete_collection(collection: str) -> dict[str, Any]:
     Returns:
         ``{collection, existed, deleted}``。
     """
-    return await _delete_collection_impl(collection=collection)
+    user_id = _get_user_id(config)
+    scoped = _scoped_collection(user_id, collection)
+    result = await _delete_collection_impl(collection=scoped)
+    if "error" not in result:
+        result["collection"] = collection
+    return result
 
 
 # ---------------------------------------------------------------------
@@ -207,7 +284,7 @@ knowledge_list_collections: BaseTool = StructuredTool.from_function(
     coroutine=_list_collections,
     name="knowledge_list_collections",
     description=(
-        "列出当前持久化在磁盘上的所有 FAISS 集合。"
+        "列出当前用户拥有的所有 FAISS 集合。"
         "返回 {db_dir, collections: [{name, chunk_count}]}。"
         "当用户暗示某个知识库但未指定集合名称时，适合首先调用。"
     ),
