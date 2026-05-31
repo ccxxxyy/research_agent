@@ -22,7 +22,7 @@
         coder_tools=tools,
     )
 
-返回的工具是 ``langchain_core.tools.BaseTool`` 实例，可与``create_react_agent`` 和 ``langgraph_supervisor`` 配合使用，效果与本地定义的 ``@tool`` 函数完全相同。
+返回的工具是 ``langchain_core.tools.BaseTool`` 实例，可与``langchain.agents.create_agent`` 和 ``langgraph_supervisor`` 配合使用，效果与本地定义的 ``@tool`` 函数完全相同。
 """
 
 from __future__ import annotations

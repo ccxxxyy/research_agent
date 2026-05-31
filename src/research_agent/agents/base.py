@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
@@ -29,17 +29,17 @@ def build_agent(
     model_router: ModelRouter,
     **kwargs: Any,
 ) -> Any:
-    """根据 AgentConfig 创建一个 LangGraph ReAct Agent。
+    """根据 AgentConfig 创建一个 LangGraph Agent。
 
-    使用 create_react_agent，它将工具调用封装在 ReAct 循环中：
+    使用 create_agent，它将工具调用封装在 ReAct 循环中：
     推理 → 行动 → 观察 → 推理 ...
     """
     model = model_router.for_agent(config.name)
 
-    return create_react_agent(
+    return create_agent(
         model=model,
         tools=config.tools,
         name=config.name.value,
-        prompt=config.system_prompt,
+        system_prompt=config.system_prompt,
         **kwargs,
     )

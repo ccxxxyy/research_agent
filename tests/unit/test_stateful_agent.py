@@ -15,11 +15,11 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
 
 from research_agent.memory.checkpointer import init_checkpointer
 
@@ -54,7 +54,7 @@ class _ScriptedChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=reply))])
 
     def bind_tools(self, tools: list[Any], **kwargs: Any) -> _ScriptedChatModel:  # noqa: ARG002
-        """create_react_agent 会探测此方法；直接忽略工具。"""
+        """create_agent 会探测此方法；直接忽略工具。"""
         return self
 
     @property
@@ -65,7 +65,7 @@ class _ScriptedChatModel(BaseChatModel):
 def _build_agent_with(checkpointer, answers: list[str]):
     model = _ScriptedChatModel(answers=list(answers))
     # 零工具：桩模型从不发出 tool_calls，因此 ReAct 循环每轮在单次 LLM 步骤后即完成。
-    return create_react_agent(model=model, tools=[], checkpointer=checkpointer)
+    return create_agent(model=model, tools=[], checkpointer=checkpointer)
 
 
 # ---------------------------------------------------------------------------
