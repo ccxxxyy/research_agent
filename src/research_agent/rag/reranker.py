@@ -66,7 +66,11 @@ def _resolve_default_model() -> str:
         return _MODELSCOPE_CACHE_PATH
     hf_snap = os.path.join(_HF_CACHE_ROOT, "models--BAAI--bge-reranker-base", "snapshots")
     if os.path.isdir(hf_snap):
-        snaps = sorted(os.listdir(hf_snap), key=lambda d: os.path.getmtime(os.path.join(hf_snap, d)), reverse=True)
+        snaps = sorted(
+            os.listdir(hf_snap),
+            key=lambda d: os.path.getmtime(os.path.join(hf_snap, d)),
+            reverse=True,
+        )
         if snaps:
             local = os.path.join(hf_snap, snaps[0])
             logger.info("Using local cached reranker: {}", local)

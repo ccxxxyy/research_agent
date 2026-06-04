@@ -35,7 +35,14 @@ from fastmcp import FastMCP
 
 # akshare 通过 requests 发起 HTTP 请求，requests 会自动读取系统代理。
 # 国内数据源（东方财富/新浪/雪球）走代理反而不通，在子进程启动时清除。
-for _proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+for _proxy_key in (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+):
     os.environ.pop(_proxy_key, None)
 os.environ["NO_PROXY"] = "*"
 
