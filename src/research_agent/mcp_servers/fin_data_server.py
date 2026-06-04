@@ -465,5 +465,122 @@ async def search_stock_by_name(keyword: str, limit: int = 10) -> dict:
         )
 
 
+# ---------------------------------------------------------------------
+# 工具 6: 主要指数实时行情（上证、沪深300、创业板等）
+# ---------------------------------------------------------------------
+_INDEX_MAP: dict[str, str] = {
+    "上证指数": "000001",
+    "深证成指": "399001",
+    "沪深300": "000300",
+    "创业板指": "399006",
+    "科创50": "000688",
+    "中证500": "000905",
+    "中证1000": "000852",
+    "上证50": "000016",
+}
+
+
+@mcp.tool()
+async def get_index_quotes() -> dict:
+    """返回 A 股主要指数（上证指数、沪深300、创业板指、科创50 等）的最新行情。
+
+    无需传入参数，一次性返回所有核心指数的最新价、涨跌幅、成交额。
+    适合回答"今天大盘怎么样"、"A 股整体走势"等宏观类问题。
+
+    Returns:
+        包含 ``indices`` 列表的字典，每项含 name/code/最新价/涨跌幅/成交额等。
+    """
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.stock_zh_index_spot_em()
+        core_codes = set(_INDEX_MAP.values())
+        mask = df["代码"].isin(core_codes)
+        result = df[mask][["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额"]].copy()
+        records = _df_to_records(result)
+        return {"indices": records, "source": "eastmoney"}
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context="get_index_quotes()")
+
+
+# ---------------------------------------------------------------------
+# 工具 7: 板块资金流向（行业板块 / 概念板块）
+# ---------------------------------------------------------------------
+@mcp.tool()
+async def get_sector_fund_flow(sector_type: str = "行业", limit: int = 15) -> dict:
+    """返回 A 股板块资金流向排行。
+
+    Args:
+        sector_type: ``"行业"``（申万一级行业）或 ``"概念"``（东方财富概念板块）。
+        limit: 返回条目数（默认 15，上限 50）。
+
+    Returns:
+        包含板块名称、主力净流入、涨跌幅等排行的字典。
+        适合回答"今天哪些板块最强"、"科技板块资金流向"等问题。
+    """
+    limit = max(1, min(limit, 50))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        if sector_type == "概念":
+            df = ak.stock_board_concept_name_em()
+        else:
+            df = ak.stock_board_industry_name_em()
+        df = df.head(limit)
+        records = _df_to_records(df)
+        return {"sector_type": sector_type, "sectors": records, "source": "eastmoney"}
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_sector_fund_flow(sector_type={sector_type!r})")
+
+
+# ---------------------------------------------------------------------
+# 工具 8: A 股涨跌幅排行（今日涨幅/跌幅前 N）
+# ---------------------------------------------------------------------
+@mcp.tool()
+async def get_stock_rank(direction: str = "涨幅榜", limit: int = 20) -> dict:
+    """返回今日 A 股涨跌幅排行榜。
+
+    Args:
+        direction: ``"涨幅榜"`` 或 ``"跌幅榜"``。
+        limit: 返回条目数（默认 20，上限 50）。
+
+    Returns:
+        按涨/跌幅排序的股票列表，包含代码、名称、最新价、涨跌幅、成交额。
+        适合回答"今天涨停最多的是什么股"、"哪些股票涨得最好"等问题。
+    """
+    limit = max(1, min(limit, 50))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.stock_zh_a_spot_em()
+        if direction == "跌幅榜":
+            df = df.sort_values("涨跌幅", ascending=True).head(limit)
+        else:
+            df = df.sort_values("涨跌幅", ascending=False).head(limit)
+        cols = ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额", "换手率"]
+        available_cols = [c for c in cols if c in df.columns]
+        records = _df_to_records(df[available_cols])
+        return {
+            "direction": direction,
+            "stocks": records,
+            "count": len(records),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_stock_rank(direction={direction!r})")
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

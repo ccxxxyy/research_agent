@@ -18,15 +18,34 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .app{display:flex;height:100vh;overflow:hidden}
 
 /* Sidebar */
-.sidebar{width:260px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
-.sidebar-header{padding:20px;border-bottom:1px solid var(--border)}
+.sidebar{width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .sidebar-header h1{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
 .sidebar-header h1 span{font-size:22px}
 .sidebar-header p{font-size:12px;color:var(--text2);margin-top:4px}
+.btn-new-chat{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s;white-space:nowrap}
+.btn-new-chat:hover{background:var(--accent2)}
 
 .section-title{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);padding:16px 20px 8px;font-weight:600}
 
-.specialist-list{padding:0 12px;flex:1;overflow-y:auto}
+/* Conversation list */
+.conv-list{padding:0 8px;max-height:240px;overflow-y:auto}
+.conv-list::-webkit-scrollbar{width:4px}
+.conv-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.conv-item{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
+.conv-item:hover{background:var(--surface2)}
+.conv-item.active{background:var(--surface2);border-left:3px solid var(--accent)}
+.conv-item .conv-icon{font-size:14px;flex-shrink:0;color:var(--text2)}
+.conv-item .conv-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)}
+.conv-item.active .conv-title{color:var(--text);font-weight:500}
+.conv-item .conv-delete{opacity:0;background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:2px 4px;border-radius:4px;transition:opacity .15s}
+.conv-item:hover .conv-delete{opacity:0.7}
+.conv-item .conv-delete:hover{opacity:1;background:rgba(248,113,113,0.15)}
+.conv-item .conv-streaming{font-size:10px;color:var(--accent);animation:convPulse 1.2s infinite;flex-shrink:0}
+@keyframes convPulse{0%,100%{opacity:1}50%{opacity:.2}}
+.conv-empty{font-size:12px;color:var(--text2);padding:8px 20px;opacity:0.6}
+
+.specialist-list{padding:0 12px;overflow-y:auto}
 .specialist{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:2px;transition:background .15s}
 .specialist:hover{background:var(--surface2)}
 .specialist .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--border);transition:background .3s,box-shadow .3s}
@@ -156,8 +175,10 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
   <aside class="sidebar">
     <div class="sidebar-header">
       <h1><span>🔬</span> 研究助手</h1>
-      <p>多智能体金融研究系统</p>
+      <button class="btn-new-chat" onclick="newThread()">+ 新对话</button>
     </div>
+    <div class="section-title">历史对话</div>
+    <div class="conv-list" id="convList"><div class="conv-empty">暂无对话</div></div>
     <div class="section-title">专家团队</div>
     <div class="specialist-list" id="specialistList"></div>
     <div class="section-title">知识库</div>
@@ -185,10 +206,10 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
         <h2>A 股金融研究助手</h2>
         <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
         <div class="examples">
-          <div class="example" onclick="fillQuery(this)">分析宁德时代 2024 年的营收和利润表现</div>
-          <div class="example" onclick="fillQuery(this)">贵州茅台最近的新闻舆情和市场情绪如何？</div>
-          <div class="example" onclick="fillQuery(this)">对比隆基绿能和通威股份的 ROE 和毛利率</div>
-          <div class="example" onclick="fillQuery(this)">查一下比亚迪最近的公告披露和股价走势</div>
+          <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
+          <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？科技股表现如何？</div>
+          <div class="example" onclick="fillQuery(this)">上证指数和创业板最近一周走势对比分析</div>
+          <div class="example" onclick="fillQuery(this)">查一下宁德时代最新财报和市场舆情</div>
         </div>
       </div>
     </div>
@@ -207,7 +228,7 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
         </button>
       </div>
       <div class="input-meta">
-        <label>用户 ID: <input id="userIdInput" value="demo_user" onchange="refreshKnowledgeCollections()" /></label>
+        <label>用户 ID: <input id="userIdInput" value="demo_user" onchange="refreshKnowledgeCollections();loadConversations()" /></label>
         <label>知识库集合: <input id="collectionInput" value="default" title="上传 PDF 时写入的集合名称" /></label>
       </div>
     </div>
@@ -226,12 +247,39 @@ const ALL_SPECIALISTS = [
   {id:'sentiment_expert',label:'舆情专家',   desc:'舆情量化'},
 ];
 
+// =====================================================================
+// 多会话并发核心状态
+// =====================================================================
 let currentThread = null;
-let streaming = false;
 let available = new Set();
 let hitlPendingThread = null;
 
-// --- 初始化 ---
+// 每个 thread 的独立状态：{ el: HTMLElement, streaming: bool }
+// el 是一个 div 容器，持有该会话的所有消息 DOM（可脱离文档树）
+const threadData = new Map();
+const streamingThreads = new Set();
+
+function _getOrCreateThreadEl(threadId) {
+  if (threadData.has(threadId)) return threadData.get(threadId).el;
+  const el = document.createElement('div');
+  el.className = 'thread-container';
+  el.style.cssText = 'display:flex;flex-direction:column;gap:16px;min-height:100%';
+  threadData.set(threadId, { el, streaming: false });
+  return el;
+}
+
+function _isCurrentThreadStreaming() {
+  return currentThread && streamingThreads.has(currentThread);
+}
+
+function _updateSendBtn() {
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = _isCurrentThreadStreaming();
+}
+
+// =====================================================================
+// 初始化
+// =====================================================================
 function init() {
   renderSpecialists([]);
   checkHealth();
@@ -240,30 +288,427 @@ function init() {
   setupUploadZone();
   setInterval(refreshUsage, 15000);
   autoResize(document.getElementById('queryInput'));
+  loadConversations();
 }
 
 function getUserId() {
   return document.getElementById('userIdInput').value.trim() || 'anonymous';
 }
 
+// =====================================================================
+// 会话列表（侧边栏）
+// =====================================================================
+async function loadConversations() {
+  const userId = getUserId();
+  try {
+    const resp = await fetch(`/api/conversations?user_id=${encodeURIComponent(userId)}`);
+    if (!resp.ok) return;
+    const convs = await resp.json();
+    renderConvList(convs);
+  } catch {}
+}
+
+function renderConvList(convs) {
+  const el = document.getElementById('convList');
+  if ((!convs || convs.length === 0) && streamingThreads.size === 0) {
+    el.innerHTML = '<div class="conv-empty">暂无对话</div>';
+    return;
+  }
+  const allIds = new Set((convs||[]).map(c => c.thread_id));
+  // 把正在流式但还没被后端返回的 thread 也加进来
+  const items = [...(convs||[])];
+  for (const tid of streamingThreads) {
+    if (!allIds.has(tid)) {
+      const td = threadData.get(tid);
+      items.unshift({ thread_id: tid, title: td?._title || '新对话…', msg_count: 0, _local: true });
+    }
+  }
+  if (items.length === 0) {
+    el.innerHTML = '<div class="conv-empty">暂无对话</div>';
+    return;
+  }
+  el.innerHTML = items.map(c => {
+    const active = c.thread_id === currentThread ? ' active' : '';
+    const title = c.title || '未命名对话';
+    const isStreaming = streamingThreads.has(c.thread_id);
+    const streamBadge = isStreaming ? '<span class="conv-streaming">● 处理中</span>' : '';
+    return `<div class="conv-item${active}" data-tid="${c.thread_id}" onclick="switchConversation('${c.thread_id}')">
+      <span class="conv-icon">💬</span>
+      <span class="conv-title" title="${title}">${title}</span>
+      ${streamBadge}
+      <button class="conv-delete" onclick="event.stopPropagation();deleteConversation('${c.thread_id}')" title="删除">✕</button>
+    </div>`;
+  }).join('');
+}
+
+// =====================================================================
+// 切换会话（核心：交换可见容器）
+// =====================================================================
+async function switchConversation(threadId) {
+  if (threadId === currentThread) return;
+  currentThread = threadId;
+  document.getElementById('threadDisplay').textContent = threadId.slice(0, 12) + '…';
+  document.getElementById('threadDisplay').title = threadId;
+  _updateSendBtn();
+
+  document.querySelectorAll('.conv-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.tid === threadId);
+  });
+
+  const msgArea = document.getElementById('messages');
+
+  // 如果该 thread 的 DOM 容器已经在内存中（正在流式或刚完成），直接显示
+  if (threadData.has(threadId)) {
+    msgArea.innerHTML = '';
+    msgArea.appendChild(threadData.get(threadId).el);
+    // 恢复该会话的专家高亮
+    if (streamingThreads.has(threadId)) {
+      const td = threadData.get(threadId);
+      if (td._activeSpecialist) highlightSpecialist(td._activeSpecialist);
+    } else {
+      clearHighlights();
+    }
+    scrollToBottom();
+    return;
+  }
+
+  // 否则从后端加载
+  msgArea.innerHTML = '<div style="text-align:center;color:var(--text2);padding:40px">加载中...</div>';
+  try {
+    const resp = await fetch(`/api/conversations/${threadId}/messages`);
+    if (!resp.ok) throw new Error('Failed to load');
+    const msgs = await resp.json();
+    const container = _getOrCreateThreadEl(threadId);
+    container.innerHTML = '';
+    if (msgs.length === 0) {
+      msgArea.innerHTML = '';
+      showWelcome();
+      return;
+    }
+    msgs.forEach(m => {
+      if (m.role === 'user') {
+        _appendUserMsg(container, m.content);
+      } else if (m.role === 'assistant') {
+        const d = document.createElement('div');
+        d.className = 'msg assistant';
+        d.innerHTML = '<div class="content">' + renderMarkdown(m.content) + '</div>';
+        container.appendChild(d);
+      }
+    });
+    msgArea.innerHTML = '';
+    msgArea.appendChild(container);
+    scrollToBottom();
+  } catch {
+    msgArea.innerHTML = '<div style="text-align:center;color:var(--red);padding:40px">加载失败</div>';
+  }
+}
+
+async function deleteConversation(threadId) {
+  if (!confirm('确定删除这个对话？')) return;
+  const userId = getUserId();
+  try {
+    await fetch(`/api/conversations/${threadId}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
+    threadData.delete(threadId);
+    if (currentThread === threadId) newThread();
+    loadConversations();
+  } catch {}
+}
+
+function showWelcome() {
+  const m = document.getElementById('messages');
+  m.innerHTML = `<div class="welcome" id="welcome">
+    <div class="icon">🔬</div>
+    <h2>A 股金融研究助手</h2>
+    <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
+    <div class="examples">
+      <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
+      <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？科技股表现如何？</div>
+      <div class="example" onclick="fillQuery(this)">上证指数和创业板最近一周走势对比分析</div>
+      <div class="example" onclick="fillQuery(this)">查一下宁德时代最新财报和市场舆情</div>
+    </div>
+  </div>`;
+}
+
+function newThread() {
+  currentThread = null;
+  document.getElementById('threadDisplay').textContent = '-';
+  showWelcome();
+  clearHighlights();
+  _updateSendBtn();
+  document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+}
+
+// =====================================================================
+// 消息 DOM 工具（操作指定容器，不依赖全局 #messages）
+// =====================================================================
+function _appendUserMsg(container, text) {
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.textContent = text;
+  container.appendChild(d);
+}
+
+function _appendAssistantMsg(container) {
+  const d = document.createElement('div');
+  d.className = 'msg assistant';
+  d.innerHTML = '<div class="phase-tag">思考中</div><div class="handoffs"></div><div class="content"></div><div class="typing"><span></span><span></span><span></span></div>';
+  container.appendChild(d);
+  return d;
+}
+
+function addUserMsg(text) {
+  document.getElementById('welcome')?.remove();
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.textContent = text;
+  document.getElementById('messages').appendChild(d);
+  scrollToBottom();
+}
+
+function scrollToBottom() {
+  const m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
+
+function _scrollIfViewing(threadId) {
+  if (threadId === currentThread) scrollToBottom();
+}
+
+// =====================================================================
+// 发送查询（非阻塞：启动流后立即释放 UI）
+// =====================================================================
+function sendQuery() {
+  const input = document.getElementById('queryInput');
+  const query = input.value.trim();
+  if (!query) return;
+  if (_isCurrentThreadStreaming()) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  const sendThreadId = currentThread;
+  const userId = getUserId();
+
+  // 启动后台流，不 await
+  _runStream(query, sendThreadId, userId);
+}
+
+async function _runStream(query, sendThreadId, userId) {
+  let threadId = sendThreadId;
+
+  try {
+    const resp = await fetch('/api/supervisor/research/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ query, user_id: userId, thread_id: threadId }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({detail: resp.statusText}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const resolvedId = resp.headers.get('X-Thread-ID');
+    if (resolvedId) threadId = resolvedId;
+
+    // 注册流状态
+    const container = _getOrCreateThreadEl(threadId);
+    const td = threadData.get(threadId);
+    td.streaming = true;
+    td._title = query.slice(0, 40);
+    td._activeSpecialist = null;
+    streamingThreads.add(threadId);
+
+    // 追加用户消息到该容器
+    _appendUserMsg(container, query);
+    const msgEl = _appendAssistantMsg(container);
+    const phaseTag = msgEl.querySelector('.phase-tag');
+    const handoffsEl = msgEl.querySelector('.handoffs');
+    const contentEl = msgEl.querySelector('.content');
+    const typingEl = msgEl.querySelector('.typing');
+
+    // 如果发送时还在看这个线程（或是新会话），切换到它
+    if (!sendThreadId || sendThreadId === threadId || currentThread === null || currentThread === sendThreadId) {
+      currentThread = threadId;
+      document.getElementById('threadDisplay').textContent = threadId.slice(0, 12) + '…';
+      document.getElementById('threadDisplay').title = threadId;
+      const msgArea = document.getElementById('messages');
+      msgArea.innerHTML = '';
+      msgArea.appendChild(container);
+    }
+
+    _updateSendBtn();
+    renderConvList([]); // 临时刷新，后面 loadConversations 会覆盖
+    loadConversations();
+
+    // --- SSE 处理循环 ---
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalText = '';
+    let tokenBuf = '';
+    let tokenStreamStarted = false;
+    let tokenStreamEl = null;
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop();
+
+      for (const frame of frames) {
+        const line = frame.trim();
+        if (!line.startsWith('data:')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        const viewing = (threadId === currentThread);
+
+        switch (evt.phase) {
+          case 'update':
+            phaseTag.textContent = '处理中';
+            if (evt.metadata?.available_specialists && viewing) {
+              renderSpecialists(evt.metadata.available_specialists);
+            }
+            break;
+
+          case 'handoff': {
+            const specialist = evt.metadata?.specialist || evt.content;
+            phaseTag.textContent = '→ ' + specialist;
+            const tag = document.createElement('span');
+            tag.className = 'handoff-tag';
+            tag.textContent = specialist;
+            handoffsEl.appendChild(tag);
+            td._activeSpecialist = specialist;
+            if (viewing) highlightSpecialist(specialist);
+            _scrollIfViewing(threadId);
+            break;
+          }
+
+          case 'tool_call': {
+            const tcLine = document.createElement('div');
+            tcLine.className = 'tool-call-line';
+            const sp = evt.metadata?.specialist || evt.node || '';
+            const tool = evt.metadata?.tool || '';
+            tcLine.innerHTML =
+              `<span class="tc-icon">⚙</span>` +
+              `<span class="tc-specialist">${sp}</span> ` +
+              `<span class="tc-tool">${tool}</span>` +
+              (evt.content ? `<span>(${evt.content.split('(').slice(1).join('(')})</span>` : '');
+            contentEl.appendChild(tcLine);
+            _scrollIfViewing(threadId);
+            break;
+          }
+
+          case 'token': {
+            if (!tokenStreamStarted) {
+              tokenStreamStarted = true;
+              phaseTag.textContent = '回答中';
+              phaseTag.style.color = 'var(--green)';
+              contentEl.innerHTML = '';
+              tokenStreamEl = document.createElement('div');
+              tokenStreamEl.className = 'token-stream';
+              contentEl.appendChild(tokenStreamEl);
+            }
+            tokenBuf += evt.content || '';
+            tokenStreamEl.innerHTML = renderMarkdown(tokenBuf);
+            _scrollIfViewing(threadId);
+            break;
+          }
+
+          case 'final':
+            phaseTag.textContent = '回答完成';
+            finalText = evt.content || '';
+            contentEl.innerHTML = renderMarkdown(finalText);
+            typingEl.style.display = 'none';
+            td._activeSpecialist = null;
+            if (viewing) clearHighlights();
+            _scrollIfViewing(threadId);
+            break;
+
+          case 'review_requested': {
+            phaseTag.textContent = '等待审核';
+            phaseTag.style.color = 'var(--yellow)';
+            typingEl.style.display = 'none';
+            td._activeSpecialist = null;
+            if (viewing) clearHighlights();
+            const draftText = evt.content || contentEl.textContent || '';
+            if (draftText) contentEl.innerHTML = renderMarkdown(draftText);
+            const reviewEl = document.createElement('div');
+            reviewEl.className = 'review-panel';
+            reviewEl.innerHTML = `
+              <div class="review-title">需要人工审核</div>
+              <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Supervisor 已生成初稿，请审阅后决定通过或修改。</p>
+              <textarea class="review-feedback-input" placeholder="（可选）输入修改意见…"></textarea>
+              <div class="review-actions">
+                <button class="btn-approve" onclick="hitlApprove('${threadId}')">✓ 通过</button>
+                <button class="btn-revise" onclick="hitlRevise('${threadId}')">✎ 修改</button>
+              </div>
+            `;
+            msgEl.appendChild(reviewEl);
+            hitlPendingThread = threadId;
+            _scrollIfViewing(threadId);
+            break;
+          }
+
+          case 'error':
+            phaseTag.textContent = '出错';
+            phaseTag.style.color = 'var(--red)';
+            contentEl.textContent = evt.content || '未知错误';
+            typingEl.style.display = 'none';
+            td._activeSpecialist = null;
+            if (viewing) clearHighlights();
+            break;
+
+          case 'heartbeat':
+            break;
+
+          case 'done':
+            typingEl.style.display = 'none';
+            if (!finalText && tokenBuf) finalText = tokenBuf;
+            if (!finalText && contentEl.textContent) finalText = contentEl.textContent;
+            td._activeSpecialist = null;
+            if (viewing) clearHighlights();
+            break;
+        }
+      }
+    }
+
+    if (finalText) contentEl.innerHTML = renderMarkdown(finalText);
+    typingEl.style.display = 'none';
+    refreshUsage();
+
+  } catch (err) {
+    // 如果该 thread 有容器，在上面显示错误
+    if (threadData.has(threadId)) {
+      const container = threadData.get(threadId).el;
+      const lastAssistant = container.querySelector('.msg.assistant:last-of-type .content');
+      if (lastAssistant) lastAssistant.textContent = '请求失败: ' + err.message;
+      const lastTyping = container.querySelector('.msg.assistant:last-of-type .typing');
+      if (lastTyping) lastTyping.style.display = 'none';
+    }
+    showToast('请求失败: ' + err.message);
+  } finally {
+    streamingThreads.delete(threadId);
+    if (threadData.has(threadId)) threadData.get(threadId).streaming = false;
+    _updateSendBtn();
+    loadConversations();
+  }
+}
+
+// =====================================================================
+// 上传、知识库
+// =====================================================================
 function setupUploadZone() {
   const zone = document.getElementById('uploadZone');
   const input = document.getElementById('pdfFileInput');
   if (!zone || !input) return;
-
   ['dragenter', 'dragover'].forEach(ev => {
-    zone.addEventListener(ev, e => {
-      e.preventDefault();
-      e.stopPropagation();
-      zone.classList.add('dragover');
-    });
+    zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.add('dragover'); });
   });
   ['dragleave', 'drop'].forEach(ev => {
-    zone.addEventListener(ev, e => {
-      e.preventDefault();
-      e.stopPropagation();
-      zone.classList.remove('dragover');
-    });
+    zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.remove('dragover'); });
   });
   zone.addEventListener('drop', e => {
     const files = e.dataTransfer?.files;
@@ -279,44 +724,27 @@ async function uploadPdf(file) {
   const statusEl = document.getElementById('uploadStatus');
   if (!file) return;
   if (!file.name.toLowerCase().endsWith('.pdf')) {
-    statusEl.textContent = '仅支持 PDF 文件';
-    statusEl.className = 'upload-status err';
-    showToast('仅支持 PDF 文件');
-    return;
+    statusEl.textContent = '仅支持 PDF 文件'; statusEl.className = 'upload-status err';
+    showToast('仅支持 PDF 文件'); return;
   }
-
   const userId = getUserId();
   if (userId === 'anonymous') {
     statusEl.textContent = '请设置用户 ID（勿用 anonymous）后再上传';
-    statusEl.className = 'upload-status err';
-    showToast('上传前请填写有效的用户 ID');
-    return;
+    statusEl.className = 'upload-status err'; showToast('上传前请填写有效的用户 ID'); return;
   }
-
   const collection = document.getElementById('collectionInput').value.trim() || 'default';
-  statusEl.textContent = `正在上传 ${file.name}…`;
-  statusEl.className = 'upload-status';
-
-  const form = new FormData();
-  form.append('file', file);
-
+  statusEl.textContent = `正在上传 ${file.name}…`; statusEl.className = 'upload-status';
+  const form = new FormData(); form.append('file', file);
   try {
     const resp = await fetch(`/api/knowledge/ingest?collection=${encodeURIComponent(collection)}`, {
-      method: 'POST',
-      headers: {'X-User-ID': userId},
-      body: form,
+      method: 'POST', headers: {'X-User-ID': userId}, body: form,
     });
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error(data.detail || resp.statusText);
-    }
+    if (!resp.ok) throw new Error(data.detail || resp.statusText);
     statusEl.textContent = `已导入「${data.source}」→ 集合 ${data.collection}（${data.num_chunks_added} 块，共 ${data.total_chunks_in_collection} 块）`;
-    statusEl.className = 'upload-status ok';
-    showToast('PDF 已导入知识库');
-    refreshKnowledgeCollections();
+    statusEl.className = 'upload-status ok'; showToast('PDF 已导入知识库'); refreshKnowledgeCollections();
   } catch (err) {
-    statusEl.textContent = '上传失败: ' + err.message;
-    statusEl.className = 'upload-status err';
+    statusEl.textContent = '上传失败: ' + err.message; statusEl.className = 'upload-status err';
     showToast('上传失败: ' + err.message);
   }
 }
@@ -325,33 +753,20 @@ async function refreshKnowledgeCollections() {
   const el = document.getElementById('knowledgeList');
   if (!el) return;
   const userId = getUserId();
-  if (userId === 'anonymous') {
-    el.textContent = '填写用户 ID 后可查看集合';
-    return;
-  }
+  if (userId === 'anonymous') { el.textContent = '填写用户 ID 后可查看集合'; return; }
   try {
-    const resp = await fetch('/api/knowledge/collections', {
-      headers: {'X-User-ID': userId},
-    });
-    if (!resp.ok) {
-      el.textContent = '无法加载集合';
-      return;
-    }
+    const resp = await fetch('/api/knowledge/collections', { headers: {'X-User-ID': userId} });
+    if (!resp.ok) { el.textContent = '无法加载集合'; return; }
     const data = await resp.json();
     const cols = data.collections || [];
-    if (!cols.length) {
-      el.textContent = '暂无集合（上传 PDF 后自动创建）';
-      return;
-    }
-    el.innerHTML = cols.map(c =>
-      `<div class="kb-item"><span>${c.name}</span><span>${c.chunk_count} 块</span></div>`
-    ).join('');
-  } catch {
-    el.textContent = '无法加载集合';
-  }
+    if (!cols.length) { el.textContent = '暂无集合（上传 PDF 后自动创建）'; return; }
+    el.innerHTML = cols.map(c => `<div class="kb-item"><span>${c.name}</span><span>${c.chunk_count} 块</span></div>`).join('');
+  } catch { el.textContent = '无法加载集合'; }
 }
 
-// --- 专家面板 ---
+// =====================================================================
+// 专家面板
+// =====================================================================
 function renderSpecialists(availableList) {
   available = new Set(availableList);
   const el = document.getElementById('specialistList');
@@ -371,13 +786,13 @@ function highlightSpecialist(name) {
     const nm = document.querySelector(`#spec-${s.id} .name`);
     const badge = document.getElementById(`badge-${s.id}`);
     if (s.id === name) {
-      dot.className = 'dot active';
-      nm.classList.add('lit');
-      badge.classList.add('show');
+      if (dot) dot.className = 'dot active';
+      if (nm) nm.classList.add('lit');
+      if (badge) badge.classList.add('show');
     } else {
-      if (available.has(s.id)) dot.className = 'dot available';
-      nm.classList.remove('lit');
-      badge.classList.remove('show');
+      if (dot && available.has(s.id)) dot.className = 'dot available';
+      if (nm) nm.classList.remove('lit');
+      if (badge) badge.classList.remove('show');
     }
   });
 }
@@ -393,27 +808,23 @@ function clearHighlights() {
   });
 }
 
-// --- 健康检查 ---
+// =====================================================================
+// 健康检查 / 用量统计
+// =====================================================================
 async function checkHealth() {
   try {
     const r = await fetch('/health');
     const d = await r.json();
     const dot = document.getElementById('statusDot');
     const label = document.getElementById('statusLabel');
-    if (d.status === 'ok') {
-      dot.className = 'status-dot';
-      label.textContent = '系统正常';
-    } else {
-      dot.className = 'status-dot degraded';
-      label.textContent = '部分降级';
-    }
+    if (d.status === 'ok') { dot.className = 'status-dot'; label.textContent = '系统正常'; }
+    else { dot.className = 'status-dot degraded'; label.textContent = '部分降级'; }
   } catch {
     document.getElementById('statusDot').className = 'status-dot offline';
     document.getElementById('statusLabel').textContent = '离线';
   }
 }
 
-// --- 用量统计 ---
 const TIER_LABELS = {heavy:'主力模型', medium:'分析模型', light:'轻量模型'};
 async function refreshUsage() {
   try {
@@ -440,32 +851,9 @@ async function refreshUsage() {
   } catch {}
 }
 
-// --- 消息区域 ---
-function addUserMsg(text) {
-  document.getElementById('welcome')?.remove();
-  const d = document.createElement('div');
-  d.className = 'msg user';
-  d.textContent = text;
-  document.getElementById('messages').appendChild(d);
-  scrollToBottom();
-}
-
-function createAssistantMsg() {
-  document.getElementById('welcome')?.remove();
-  const d = document.createElement('div');
-  d.className = 'msg assistant';
-  d.innerHTML = '<div class="phase-tag" id="phaseTag">思考中</div><div class="handoffs" id="handoffs"></div><div class="content" id="streamContent"></div><div class="typing" id="typingIndicator"><span></span><span></span><span></span></div>';
-  document.getElementById('messages').appendChild(d);
-  scrollToBottom();
-  return d;
-}
-
-function scrollToBottom() {
-  const m = document.getElementById('messages');
-  m.scrollTop = m.scrollHeight;
-}
-
-// --- 输入框自适应高度 ---
+// =====================================================================
+// 输入 / 快捷键
+// =====================================================================
 function autoResize(el) {
   el.addEventListener('input', () => {
     el.style.height = 'auto';
@@ -473,225 +861,25 @@ function autoResize(el) {
   });
 }
 
-// --- 填入示例问题 ---
 function fillQuery(el) {
   const input = document.getElementById('queryInput');
-  input.value = el.textContent;
-  input.focus();
+  input.value = el.textContent; input.focus();
   input.dispatchEvent(new Event('input'));
 }
 
-// --- 按键处理 ---
 function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendQuery();
-  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuery(); }
 }
 
-// --- 错误提示 ---
 function showToast(msg) {
   const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.style.display = 'block';
+  t.textContent = msg; t.style.display = 'block';
   setTimeout(() => t.style.display = 'none', 4000);
 }
 
-// --- 发送查询 ---
-async function sendQuery() {
-  const input = document.getElementById('queryInput');
-  const query = input.value.trim();
-  if (!query || streaming) return;
-
-  streaming = true;
-  const btn = document.getElementById('sendBtn');
-  btn.disabled = true;
-  input.value = '';
-  input.style.height = 'auto';
-
-  addUserMsg(query);
-  const msgEl = createAssistantMsg();
-  const phaseTag = msgEl.querySelector('#phaseTag');
-  const handoffsEl = msgEl.querySelector('#handoffs');
-  const contentEl = msgEl.querySelector('#streamContent');
-  const typingEl = msgEl.querySelector('#typingIndicator');
-
-  const userId = getUserId();
-
-  try {
-    const resp = await fetch('/api/supervisor/research/stream', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({query, user_id: userId, thread_id: currentThread}),
-    });
-
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({detail: resp.statusText}));
-      throw new Error(err.detail || `HTTP ${resp.status}`);
-    }
-
-    const threadId = resp.headers.get('X-Thread-ID');
-    if (threadId) {
-      currentThread = threadId;
-      document.getElementById('threadDisplay').textContent = threadId.slice(0, 12) + '…';
-      document.getElementById('threadDisplay').title = threadId;
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let finalText = '';
-    let tokenBuf = '';
-    let tokenStreamStarted = false;
-    let tokenStreamEl = null;
-
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, {stream: true});
-
-      const frames = buffer.split('\n\n');
-      buffer = frames.pop();
-
-      for (const frame of frames) {
-        const line = frame.trim();
-        if (!line.startsWith('data:')) continue;
-        let evt;
-        try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
-
-        switch (evt.phase) {
-          case 'update':
-            phaseTag.textContent = '处理中';
-            if (evt.metadata?.available_specialists) {
-              renderSpecialists(evt.metadata.available_specialists);
-            }
-            break;
-
-          case 'handoff': {
-            phaseTag.textContent = '→ ' + (evt.metadata?.specialist || evt.content);
-            const tag = document.createElement('span');
-            tag.className = 'handoff-tag';
-            tag.textContent = evt.metadata?.specialist || evt.content;
-            handoffsEl.appendChild(tag);
-            highlightSpecialist(evt.metadata?.specialist);
-            scrollToBottom();
-            break;
-          }
-
-          case 'tool_call': {
-            const tcLine = document.createElement('div');
-            tcLine.className = 'tool-call-line';
-            const sp = evt.metadata?.specialist || evt.node || '';
-            const tool = evt.metadata?.tool || '';
-            tcLine.innerHTML =
-              `<span class="tc-icon">⚙</span>` +
-              `<span class="tc-specialist">${sp}</span> ` +
-              `<span class="tc-tool">${tool}</span>` +
-              (evt.content ? `<span>(${evt.content.split('(').slice(1).join('(')})</span>` : '');
-            contentEl.appendChild(tcLine);
-            scrollToBottom();
-            break;
-          }
-
-          case 'token': {
-            if (!tokenStreamStarted) {
-              tokenStreamStarted = true;
-              phaseTag.textContent = '回答中';
-              phaseTag.style.color = 'var(--green)';
-              contentEl.innerHTML = '';
-              if (!tokenStreamEl) {
-                tokenStreamEl = document.createElement('div');
-                tokenStreamEl.className = 'token-stream';
-                contentEl.appendChild(tokenStreamEl);
-              }
-            }
-            tokenBuf += evt.content || '';
-            tokenStreamEl.innerHTML = renderMarkdown(tokenBuf);
-            scrollToBottom();
-            break;
-          }
-
-          case 'final':
-            phaseTag.textContent = '回答完成';
-            finalText = evt.content || '';
-            contentEl.innerHTML = renderMarkdown(finalText);
-            typingEl.style.display = 'none';
-            clearHighlights();
-            scrollToBottom();
-            break;
-
-          case 'review_requested': {
-            phaseTag.textContent = '等待审核';
-            phaseTag.style.color = 'var(--yellow)';
-            typingEl.style.display = 'none';
-            clearHighlights();
-            const draftText = evt.content || contentEl.textContent || '';
-            if (draftText) contentEl.innerHTML = renderMarkdown(draftText);
-            const reviewEl = document.createElement('div');
-            reviewEl.className = 'review-panel';
-            reviewEl.id = 'reviewPanel';
-            reviewEl.innerHTML = `
-              <div class="review-title">需要人工审核</div>
-              <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
-                Supervisor 已生成初稿，请审阅后决定通过或修改。
-              </p>
-              <textarea id="reviewFeedback" placeholder="（可选）输入修改意见…"></textarea>
-              <div class="review-actions">
-                <button class="btn-approve" onclick="hitlApprove()">✓ 通过</button>
-                <button class="btn-revise" onclick="hitlRevise()">✎ 修改</button>
-              </div>
-            `;
-            msgEl.appendChild(reviewEl);
-            hitlPendingThread = currentThread;
-            scrollToBottom();
-            break;
-          }
-
-          case 'error':
-            phaseTag.textContent = '出错';
-            phaseTag.style.color = 'var(--red)';
-            contentEl.textContent = evt.content || '未知错误';
-            typingEl.style.display = 'none';
-            clearHighlights();
-            break;
-
-          case 'heartbeat':
-            break;
-
-          case 'done':
-            typingEl.style.display = 'none';
-            if (!finalText && tokenBuf) {
-              finalText = tokenBuf;
-            }
-            if (!finalText && contentEl.textContent) {
-              finalText = contentEl.textContent;
-            }
-            clearHighlights();
-            break;
-        }
-      }
-    }
-
-    if (finalText) {
-      contentEl.innerHTML = renderMarkdown(finalText);
-    }
-    typingEl.style.display = 'none';
-    refreshUsage();
-
-  } catch (err) {
-    const contentEl = msgEl.querySelector('#streamContent');
-    const typingEl = msgEl.querySelector('#typingIndicator');
-    if (contentEl) contentEl.textContent = '请求失败: ' + err.message;
-    if (typingEl) typingEl.style.display = 'none';
-    showToast('请求失败: ' + err.message);
-  } finally {
-    streaming = false;
-    btn.disabled = false;
-    input.focus();
-  }
-}
-
-// --- Markdown 渲染（支持表格） ---
+// =====================================================================
+// Markdown 渲染
+// =====================================================================
 function renderMarkdown(text) {
   const lines = text.split('\n');
   const out = [];
@@ -708,11 +896,7 @@ function renderMarkdown(text) {
       let table = '<table class="md-table"><thead><tr>';
       headerCells.forEach(h => { table += `<th>${escAndInline(h)}</th>`; });
       table += '</tr></thead><tbody>';
-      rows.forEach(r => {
-        table += '<tr>';
-        r.forEach(c => { table += `<td>${escAndInline(c)}</td>`; });
-        table += '</tr>';
-      });
+      rows.forEach(r => { table += '<tr>'; r.forEach(c => { table += `<td>${escAndInline(c)}</td>`; }); table += '</tr>'; });
       table += '</tbody></table>';
       out.push(table);
     } else {
@@ -724,9 +908,7 @@ function renderMarkdown(text) {
   html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, '<ul>$1</ul>');
   return html;
 }
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escAndInline(s) {
   return escHtml(s)
     .replace(/\*\*(.+?)\*\*/g, '$1')
@@ -734,11 +916,8 @@ function escAndInline(s) {
 }
 function renderLine(line) {
   let s = escHtml(line);
-  // 标题 → 去掉 # 符号，只保留文字（加粗显示）
   s = s.replace(/^#{1,6}\s+(.+)$/gm, '<div style="font-weight:600;margin:8px 0 4px">$1</div>');
-  // 水平线 → 空行
   if (/^\s*[-*_]{3,}\s*$/.test(s)) return '<br>';
-  // **粗体** → 直接去掉星号
   s = s.replace(/\*\*(.+?)\*\*/g, '$1');
   s = s.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
   s = s.replace(/^\s*(\d+)\. (.+)$/gm, '<li>$2</li>');
@@ -747,74 +926,52 @@ function renderLine(line) {
   return s;
 }
 
-// --- 人机协作：审批 / 修改 ---
-async function hitlApprove() {
-  if (!hitlPendingThread) return;
-  const feedback = document.getElementById('reviewFeedback')?.value.trim() || '';
-  await _hitlSubmit('approve', feedback);
+// =====================================================================
+// 人机协作
+// =====================================================================
+async function hitlApprove(tid) {
+  const threadId = tid || hitlPendingThread;
+  if (!threadId) return;
+  const container = threadData.get(threadId)?.el;
+  const feedback = container?.querySelector('.review-feedback-input')?.value.trim() || '';
+  await _hitlSubmit(threadId, 'approve', feedback);
 }
 
-async function hitlRevise() {
-  if (!hitlPendingThread) return;
-  const feedback = document.getElementById('reviewFeedback')?.value.trim() || '';
+async function hitlRevise(tid) {
+  const threadId = tid || hitlPendingThread;
+  if (!threadId) return;
+  const container = threadData.get(threadId)?.el;
+  const feedback = container?.querySelector('.review-feedback-input')?.value.trim() || '';
   if (!feedback) { showToast('请输入修改意见'); return; }
-  await _hitlSubmit('resume', feedback);
+  await _hitlSubmit(threadId, 'resume', feedback);
 }
 
-async function _hitlSubmit(action, feedback) {
-  const threadId = hitlPendingThread;
+async function _hitlSubmit(threadId, action, feedback) {
   hitlPendingThread = null;
-
-  const panel = document.getElementById('reviewPanel');
-  if (panel) {
-    panel.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px 0">正在处理...</div>';
-  }
-
+  const container = threadData.get(threadId)?.el;
+  const panel = container?.querySelector('.review-panel');
+  if (panel) panel.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px 0">正在处理...</div>';
   try {
     const resp = await fetch(`/api/supervisor/research/${threadId}/${action}`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({feedback}),
     });
-
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({detail: resp.statusText}));
-      throw new Error(err.detail || `HTTP ${resp.status}`);
-    }
-
+    if (!resp.ok) { const err = await resp.json().catch(() => ({detail: resp.statusText})); throw new Error(err.detail || `HTTP ${resp.status}`); }
     const data = await resp.json();
     if (panel) panel.remove();
-
-    const msgs = document.getElementById('messages');
-    const resultEl = document.createElement('div');
-    resultEl.className = 'msg assistant';
-    resultEl.innerHTML = `<div class="phase-tag" style="color:var(--green)">已通过 — 最终回答</div><div class="content">${renderMarkdown(data.reply || '')}</div>`;
-    msgs.appendChild(resultEl);
-    scrollToBottom();
+    if (container) {
+      const resultEl = document.createElement('div');
+      resultEl.className = 'msg assistant';
+      resultEl.innerHTML = `<div class="phase-tag" style="color:var(--green)">已通过 — 最终回答</div><div class="content">${renderMarkdown(data.reply || '')}</div>`;
+      container.appendChild(resultEl);
+    }
+    _scrollIfViewing(threadId);
     refreshUsage();
   } catch (err) {
     showToast('操作失败: ' + err.message);
     if (panel) panel.innerHTML = `<div style="color:var(--red);font-size:12px">错误: ${err.message}</div>`;
     hitlPendingThread = threadId;
   }
-}
-
-// --- 新建对话 ---
-function newThread() {
-  currentThread = null;
-  document.getElementById('threadDisplay').textContent = '-';
-  const m = document.getElementById('messages');
-  m.innerHTML = `<div class="welcome" id="welcome">
-    <div class="icon">🔬</div>
-    <h2>A 股金融研究助手</h2>
-    <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
-    <div class="examples">
-      <div class="example" onclick="fillQuery(this)">分析宁德时代 2024 年的营收和利润表现</div>
-      <div class="example" onclick="fillQuery(this)">贵州茅台最近的新闻舆情和市场情绪如何？</div>
-      <div class="example" onclick="fillQuery(this)">对比隆基绿能和通威股份的 ROE 和毛利率</div>
-      <div class="example" onclick="fillQuery(this)">查一下比亚迪最近的公告披露和股价走势</div>
-    </div>
-  </div>`;
 }
 
 init();

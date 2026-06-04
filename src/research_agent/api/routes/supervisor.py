@@ -548,6 +548,7 @@ async def _research_event_stream(
     persist_user_id: str | None = None,
     persist_original_query: str | None = None,
     available_specialists: list[str] | None = None,
+    conversation_store: Any | None = None,
 ) -> AsyncIterator[str]:
     """为单次研究调用生成 SSE 帧的异步生成器。
 
@@ -873,6 +874,16 @@ async def _research_event_stream(
                     thread_id=thread_id,
                 )
             )
+        # 将最终助手回复写入会话历史
+        if conversation_store is not None and outcome.get("last_plain_synthesis"):
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(
+                    conversation_store.add_message,
+                    thread_id,
+                    user_id,
+                    "assistant",
+                    str(outcome["last_plain_synthesis"]),
+                )
         runner.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await runner
@@ -917,6 +928,19 @@ async def supervisor_research_stream(
 
     logger.info("Research-supervisor stream: user={}, thread={}", user_id, thread_id)
 
+    # -- 将用户消息写入会话历史 --
+    conv_store = getattr(raw_request.app.state, "conversation_store", None)
+    if conv_store is not None:
+        title_hint = request.query[:40].replace("\n", " ")
+        await asyncio.to_thread(
+            conv_store.add_message,
+            thread_id,
+            user_id,
+            "user",
+            request.query,
+            title_hint=title_hint,
+        )
+
     messages_input = await _build_user_context_messages(
         memory,
         user_id,
@@ -936,6 +960,7 @@ async def supervisor_research_stream(
             persist_user_id=user_id,
             persist_original_query=request.query,
             available_specialists=specialists,
+            conversation_store=conv_store,
         ),
         media_type="text/event-stream",
         headers={

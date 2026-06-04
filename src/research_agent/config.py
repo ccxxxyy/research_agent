@@ -163,6 +163,11 @@ class Settings(BaseSettings):
         ),
     )
 
+    conversation_sqlite_path: str = Field(
+        default="data/conversations.db",
+        description="会话历史持久化 SQLite 路径，存储用户对话记录和消息。",
+    )
+
     llm: LLMConfig = LLMConfig()
     database: DatabaseConfig = DatabaseConfig()
     observability: ObservabilityConfig = ObservabilityConfig()

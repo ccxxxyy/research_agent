@@ -19,6 +19,7 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 from research_agent.api.routes import (  # noqa: E402
     a2a,
+    conversations,
     health,
     knowledge,
     memory,
@@ -211,6 +212,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.checkpointer = checkpointer
     app.state.settings = settings
 
+    from research_agent.memory.conversation_store import ConversationStore
+
+    conv_db = getattr(settings, "conversation_sqlite_path", "./data/conversations.db")
+    conv_store = ConversationStore(db_path=conv_db)
+    app.state.conversation_store = conv_store
+
     yield
 
     # --- 优雅关闭：按相反顺序释放资源 ---
@@ -303,6 +310,7 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(sentiment.router)
     app.include_router(supervisor.router)
+    app.include_router(conversations.router)
     app.include_router(a2a.router)
 
     # --- 静态前端 ---
