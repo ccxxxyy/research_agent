@@ -62,14 +62,14 @@ class _FakeGraph:
         self,
         inputs: dict,
         config: dict | None = None,
-        stream_mode: str = "updates",
+        stream_mode: str | list[str] = "updates",
         **kwargs: object,
     ) -> AsyncIterator[dict | tuple]:
-        subgraphs = kwargs.get("subgraphs", False)
+        is_multi = isinstance(stream_mode, list)
         for msg in self._scripted:
             node = getattr(msg, "name", None) or "supervisor"
             chunk = {node: {"messages": [msg]}}
-            yield ((), chunk) if subgraphs else chunk
+            yield ((), "updates", chunk) if is_multi else ((), chunk)
 
 
 class _SlowFakeGraph(_FakeGraph):
@@ -79,15 +79,15 @@ class _SlowFakeGraph(_FakeGraph):
         self,
         inputs: dict,
         config: dict | None = None,
-        stream_mode: str = "updates",
+        stream_mode: str | list[str] = "updates",
         **kwargs: object,
     ) -> AsyncIterator[dict | tuple]:
-        subgraphs = kwargs.get("subgraphs", False)
+        is_multi = isinstance(stream_mode, list)
         for msg in self._scripted:
             await asyncio.sleep(0.12)
             node = getattr(msg, "name", None) or "supervisor"
             chunk = {node: {"messages": [msg]}}
-            yield ((), chunk) if subgraphs else chunk
+            yield ((), "updates", chunk) if is_multi else ((), chunk)
 
 
 def _handoff(name: str) -> AIMessage:
@@ -207,7 +207,7 @@ class TestResearchJSON:
 
         assert r.status_code == 200
         body = r.json()
-        assert body["reply"].startswith("### 核心发现")
+        assert "核心发现" in body["reply"]
         assert body["thread_id"]  # 解析为一个新的 UUID
         assert body["specialists_reached"] == ["data_expert", "report_expert"]
         assert body["message_count"] >= 5  # 人类消息 + 预设消息
@@ -355,9 +355,10 @@ class TestResearchSSE:
             async def astream(
                 self, inputs: dict, config: dict | None = None, **kwargs: object
             ) -> AsyncIterator[tuple]:
-                # 开场：supervisor 移交
+                # 3-tuple format: (namespace, mode, data)
                 yield (
                     (),
+                    "updates",
                     {
                         "supervisor": {
                             "messages": [
@@ -376,9 +377,9 @@ class TestResearchSSE:
                         }
                     },
                 )
-                # 子图：data_expert 调用工具
                 yield (
                     ("data_expert",),
+                    "updates",
                     {
                         "agent": {
                             "messages": [
@@ -397,9 +398,9 @@ class TestResearchSSE:
                         }
                     },
                 )
-                # supervisor 最终回答
                 yield (
                     (),
+                    "updates",
                     {"supervisor": {"messages": [AIMessage(content="done", name="supervisor")]}},
                 )
 

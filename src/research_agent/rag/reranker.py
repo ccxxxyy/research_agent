@@ -43,29 +43,34 @@ from typing import Any
 
 from loguru import logger
 
-_MODELSCOPE_CACHE_PATH = os.path.expanduser("~/.cache/modelscope/hub/models/BAAI/bge-reranker-base")
-"""ModelScope 缓存目录的预计算路径。
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-在中国网络环境下 HuggingFace Hub 的 Xet S3 后端经常不可达。
-如果权重已预下载（例如通过 ``uv sync --extra modelscope`` 后执行``modelscope.snapshot_download('BAAI/bge-reranker-base')``），文件会落在此路径。
-当该路径存在且包含 safetensors 文件时优先使用，从而在模型加载时避免任何网络调用。
-即：如果已经通过 ModelScope 预下载了模型权重到本地缓存目录，就直接用本地文件，完全不联网。
-"""
+_MODELSCOPE_CACHE_PATH = os.path.expanduser("~/.cache/modelscope/hub/models/BAAI/bge-reranker-base")
+_HF_CACHE_ROOT = os.path.expanduser("~/.cache/huggingface/hub")
 
 
 def _resolve_default_model() -> str:
     """在导入时选择最佳可用模型路径。
 
     优先级：
-      1. 显式设置的 ``KNOWLEDGE_RERANKER_MODEL`` 环境变量（用户覆盖）。
-      2. ModelScope 本地缓存（快速、无网络访问）。
-      3. HuggingFace 模型 ID（需要网络或 HF 缓存命中）。
+      1. 显式设置的 ``KNOWLEDGE_RERANKER_MODEL`` 环境变量。
+      2. ModelScope 本地缓存。
+      3. HuggingFace 本地缓存 snapshot。
+      4. HuggingFace 模型 ID（需联网）。
     """
     explicit = os.environ.get("KNOWLEDGE_RERANKER_MODEL", "").strip()
     if explicit:
         return explicit
     if os.path.isfile(os.path.join(_MODELSCOPE_CACHE_PATH, "model.safetensors")):
         return _MODELSCOPE_CACHE_PATH
+    hf_snap = os.path.join(_HF_CACHE_ROOT, "models--BAAI--bge-reranker-base", "snapshots")
+    if os.path.isdir(hf_snap):
+        snaps = sorted(os.listdir(hf_snap), key=lambda d: os.path.getmtime(os.path.join(hf_snap, d)), reverse=True)
+        if snaps:
+            local = os.path.join(hf_snap, snaps[0])
+            logger.info("Using local cached reranker: {}", local)
+            return local
     return "BAAI/bge-reranker-base"
 
 

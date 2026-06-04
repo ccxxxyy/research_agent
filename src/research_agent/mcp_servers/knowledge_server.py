@@ -91,6 +91,8 @@ from __future__ import annotations
 # ---------------------------------------------------------------------
 import os as _os
 
+_os.environ["HF_HUB_OFFLINE"] = "1"
+_os.environ["TRANSFORMERS_OFFLINE"] = "1"
 _os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 _os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 _os.environ.setdefault("TQDM_DISABLE", "1")

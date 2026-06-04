@@ -66,14 +66,14 @@ class _HITLStreamGraph:
         self,
         inputs: dict,
         config: dict | None = None,
-        stream_mode: str = "updates",
+        stream_mode: str | list[str] = "updates",
         **kwargs: object,
     ) -> AsyncIterator[dict | tuple]:
-        subgraphs = kwargs.get("subgraphs", False)
+        is_multi = isinstance(stream_mode, list)
         for msg in self._scripted:
             node = getattr(msg, "name", None) or "supervisor"
             chunk = {node: {"messages": [msg]}}
-            yield ((), chunk) if subgraphs else chunk
+            yield ((), "updates", chunk) if is_multi else ((), chunk)
 
     async def aget_state(self, config: dict) -> _FakeState:
         return _FakeState(is_interrupted=self._interrupted)
@@ -113,12 +113,12 @@ class _CompletedGraph:
         self,
         inputs: dict,
         config: dict | None = None,
-        stream_mode: str = "updates",
+        stream_mode: str | list[str] = "updates",
         **kwargs: object,
     ) -> AsyncIterator[dict | tuple]:
-        subgraphs = kwargs.get("subgraphs", False)
+        is_multi = isinstance(stream_mode, list)
         chunk = {"supervisor": {"messages": [AIMessage(content="done", name="supervisor")]}}
-        yield ((), chunk) if subgraphs else chunk
+        yield ((), "updates", chunk) if is_multi else ((), chunk)
 
 
 # ---------------------------------------------------------------------------

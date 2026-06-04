@@ -44,9 +44,14 @@ from __future__ import annotations
 import asyncio
 import collections
 import hashlib
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+for _proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+    os.environ.pop(_proxy_key, None)
+os.environ["NO_PROXY"] = "*"
 
 from fastmcp import FastMCP
 

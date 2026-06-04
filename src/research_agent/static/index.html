@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Research Agent</title>
+<title>研究助手 - Research Agent</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -76,6 +76,13 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .msg .tool-call-line .tc-specialist{color:var(--accent2);font-weight:600}
 .msg .tool-call-line .tc-tool{color:var(--green,#4ade80)}
 
+.md-table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px}
+.md-table th,.md-table td{border:1px solid var(--border);padding:6px 10px;text-align:left}
+.md-table th{background:var(--surface2);font-weight:600;color:var(--accent2)}
+.md-table tr:nth-child(even){background:rgba(255,255,255,0.02)}
+
+.token-stream{white-space:pre-wrap;line-height:1.7}
+
 .msg .phase-tag{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text2);margin-bottom:6px}
 
 .typing{display:inline-flex;gap:4px;padding:4px 0}
@@ -106,6 +113,16 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .input-meta{display:flex;gap:16px;margin-top:8px;font-size:11px;color:var(--text2)}
 .input-meta label{display:flex;align-items:center;gap:4px}
 .input-meta input{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text);font-size:11px;width:100px;outline:none;font-family:monospace}
+
+.upload-zone{border:1px dashed var(--border);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;text-align:center;font-size:12px;color:var(--text2);cursor:pointer;transition:border-color .15s,background .15s}
+.upload-zone:hover,.upload-zone.dragover{border-color:var(--accent);background:rgba(108,99,255,0.08);color:var(--text)}
+.upload-zone .upload-title{color:var(--text);font-size:13px;margin-bottom:4px}
+.upload-zone .upload-hint{font-size:11px}
+.upload-status{font-size:11px;color:var(--text2);margin-top:6px;min-height:16px}
+.upload-status.ok{color:var(--green)}
+.upload-status.err{color:var(--red)}
+.knowledge-list{font-size:11px;color:var(--text2);padding:0 20px 12px;max-height:80px;overflow-y:auto}
+.knowledge-list .kb-item{padding:2px 0;display:flex;justify-content:space-between;gap:8px}
 
 /* HITL review panel */
 .review-panel{background:var(--surface2);border:1px solid var(--accent);border-radius:var(--radius);padding:16px 20px;margin-top:12px;animation:fadeIn .25s ease}
@@ -138,17 +155,19 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="sidebar-header">
-      <h1><span>🔬</span> Research Agent</h1>
-      <p>Multi-Agent Financial Research</p>
+      <h1><span>🔬</span> 研究助手</h1>
+      <p>多智能体金融研究系统</p>
     </div>
-    <div class="section-title">Specialists</div>
+    <div class="section-title">专家团队</div>
     <div class="specialist-list" id="specialistList"></div>
+    <div class="section-title">知识库</div>
+    <div class="knowledge-list" id="knowledgeList">暂无集合</div>
     <div class="stats" id="statsPanel">
-      <div class="section-title" style="padding:0 0 8px">Session Stats</div>
-      <div class="row"><span>Prompt tokens</span><span class="val" id="statPT">-</span></div>
-      <div class="row"><span>Completion tokens</span><span class="val" id="statCT">-</span></div>
-      <div class="row"><span>LLM calls</span><span class="val" id="statCalls">-</span></div>
-      <div class="row"><span>Est. cost</span><span class="val" id="statCost">-</span></div>
+      <div class="section-title" style="padding:0 0 8px">会话统计</div>
+      <div id="tierStats"></div>
+      <div class="row" style="border-top:1px solid var(--surface2);margin-top:6px;padding-top:6px"><span>合计 Token</span><span class="val" id="statTotal">-</span></div>
+      <div class="row"><span>LLM 调用次数</span><span class="val" id="statCalls">-</span></div>
+      <div class="row"><span>预估费用</span><span class="val" id="statCost">-</span></div>
     </div>
   </aside>
 
@@ -156,14 +175,14 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
   <div class="main">
     <div class="topbar">
       <div class="status-dot" id="statusDot"></div>
-      <span class="status-label" id="statusLabel">Connecting...</span>
+      <span class="status-label" id="statusLabel">连接中...</span>
       <span class="thread-id" id="threadDisplay">-</span>
     </div>
 
     <div class="messages" id="messages">
       <div class="welcome" id="welcome">
         <div class="icon">🔬</div>
-        <h2>Financial Research Agent</h2>
+        <h2>A 股金融研究助手</h2>
         <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
         <div class="examples">
           <div class="example" onclick="fillQuery(this)">分析宁德时代 2024 年的营收和利润表现</div>
@@ -175,6 +194,12 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
     </div>
 
     <div class="input-area">
+      <div class="upload-zone" id="uploadZone" onclick="document.getElementById('pdfFileInput').click()">
+        <div class="upload-title">拖拽 PDF 到此处，或点击上传</div>
+        <div class="upload-hint">导入后可向知识库专家提问，例如「在我上传的报告里检索…」</div>
+        <div class="upload-status" id="uploadStatus"></div>
+      </div>
+      <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" hidden />
       <div class="input-row">
         <textarea id="queryInput" rows="1" placeholder="输入研究问题..." onkeydown="handleKey(event)"></textarea>
         <button id="sendBtn" onclick="sendQuery()">
@@ -182,7 +207,8 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
         </button>
       </div>
       <div class="input-meta">
-        <label>User ID: <input id="userIdInput" value="demo_user" /></label>
+        <label>用户 ID: <input id="userIdInput" value="demo_user" onchange="refreshKnowledgeCollections()" /></label>
+        <label>知识库集合: <input id="collectionInput" value="default" title="上传 PDF 时写入的集合名称" /></label>
       </div>
     </div>
   </div>
@@ -192,12 +218,12 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 
 <script>
 const ALL_SPECIALISTS = [
-  {id:'data_expert',    label:'Data Expert',      desc:'财务数据 / 行情'},
-  {id:'report_expert',  label:'Report Expert',    desc:'公告 / 年报 PDF'},
-  {id:'coder_expert',   label:'Coder Expert',     desc:'Python 计算'},
-  {id:'news_expert',    label:'News Expert',      desc:'新闻 / 快讯'},
-  {id:'knowledge_expert',label:'Knowledge Expert',desc:'用户知识库'},
-  {id:'sentiment_expert',label:'Sentiment Expert', desc:'舆情量化'},
+  {id:'data_expert',    label:'数据专家',    desc:'财务数据 / 行情'},
+  {id:'report_expert',  label:'公告专家',    desc:'公告 / 年报 PDF'},
+  {id:'coder_expert',   label:'代码专家',    desc:'Python 计算'},
+  {id:'news_expert',    label:'新闻专家',    desc:'新闻 / 快讯'},
+  {id:'knowledge_expert',label:'知识库专家', desc:'用户知识库'},
+  {id:'sentiment_expert',label:'舆情专家',   desc:'舆情量化'},
 ];
 
 let currentThread = null;
@@ -209,8 +235,120 @@ let hitlPendingThread = null;
 function init() {
   renderSpecialists([]);
   checkHealth();
+  refreshUsage();
+  refreshKnowledgeCollections();
+  setupUploadZone();
   setInterval(refreshUsage, 15000);
   autoResize(document.getElementById('queryInput'));
+}
+
+function getUserId() {
+  return document.getElementById('userIdInput').value.trim() || 'anonymous';
+}
+
+function setupUploadZone() {
+  const zone = document.getElementById('uploadZone');
+  const input = document.getElementById('pdfFileInput');
+  if (!zone || !input) return;
+
+  ['dragenter', 'dragover'].forEach(ev => {
+    zone.addEventListener(ev, e => {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(ev => {
+    zone.addEventListener(ev, e => {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove('dragover');
+    });
+  });
+  zone.addEventListener('drop', e => {
+    const files = e.dataTransfer?.files;
+    if (files && files.length) uploadPdf(files[0]);
+  });
+  input.addEventListener('change', () => {
+    if (input.files && input.files[0]) uploadPdf(input.files[0]);
+    input.value = '';
+  });
+}
+
+async function uploadPdf(file) {
+  const statusEl = document.getElementById('uploadStatus');
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    statusEl.textContent = '仅支持 PDF 文件';
+    statusEl.className = 'upload-status err';
+    showToast('仅支持 PDF 文件');
+    return;
+  }
+
+  const userId = getUserId();
+  if (userId === 'anonymous') {
+    statusEl.textContent = '请设置用户 ID（勿用 anonymous）后再上传';
+    statusEl.className = 'upload-status err';
+    showToast('上传前请填写有效的用户 ID');
+    return;
+  }
+
+  const collection = document.getElementById('collectionInput').value.trim() || 'default';
+  statusEl.textContent = `正在上传 ${file.name}…`;
+  statusEl.className = 'upload-status';
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const resp = await fetch(`/api/knowledge/ingest?collection=${encodeURIComponent(collection)}`, {
+      method: 'POST',
+      headers: {'X-User-ID': userId},
+      body: form,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data.detail || resp.statusText);
+    }
+    statusEl.textContent = `已导入「${data.source}」→ 集合 ${data.collection}（${data.num_chunks_added} 块，共 ${data.total_chunks_in_collection} 块）`;
+    statusEl.className = 'upload-status ok';
+    showToast('PDF 已导入知识库');
+    refreshKnowledgeCollections();
+  } catch (err) {
+    statusEl.textContent = '上传失败: ' + err.message;
+    statusEl.className = 'upload-status err';
+    showToast('上传失败: ' + err.message);
+  }
+}
+
+async function refreshKnowledgeCollections() {
+  const el = document.getElementById('knowledgeList');
+  if (!el) return;
+  const userId = getUserId();
+  if (userId === 'anonymous') {
+    el.textContent = '填写用户 ID 后可查看集合';
+    return;
+  }
+  try {
+    const resp = await fetch('/api/knowledge/collections', {
+      headers: {'X-User-ID': userId},
+    });
+    if (!resp.ok) {
+      el.textContent = '无法加载集合';
+      return;
+    }
+    const data = await resp.json();
+    const cols = data.collections || [];
+    if (!cols.length) {
+      el.textContent = '暂无集合（上传 PDF 后自动创建）';
+      return;
+    }
+    el.innerHTML = cols.map(c =>
+      `<div class="kb-item"><span>${c.name}</span><span>${c.chunk_count} 块</span></div>`
+    ).join('');
+  } catch {
+    el.textContent = '无法加载集合';
+  }
 }
 
 // --- 专家面板 ---
@@ -222,7 +360,7 @@ function renderSpecialists(availableList) {
     return `<div class="specialist" id="spec-${s.id}">
       <div class="dot ${state}"></div>
       <span class="name">${s.label}</span>
-      <span class="badge" id="badge-${s.id}">routing</span>
+      <span class="badge" id="badge-${s.id}">调度中</span>
     </div>`;
   }).join('');
 }
@@ -264,31 +402,39 @@ async function checkHealth() {
     const label = document.getElementById('statusLabel');
     if (d.status === 'ok') {
       dot.className = 'status-dot';
-      label.textContent = 'All systems online';
+      label.textContent = '系统正常';
     } else {
       dot.className = 'status-dot degraded';
-      label.textContent = 'Degraded';
+      label.textContent = '部分降级';
     }
   } catch {
     document.getElementById('statusDot').className = 'status-dot offline';
-    document.getElementById('statusLabel').textContent = 'Offline';
+    document.getElementById('statusLabel').textContent = '离线';
   }
 }
 
 // --- 用量统计 ---
+const TIER_LABELS = {heavy:'主力模型', medium:'分析模型', light:'轻量模型'};
 async function refreshUsage() {
   try {
     const r = await fetch('/api/usage');
     const d = await r.json();
-    let pt=0, ct=0, calls=0, cost=0;
-    for (const m of Object.values(d.by_model||{})) {
-      pt += m.prompt_tokens||0;
-      ct += m.completion_tokens||0;
-      calls += m.call_count||0;
-      cost += m.total_cost_cny||0;
+    const tierEl = document.getElementById('tierStats');
+    let html = '', totalPt=0, totalCt=0, calls=0, cost=0;
+    for (const tier of ['heavy','medium','light']) {
+      const a = (d.by_agent||{})[tier];
+      if (!a) continue;
+      const pt = a.prompt_tokens||0, ct = a.completion_tokens||0;
+      totalPt += pt; totalCt += ct;
+      calls += a.call_count||0;
+      cost += a.total_cost_cny||0;
+      html += `<div style="margin-bottom:6px">`;
+      html += `<div class="row" style="color:var(--accent);font-size:12px;margin-bottom:2px"><span>${TIER_LABELS[tier]}(${tier})</span><span class="val">${a.call_count||0}次</span></div>`;
+      html += `<div class="row" style="font-size:11px;opacity:.7"><span>输入 ${pt.toLocaleString()}</span><span class="val">输出 ${ct.toLocaleString()}</span></div>`;
+      html += `</div>`;
     }
-    document.getElementById('statPT').textContent = pt.toLocaleString();
-    document.getElementById('statCT').textContent = ct.toLocaleString();
+    tierEl.innerHTML = html || '<div class="row" style="opacity:.5">暂无调用</div>';
+    document.getElementById('statTotal').textContent = (totalPt+totalCt).toLocaleString();
     document.getElementById('statCalls').textContent = calls;
     document.getElementById('statCost').textContent = '¥' + cost.toFixed(4);
   } catch {}
@@ -308,7 +454,7 @@ function createAssistantMsg() {
   document.getElementById('welcome')?.remove();
   const d = document.createElement('div');
   d.className = 'msg assistant';
-  d.innerHTML = '<div class="phase-tag" id="phaseTag">thinking</div><div class="handoffs" id="handoffs"></div><div class="content" id="streamContent"></div><div class="typing" id="typingIndicator"><span></span><span></span><span></span></div>';
+  d.innerHTML = '<div class="phase-tag" id="phaseTag">思考中</div><div class="handoffs" id="handoffs"></div><div class="content" id="streamContent"></div><div class="typing" id="typingIndicator"><span></span><span></span><span></span></div>';
   document.getElementById('messages').appendChild(d);
   scrollToBottom();
   return d;
@@ -351,7 +497,7 @@ function showToast(msg) {
   setTimeout(() => t.style.display = 'none', 4000);
 }
 
-// --- 发送查询（通过 fetch POST 进行 SSE 流式传输）---
+// --- 发送查询 ---
 async function sendQuery() {
   const input = document.getElementById('queryInput');
   const query = input.value.trim();
@@ -370,7 +516,7 @@ async function sendQuery() {
   const contentEl = msgEl.querySelector('#streamContent');
   const typingEl = msgEl.querySelector('#typingIndicator');
 
-  const userId = document.getElementById('userIdInput').value.trim() || 'anonymous';
+  const userId = getUserId();
 
   try {
     const resp = await fetch('/api/supervisor/research/stream', {
@@ -395,6 +541,9 @@ async function sendQuery() {
     const decoder = new TextDecoder();
     let buffer = '';
     let finalText = '';
+    let tokenBuf = '';
+    let tokenStreamStarted = false;
+    let tokenStreamEl = null;
 
     while (true) {
       const {done, value} = await reader.read();
@@ -412,13 +561,9 @@ async function sendQuery() {
 
         switch (evt.phase) {
           case 'update':
-            phaseTag.textContent = 'processing';
+            phaseTag.textContent = '处理中';
             if (evt.metadata?.available_specialists) {
               renderSpecialists(evt.metadata.available_specialists);
-            }
-            if (evt.content && evt.content !== 'stream opened') {
-              contentEl.textContent = evt.content;
-              scrollToBottom();
             }
             break;
 
@@ -448,8 +593,26 @@ async function sendQuery() {
             break;
           }
 
+          case 'token': {
+            if (!tokenStreamStarted) {
+              tokenStreamStarted = true;
+              phaseTag.textContent = '回答中';
+              phaseTag.style.color = 'var(--green)';
+              contentEl.innerHTML = '';
+              if (!tokenStreamEl) {
+                tokenStreamEl = document.createElement('div');
+                tokenStreamEl.className = 'token-stream';
+                contentEl.appendChild(tokenStreamEl);
+              }
+            }
+            tokenBuf += evt.content || '';
+            tokenStreamEl.innerHTML = renderMarkdown(tokenBuf);
+            scrollToBottom();
+            break;
+          }
+
           case 'final':
-            phaseTag.textContent = 'final answer';
+            phaseTag.textContent = '回答完成';
             finalText = evt.content || '';
             contentEl.innerHTML = renderMarkdown(finalText);
             typingEl.style.display = 'none';
@@ -458,7 +621,7 @@ async function sendQuery() {
             break;
 
           case 'review_requested': {
-            phaseTag.textContent = 'awaiting review';
+            phaseTag.textContent = '等待审核';
             phaseTag.style.color = 'var(--yellow)';
             typingEl.style.display = 'none';
             clearHighlights();
@@ -468,14 +631,14 @@ async function sendQuery() {
             reviewEl.className = 'review-panel';
             reviewEl.id = 'reviewPanel';
             reviewEl.innerHTML = `
-              <div class="review-title">Human Review Required</div>
+              <div class="review-title">需要人工审核</div>
               <p style="font-size:12px;color:var(--text2);margin-bottom:10px">
-                Supervisor 已生成初稿，请审阅后决定 Approve（通过）或 Revise（修改）。
+                Supervisor 已生成初稿，请审阅后决定通过或修改。
               </p>
               <textarea id="reviewFeedback" placeholder="（可选）输入修改意见…"></textarea>
               <div class="review-actions">
-                <button class="btn-approve" onclick="hitlApprove()">✓ Approve</button>
-                <button class="btn-revise" onclick="hitlRevise()">✎ Revise</button>
+                <button class="btn-approve" onclick="hitlApprove()">✓ 通过</button>
+                <button class="btn-revise" onclick="hitlRevise()">✎ 修改</button>
               </div>
             `;
             msgEl.appendChild(reviewEl);
@@ -485,9 +648,9 @@ async function sendQuery() {
           }
 
           case 'error':
-            phaseTag.textContent = 'error';
+            phaseTag.textContent = '出错';
             phaseTag.style.color = 'var(--red)';
-            contentEl.textContent = evt.content || 'Unknown error';
+            contentEl.textContent = evt.content || '未知错误';
             typingEl.style.display = 'none';
             clearHighlights();
             break;
@@ -497,6 +660,9 @@ async function sendQuery() {
 
           case 'done':
             typingEl.style.display = 'none';
+            if (!finalText && tokenBuf) {
+              finalText = tokenBuf;
+            }
             if (!finalText && contentEl.textContent) {
               finalText = contentEl.textContent;
             }
@@ -515,9 +681,9 @@ async function sendQuery() {
   } catch (err) {
     const contentEl = msgEl.querySelector('#streamContent');
     const typingEl = msgEl.querySelector('#typingIndicator');
-    if (contentEl) contentEl.textContent = 'Error: ' + err.message;
+    if (contentEl) contentEl.textContent = '请求失败: ' + err.message;
     if (typingEl) typingEl.style.display = 'none';
-    showToast('Request failed: ' + err.message);
+    showToast('请求失败: ' + err.message);
   } finally {
     streaming = false;
     btn.disabled = false;
@@ -525,18 +691,60 @@ async function sendQuery() {
   }
 }
 
-// --- 简易 Markdown 渲染 ---
+// --- Markdown 渲染（支持表格） ---
 function renderMarkdown(text) {
-  let html = text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>')
-    .replace(/^\s*(\d+)\. (.+)$/gm, '<li>$2</li>')
-    .replace(/`([^`]+)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].trim().startsWith('|') && i + 1 < lines.length && /^\s*\|[-:\s|]+\|\s*$/.test(lines[i+1])) {
+      const headerCells = lines[i].split('|').filter(c => c.trim() !== '').map(c => c.trim());
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        rows.push(lines[i].split('|').filter(c => c.trim() !== '').map(c => c.trim()));
+        i++;
+      }
+      let table = '<table class="md-table"><thead><tr>';
+      headerCells.forEach(h => { table += `<th>${escAndInline(h)}</th>`; });
+      table += '</tr></thead><tbody>';
+      rows.forEach(r => {
+        table += '<tr>';
+        r.forEach(c => { table += `<td>${escAndInline(c)}</td>`; });
+        table += '</tr>';
+      });
+      table += '</tbody></table>';
+      out.push(table);
+    } else {
+      out.push(renderLine(lines[i]));
+      i++;
+    }
+  }
+  let html = out.join('\n');
   html = html.replace(/((?:<li>.*<\/li>\s*)+)/g, '<ul>$1</ul>');
   return html;
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAndInline(s) {
+  return escHtml(s)
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
+}
+function renderLine(line) {
+  let s = escHtml(line);
+  // 标题 → 去掉 # 符号，只保留文字（加粗显示）
+  s = s.replace(/^#{1,6}\s+(.+)$/gm, '<div style="font-weight:600;margin:8px 0 4px">$1</div>');
+  // 水平线 → 空行
+  if (/^\s*[-*_]{3,}\s*$/.test(s)) return '<br>';
+  // **粗体** → 直接去掉星号
+  s = s.replace(/\*\*(.+?)\*\*/g, '$1');
+  s = s.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
+  s = s.replace(/^\s*(\d+)\. (.+)$/gm, '<li>$2</li>');
+  s = s.replace(/`([^`]+)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
+  if (s.trim() === '') s = '<br>';
+  return s;
 }
 
 // --- 人机协作：审批 / 修改 ---
@@ -549,7 +757,7 @@ async function hitlApprove() {
 async function hitlRevise() {
   if (!hitlPendingThread) return;
   const feedback = document.getElementById('reviewFeedback')?.value.trim() || '';
-  if (!feedback) { showToast('Please provide revision feedback.'); return; }
+  if (!feedback) { showToast('请输入修改意见'); return; }
   await _hitlSubmit('resume', feedback);
 }
 
@@ -559,7 +767,7 @@ async function _hitlSubmit(action, feedback) {
 
   const panel = document.getElementById('reviewPanel');
   if (panel) {
-    panel.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px 0">Resuming…</div>';
+    panel.innerHTML = '<div style="color:var(--text2);font-size:12px;padding:8px 0">正在处理...</div>';
   }
 
   try {
@@ -580,13 +788,13 @@ async function _hitlSubmit(action, feedback) {
     const msgs = document.getElementById('messages');
     const resultEl = document.createElement('div');
     resultEl.className = 'msg assistant';
-    resultEl.innerHTML = `<div class="phase-tag" style="color:var(--green)">approved — final answer</div><div class="content">${renderMarkdown(data.reply || '')}</div>`;
+    resultEl.innerHTML = `<div class="phase-tag" style="color:var(--green)">已通过 — 最终回答</div><div class="content">${renderMarkdown(data.reply || '')}</div>`;
     msgs.appendChild(resultEl);
     scrollToBottom();
     refreshUsage();
   } catch (err) {
-    showToast('HITL ' + action + ' failed: ' + err.message);
-    if (panel) panel.innerHTML = `<div style="color:var(--red);font-size:12px">Error: ${err.message}</div>`;
+    showToast('操作失败: ' + err.message);
+    if (panel) panel.innerHTML = `<div style="color:var(--red);font-size:12px">错误: ${err.message}</div>`;
     hitlPendingThread = threadId;
   }
 }
@@ -598,7 +806,7 @@ function newThread() {
   const m = document.getElementById('messages');
   m.innerHTML = `<div class="welcome" id="welcome">
     <div class="icon">🔬</div>
-    <h2>Financial Research Agent</h2>
+    <h2>A 股金融研究助手</h2>
     <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
     <div class="examples">
       <div class="example" onclick="fillQuery(this)">分析宁德时代 2024 年的营收和利润表现</div>

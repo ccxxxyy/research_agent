@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -41,11 +42,18 @@ def _stdio_server_spec(module: str) -> dict[str, Any]:
 
     使用 ``sys.executable`` 可确保子进程继承与父进程相同的虚拟环境（从而使用相同的 ``research_agent`` 安装）。
     使用 ``-m`` 可避免在 CI / 其他检出路径中失效的硬编码文件路径。
+
+    通过 ``env`` 清除代理设置，防止国内数据源请求被系统代理阻断。
     """
+    clean_env = {**os.environ}
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        clean_env.pop(k, None)
+    clean_env["NO_PROXY"] = "*"
     return {
         "command": sys.executable,
         "args": ["-m", module],
         "transport": "stdio",
+        "env": clean_env,
     }
 
 

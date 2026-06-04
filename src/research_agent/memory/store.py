@@ -83,7 +83,7 @@ async def init_memory_store(
             path = Path(sqlite_path)
             path.parent.mkdir(parents=True, exist_ok=True)
 
-            conn = await aiosqlite.connect(str(path))
+            conn = await aiosqlite.connect(str(path), isolation_level=None)
             store = AsyncSqliteStore(conn=conn)
             await store.setup()
             logger.info("MemoryStore initialized: AsyncSqliteStore at {}", path)

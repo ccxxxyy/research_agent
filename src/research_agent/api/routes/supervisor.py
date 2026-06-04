@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import uuid
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi import Request as FastAPIRequest
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.types import Command
 from loguru import logger
 
@@ -282,8 +290,8 @@ async def supervisor_research(
             out_verdict.triggered_rules,
         )
 
-    # --- 金融免责声明 ---
-    reply += FINANCIAL_DISCLAIMER
+    # --- 清理 markdown 表格 + 金融免责声明 ---
+    reply = _clean_markdown(reply) + FINANCIAL_DISCLAIMER
 
     # --- 长期记忆：保存研究结果 ---
     if user_id != "anonymous" and reply:
@@ -317,6 +325,72 @@ def _sse_heartbeat_interval_seconds() -> float:
 def _format_sse(event: ResearchSupervisorSSEEvent) -> str:
     """将一个 SSE 事件渲染为规范的 ``data: ...\\n\\n`` 格式。"""
     return f"data: {event.model_dump_json()}\n\n"
+
+
+_TABLE_SEP_RE = re.compile(r"^\s*\|[-:\s|]+\|\s*$")
+_HR_RE = re.compile(r"^\s*[-*_]{3,}\s*$")
+_HEADING_RE = re.compile(r"^(\s*)(#{1,6})\s+(.*)")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+
+
+def _clean_markdown(text: str) -> str:
+    """将 LLM 输出中的 markdown 格式清洗为纯文本风格。
+
+    处理：表格 → 缩进文本；``---`` 水平线 → 删除；``#`` 标题 → 加粗纯文本；
+    ``**粗体**`` → 保留文字去掉星号。
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # --- markdown 表格 ---
+        if (
+            line.strip().startswith("|")
+            and i + 1 < len(lines)
+            and _TABLE_SEP_RE.match(lines[i + 1])
+        ):
+            headers = [c.strip() for c in line.split("|") if c.strip()]
+            i += 2
+            rows: list[list[str]] = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                cells = [c.strip() for c in lines[i].split("|") if c.strip()]
+                rows.append(cells)
+                i += 1
+            for row in rows:
+                parts = []
+                for h, c in zip(headers, row, strict=False):
+                    parts.append(f"{h}: {c}")
+                out.append("- " + " | ".join(parts))
+            continue
+
+        # --- 水平线 (---, ***, ___) → 空行 ---
+        if _HR_RE.match(line):
+            if out and out[-1].strip():
+                out.append("")
+            i += 1
+            continue
+
+        # --- 标题 (# / ## / ### ...) → 纯文本 ---
+        hm = _HEADING_RE.match(line)
+        if hm:
+            heading_text = hm.group(3).strip()
+            if out and out[-1].strip():
+                out.append("")
+            out.append(heading_text)
+            i += 1
+            continue
+
+        out.append(line)
+        i += 1
+
+    result = "\n".join(out)
+    # 去掉 **粗体** 标记，保留文字
+    result = _BOLD_RE.sub(r"\1", result)
+    # 压缩连续空行为最多1个
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
 
 
 def _extract_update_snippet(node_update: dict) -> tuple[str, str]:
@@ -520,20 +594,100 @@ async def _research_event_stream(
             )
 
             final_emitted_local = False
+            final_token_buf: list[str] = []
+            streaming_final = False
+            # supervisor 在路由阶段会生成 "好的，..." 之类的过渡文本然后
+            # 才发 tool_call（transfer_to_*）。为避免这些无用文本泄露到前端，
+            # 先缓冲 supervisor 的 token，仅当确认不是路由消息后再发送。
+            _sup_pending: list[str] = []
+            _sup_flushing = False
+            _SUP_FLUSH_THRESHOLD = 120
+
             try:
                 async for event in graph.astream(
                     {"messages": messages},
                     config=cfg,
-                    stream_mode="updates",
+                    stream_mode=["messages", "updates"],
                     subgraphs=True,
                 ):
-                    # subgraphs=True 时每个事件为 (namespace_tuple, chunk_dict)。
-                    if isinstance(event, tuple) and len(event) == 2:
-                        namespace, chunk = event
-                    elif isinstance(event, dict):
-                        namespace, chunk = (), event
-                    else:
+                    # subgraphs=True + list stream_mode → 3-tuple: (namespace, mode, data)
+                    # subgraphs=False or test fakes  → 2-tuple: (mode, data)
+                    if not isinstance(event, tuple) or len(event) < 2:
                         continue
+
+                    if len(event) == 3:
+                        namespace_raw, mode, data = event
+                    else:
+                        mode, data = event[0], event[1]
+                        namespace_raw = ()
+
+                    # --- messages 模式：逐 token 流式 ---
+                    if mode == "messages":
+                        msg_chunk = data[0] if isinstance(data, tuple) and len(data) >= 1 else data
+
+                        if not isinstance(msg_chunk, AIMessageChunk):
+                            continue
+
+                        chunk_text = str(msg_chunk.content or "")
+                        tool_calls = getattr(msg_chunk, "tool_calls", None) or []
+
+                        if tool_calls:
+                            # supervisor 发了 tool_call → 当前轮是路由，丢弃缓冲
+                            _sup_pending.clear()
+                            _sup_flushing = False
+                            continue
+                        if not chunk_text:
+                            continue
+
+                        namespace_m = namespace_raw if isinstance(namespace_raw, tuple) else ()
+                        is_root = not namespace_m
+                        is_supervisor_ns = any(
+                            str(p).split(":")[0] == "supervisor" for p in (namespace_m or ())
+                        )
+                        specialist_in_ns = (
+                            _namespace_specialist(namespace_m) if namespace_m else None
+                        )
+                        is_supervisor_level = is_root or (is_supervisor_ns and not specialist_in_ns)
+
+                        if is_supervisor_level:
+                            if _sup_flushing:
+                                streaming_final = True
+                                final_token_buf.append(chunk_text)
+                                await frames.put(
+                                    _format_sse(
+                                        ResearchSupervisorSSEEvent(
+                                            phase=ResearchSupervisorSSEPhase.TOKEN,
+                                            node="supervisor",
+                                            content=chunk_text,
+                                        )
+                                    )
+                                )
+                            else:
+                                _sup_pending.append(chunk_text)
+                                total_pending = sum(len(c) for c in _sup_pending)
+                                if total_pending >= _SUP_FLUSH_THRESHOLD:
+                                    _sup_flushing = True
+                                    streaming_final = True
+                                    for buffered in _sup_pending:
+                                        final_token_buf.append(buffered)
+                                        await frames.put(
+                                            _format_sse(
+                                                ResearchSupervisorSSEEvent(
+                                                    phase=ResearchSupervisorSSEPhase.TOKEN,
+                                                    node="supervisor",
+                                                    content=buffered,
+                                                )
+                                            )
+                                        )
+                                    _sup_pending.clear()
+                        continue
+
+                    # --- updates 模式：节点级事件（handoff / tool_call / 完整消息） ---
+                    if mode != "updates":
+                        continue
+
+                    namespace = namespace_raw if isinstance(namespace_raw, tuple) else ()
+                    chunk = data
                     if not isinstance(chunk, dict):
                         continue
 
@@ -543,7 +697,6 @@ async def _research_event_stream(
                         if not isinstance(node_update, dict):
                             continue
 
-                        # --- 专家内部事件 ---
                         if specialist_ns:
                             _emit_specialist_internal(
                                 specialist_ns,
@@ -580,26 +733,56 @@ async def _research_event_stream(
                         is_supervisor_final = node_name == "supervisor" and not tool_call_name
                         if is_supervisor_final and not final_emitted_local:
                             final_emitted_local = True
+
+                            # 若 pending 缓冲中还有未发送的 token，先追加到 final buf
+                            if _sup_pending:
+                                final_token_buf.extend(_sup_pending)
+                                _sup_pending.clear()
+
+                            if not streaming_final and not final_token_buf:
+                                clean = _clean_markdown(snippet) + FINANCIAL_DISCLAIMER
+                                await frames.put(
+                                    _format_sse(
+                                        ResearchSupervisorSSEEvent(
+                                            phase=(ResearchSupervisorSSEPhase.FINAL),
+                                            node=str(node_name),
+                                            content=clean,
+                                        )
+                                    )
+                                )
+                            else:
+                                await frames.put(
+                                    _format_sse(
+                                        ResearchSupervisorSSEEvent(
+                                            phase=ResearchSupervisorSSEPhase.TOKEN,
+                                            node="supervisor",
+                                            content=FINANCIAL_DISCLAIMER,
+                                        )
+                                    )
+                                )
+                                raw_final = "".join(final_token_buf) + FINANCIAL_DISCLAIMER
+                                clean_final = _clean_markdown(raw_final)
+                                await frames.put(
+                                    _format_sse(
+                                        ResearchSupervisorSSEEvent(
+                                            phase=(ResearchSupervisorSSEPhase.FINAL),
+                                            node=str(node_name),
+                                            content=clean_final,
+                                        )
+                                    )
+                                )
+                            continue
+
+                        if not final_emitted_local:
                             await frames.put(
                                 _format_sse(
                                     ResearchSupervisorSSEEvent(
-                                        phase=(ResearchSupervisorSSEPhase.FINAL),
+                                        phase=ResearchSupervisorSSEPhase.UPDATE,
                                         node=str(node_name),
-                                        content=snippet + FINANCIAL_DISCLAIMER,
+                                        content=snippet[:4096],
                                     )
                                 )
                             )
-                            continue
-
-                        await frames.put(
-                            _format_sse(
-                                ResearchSupervisorSSEEvent(
-                                    phase=ResearchSupervisorSSEPhase.UPDATE,
-                                    node=str(node_name),
-                                    content=snippet[:4096],
-                                )
-                            )
-                        )
                 outcome["graph_astream_ok"] = True
 
                 # --- HITL：检测图是否因人工审核而中断 ---
