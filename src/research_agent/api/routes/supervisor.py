@@ -601,7 +601,7 @@ async def _research_event_stream(
             # 先缓冲 supervisor 的 token，仅当确认不是路由消息后再发送。
             _sup_pending: list[str] = []
             _sup_flushing = False
-            _SUP_FLUSH_THRESHOLD = 120
+            _sup_flush_threshold = 120
 
             try:
                 async for event in graph.astream(
@@ -665,7 +665,7 @@ async def _research_event_stream(
                             else:
                                 _sup_pending.append(chunk_text)
                                 total_pending = sum(len(c) for c in _sup_pending)
-                                if total_pending >= _SUP_FLUSH_THRESHOLD:
+                                if total_pending >= _sup_flush_threshold:
                                     _sup_flushing = True
                                     streaming_final = True
                                     for buffered in _sup_pending:
