@@ -79,8 +79,8 @@ class Settings(BaseSettings):
     )
 
     app_env: Environment = Environment.DEVELOPMENT
-    app_host: str = "0.0.0.0"
-    app_port: int = 8080
+    app_host: str = "127.0.0.1"
+    app_port: int = 8000
     cors_origins: str = "*"
     api_secret_key: str = ""
     rate_limit_rpm: int = 30
@@ -120,14 +120,12 @@ class Settings(BaseSettings):
     """写作者重写次数的硬上限。每次请求最坏情况的 LLM 预算为 ``max_iterations + 1`` 次批评者调用加上 ``max_iterations``次写作者调用。"""
 
     default_recursion_limit: int = Field(
-        default=50,
+        default=40,
         ge=10,
         le=150,
         description=(
             "客户端未指定时应用的默认 LangGraph 递归限制。"
-            "6 个专家的研究主管每次专家切换需要约 4 个图步骤（转移 + 工具调用 + 工具结果 + 转移回），"
-            "加上主管规划和可选反思（最多 5 个额外步骤）。"
-            "25（LangGraph 内置默认值）对于复杂的多专家查询过低；50 可覆盖 6 个专家 + 反思并留有余量。"
+            "4 次专家移交 × 每次约 4 步 + supervisor 规划/合成 ≈ 20-25 步；40 留有余量且不会过深。"
         ),
     )
 

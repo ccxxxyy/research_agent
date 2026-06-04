@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -11,9 +13,25 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from research_agent.api.routes import a2a, health, knowledge, memory, sentiment, supervisor, usage
-from research_agent.config import get_settings
-from research_agent.observability.logging import setup_logging
+# 嵌入模型已缓存在本地，强制离线模式防止联网检查 huggingface.co 超时。
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+from research_agent.api.routes import (  # noqa: E402
+    a2a,
+    health,
+    knowledge,
+    memory,
+    sentiment,
+    supervisor,
+    usage,
+)
+from research_agent.config import get_settings  # noqa: E402
+from research_agent.observability.logging import setup_logging  # noqa: E402
+
+# LangSmith tracer 在 stream_mode=["messages","updates"] + subgraphs 下
+# 会打出大量 "No indexed run ID" 警告——这是已知兼容问题，不影响功能。
+logging.getLogger("langchain_core.tracers.langchain").setLevel(logging.CRITICAL)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -298,7 +316,10 @@ def create_app() -> FastAPI:
 
         @app.get("/", include_in_schema=False)
         async def _root():
-            return FileResponse(_static_dir / "index.html")
+            return FileResponse(
+                _static_dir / "index.html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
         app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 

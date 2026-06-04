@@ -208,6 +208,7 @@ class ModelRouter:
                 "temperature": tier_temps[tier],
                 "max_retries": 2,
                 "callbacks": [handler],
+                "stream_usage": True,
             }
             if rt is not None and float(rt) > 0:
                 chat_kw["request_timeout"] = float(rt)

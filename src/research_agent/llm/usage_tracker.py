@@ -129,11 +129,29 @@ class UsageCallbackHandler(BaseCallbackHandler):
         usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
         prompt = int(usage.get("prompt_tokens", 0) or 0)
         completion = int(usage.get("completion_tokens", 0) or 0)
+        model_name = llm_output.get("model_name", "") or llm_output.get("model", "")
+
+        # 流式模式下 llm_output 往往为空，从最后一个 generation 的 response_metadata
+        # （OpenAI 兼容 API 的 stream_options 或 DashScope 在最终 chunk 里附带的 usage）中提取。
+        if prompt == 0 and completion == 0 and response.generations:
+            last_gen = response.generations[-1]
+            if last_gen:
+                msg = getattr(last_gen[-1], "message", None)
+                meta = getattr(msg, "response_metadata", None) or {}
+                u = meta.get("usage") or meta.get("token_usage") or {}
+                prompt = int(u.get("prompt_tokens", 0) or 0)
+                completion = int(u.get("completion_tokens", 0) or 0)
+                if not model_name:
+                    model_name = meta.get("model_name", "") or meta.get("model", "")
+                # LangChain >=0.2 puts aggregated counts in usage_metadata
+                if prompt == 0 and completion == 0:
+                    um = getattr(msg, "usage_metadata", None) or {}
+                    prompt = int(um.get("input_tokens", 0) or 0)
+                    completion = int(um.get("output_tokens", 0) or 0)
 
         if prompt == 0 and completion == 0:
             return
 
-        model_name = llm_output.get("model_name", "") or llm_output.get("model", "")
         agent_label = self._tier_label or model_name
 
         self._tracker.record(
