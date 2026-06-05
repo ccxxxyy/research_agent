@@ -1,14 +1,14 @@
 # research-agent
 
 > **基于 LangGraph + MCP + Agentic RAG 的多智能体深度研究系统**
-> 面向 A 股二级市场研究：行情、披露公告、新闻舆情、研究报告知识库 —— 一个 supervisor + 六个 specialist 协作完成。
+> 面向 A 股二级市场研究：行情、基金、披露公告、新闻舆情、研究报告知识库 —— 一个 supervisor + 七个 specialist 协作完成。
 
 [![CI](https://github.com/your-org/research-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/research-agent/actions/workflows/ci.yml)
 [![Nightly](https://github.com/your-org/research-agent/actions/workflows/nightly.yml/badge.svg)](https://github.com/your-org/research-agent/actions/workflows/nightly.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen.svg)](#测试)
-[![Eval Dataset](https://img.shields.io/badge/eval-100%20examples-blueviolet.svg)](#评估体系)
+[![Eval Dataset](https://img.shields.io/badge/eval-110%20examples-blueviolet.svg)](#评估体系)
 
 ---
 
@@ -20,10 +20,11 @@
 1. 一个 Agent 拿着一堆工具，靠 prompt 自己分配先调谁——容易乱套；
 2. 或者一个写死流程的 pipeline——不灵活，加新工具就要重写编排逻辑。
 
-本项目用 **LangGraph Supervisor 模式 + 6 个能力解耦的 specialist** 的方式，让 supervisor 只做"读用户需求 → 拆任务 → 选 specialist → 串联结果"，而 specialist 只做"我擅长这一种事，给我参数我就跑"。
+本项目用 **LangGraph Supervisor 模式 + 7 个能力解耦的 specialist** 的方式，让 supervisor 只做"读用户需求 → 拆任务 → 选 specialist → 串联结果"，而 specialist 只做"我擅长这一种事，给我参数我就跑"。
 
 业务侧实打实接了真实数据源：
-- **行情/基本面** —— akshare 抓东方财富、雪球、新浪；
+- **行情/基本面** —— akshare 抓东方财富、雪球、新浪（含分时、龙虎榜、融资融券、股东持仓、概念/行业板块、资金流、港股通等 18 个工具）；
+- **基金分析** —— akshare 抓天天基金/东方财富基金频道（ETF/LOF 实时行情、基金净值、持仓、评级、排名等 10 个工具）；
 - **披露公告 PDF** —— 巨潮资讯（cninfo）；
 - **市场新闻 & 舆情** —— 东方财富、财联社快讯、雪球热度榜、百度财经早晚报；
 - **量化情感** —— SnowNLP + 金融关键词词典（确定性，不走 LLM 打分）；
@@ -42,31 +43,32 @@
                                    └────────────────────┬────────────────────┘
                                                         │ messages: list[BaseMessage]
                                                         ▼
-                                   ┌─────────────────────────────────────────┐
-                                   │      research_supervisor  (HEAVY)       │
-                                   │   langgraph_supervisor.create_supervisor│
-                                   └─┬───────┬───────┬───────┬───────┬───────┘
-              transfer_to_X tool-calls │       │       │       │       │       │
-                                        ▼       ▼       ▼       ▼       ▼       ▼
-                                  data_expert  report   coder  news  knowledge sentiment
-                                   (MEDIUM)   _expert  _expert _expert _expert  _expert
-                                       │       │        │       │        │        │
-                                       │      MCP-stdio subprocesses          in-proc   in-proc
-                                       │       │        │       │        │        │
-                                       ▼       ▼        ▼       ▼        ▼        ▼
-                                  fin_data  pdf_report code   news    knowledge sentiment
-                                  _server   _server  _server _server  _server   _server
-                                  (akshare)(cninfo)(sandbox)(EM/CLS) (FAISS+BM25)(SnowNLP)
+                                   ┌──────────────────────────────────────────────────┐
+                                   │      research_supervisor  (HEAVY)                │
+                                   │   langgraph_supervisor.create_supervisor         │
+                                   └───┬───────┬───────┬───────┬──────┬──────┬──────┬─┘
+              transfer_to_X tool-calls │       │       │       │      │      │      │
+                                       ▼       ▼       ▼       ▼      ▼      ▼      ▼
+                                      data    fund  report  coder  news  know-  senti-
+                                 _expert _expert _expert _expert _expert ledge  ment
+                                  (MEDIUM)                              _expert _expert
+                                       │    │     │       │      │      │       │
+                                       │   MCP-stdio subprocesses        in-proc  in-proc
+                                       ▼    ▼     ▼       ▼      ▼      ▼       ▼
+                                  fin_data fund pdf_rpt code  news  knowl-  senti-
+                                  _server _server _server _server _server edge   ment
+                                  (akshare)(akshare)(cninfo)(sandbox)(EM/CLS) _server _server
+                                  18 tools 10 tools                       (FAISS+BM25)(SnowNLP)
                                                                         │
                                                                         ▼
                                                                   bge-reranker
                                                                   cross-encoder
                                                                   + corrective
-                                                                    quality signal
-                                                                       │
-                       short-term ── thread_id ──┐                     │
-                       LangGraph checkpointer    │     long-term      │
-                       PostgresSaver / SQLite /  │     MemoryStore     │
+                                                                   quality signal
+                                                                        │
+                       short-term ── thread_id ──┐                      │
+                       LangGraph checkpointer    │     long-term        │
+                       PostgresSaver / SQLite /  │     MemoryStore      │
                        MemorySaver (auto-fb)     │     (user prefs +    │
                                                  │      research log)   │
                                                  ▼                      ▼
@@ -99,7 +101,7 @@
 | LLM | `langchain-openai` 的 `ChatOpenAI` 直接打 OpenAI / DeepSeek / Dashscope 兼容端点；三档路由（LIGHT/MEDIUM/HEAVY），按 `AgentName` → `ModelTier` 映射，自动按 `FALLBACK_CHAIN` 降级 |
 | 持久化 | 短期 thread 状态：`langgraph-checkpoint-postgres` → `langgraph-checkpoint-sqlite` → `MemorySaver` 三级 fallback；长期用户记忆：`PostgresStore` → `AsyncSqliteStore` → `InMemoryStore` 三级 fallback（均按 TCP 探测预检自动降级） |
 | Web | `fastapi` + `uvicorn` + `sse-starlette`，Pydantic v2 严格校验 |
-| 数据源 | `akshare`（A 股行情/基本面/公告/新闻）+ `httpx` + `pypdf`（cninfo PDF 解析）+ `snownlp`（中文情感） |
+| 数据源 | `akshare`（A 股行情/基本面/分时/龙虎榜/融资融券/概念板块/行业板块/资金流/港股通 + 基金净值/ETF/LOF/持仓/评级/排名）+ `httpx` + `pypdf`（cninfo PDF 解析）+ `snownlp`（中文情感） |
 | 可观测 | `loguru` 结构化日志 + `langsmith` tracing |
 | 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（281 tests） |
 | 安全 | Prompt 注入检测（`security/prompt_guard.py`）+ 代码沙箱 subprocess 隔离 |
@@ -172,7 +174,7 @@ uv run uvicorn research_agent.main:app --host 0.0.0.0 --port 8080
 | 5432 | Postgres | 可选；checkpointer + 长期记忆持久化 |
 | 6379 | Redis | 可选；分布式限流（不配则内存限流） |
 
-MCP 工具服务器（`fin_data_server`、`code_server` 等）不是 HTTP 服务，而是 FastAPI 启动时拉起的 stdio 子进程，通过标准输入/输出与主进程通信，不占用额外端口。
+MCP 工具服务器（`fin_data_server`、`fund_server`、`code_server` 等）不是 HTTP 服务，而是 FastAPI 启动时拉起的 stdio 子进程，通过标准输入/输出与主进程通信，不占用额外端口。
 
 ### 4.4 跑一个端到端 demo（含真实业务数据）
 
@@ -185,7 +187,7 @@ MCP 工具服务器（`fin_data_server`、`code_server` 等）不是 HTTP 服务
 uv run python scripts/seed_real_research_reports.py
 # 完成后 ./data/knowledge_db/prod_reports/ 下应该看到 index.faiss + index.pkl
 
-# 2) 跑全栈研究 demo（supervisor 会拉通所有 6 个 specialist）
+# 2) 跑全栈研究 demo（supervisor 会拉通所有 7 个 specialist）
 uv run python scripts/demo_full_research.py
 ```
 
@@ -206,7 +208,7 @@ docker compose logs -f app
 | 单元测试 | **281 passed, 14 deselected**（`-m "not network and not slow"`），耗时 ~26 s |
 | 启动到 ready | ~13 s（首次拉 MCP-stdio + 编译 supervisor，含 4 个子进程冷启） |
 | `/health` | 单机无 PG / 无 Redis：`status=degraded`，自动落到 `AsyncSqliteSaver` + `InMemoryStore`，**功能完整** |
-| Specialist 在线数 | **6 / 6**（fin_data:5 / pdf_report:4 / code:1 / knowledge:4 / news:5 / sentiment:2 = **21 个工具**） |
+| Specialist 在线数 | **7 / 7**（fin_data:18 / fund:10 / pdf_report:4 / code:1 / knowledge:4 / news:5 / sentiment:2 = **44 个工具**） |
 | 知识库 `prod_reports` 大小 | **822 chunks**（寒武纪 / 中际旭创 / 兆易创新 年报；seed 脚本自动建） |
 | 端到端复合查询<br>（"寒武纪近 5 日股价 + 知识库 2024 业务进展"） | **192 s**，`specialists_reached=['data_expert','knowledge_expert']`，`msg_count=12`，输出含 akshare 实时行情 + 年报原文逐字引用 |
 | 单次复合查询 LLM 成本 | **~$0.090 USD**（40 calls / 122,310 tokens；heavy 11 + medium 23 + light 6） |
@@ -282,7 +284,90 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 ### 5.4 前端 Chat UI
 
-`src/research_agent/static/index.html` 自带一个零依赖的单文件 Chat UI（HTML + 原生 JS + Fetch+SSE），访问 `http://localhost:8080/` 。侧栏会从 `app.state.available_specialists` 实时显示 specialist 在线状态；触发 HITL 时弹审核面板，Approve / Revise 调用对应 REST 路由。
+`src/research_agent/static/index.html` 自带一个零依赖的单文件 Chat UI（HTML + 原生 JS + Fetch+SSE），访问 `http://localhost:8080/` 。侧栏会从 `app.state.available_specialists` 实时显示 specialist 在线状态；触发 HITL 时弹审核面板，Approve / Revise 调用对应 REST 路由。支持多会话并行管理、一键停止正在进行的查询、数据来源可点击跳转至具体页面。
+
+### 5.5 MCP 工具清单
+
+每个 specialist 通过 MCP-stdio 协议连接到专属的工具服务器。以下为当前全部 44 个工具：
+
+#### data_expert — `fin_data_server`（18 个工具，数据源：akshare）
+
+| 工具 | 功能 |
+|---|---|
+| `fin_get_realtime_quotes` | A 股实时行情快照 |
+| `fin_get_kline` | 日/周/月 K 线历史数据 |
+| `fin_get_financial_summary` | 财务摘要（每股指标、盈利能力等） |
+| `fin_get_individual_info` | 个股基本信息（所属行业、上市日期等） |
+| `fin_get_stock_comments` | 个股千股千评（技术面综合评价） |
+| `fin_get_board_changes` | 板块异动实时推送 |
+| `fin_get_index_components` | 指数成份股列表 |
+| `fin_get_hist_min` | 分钟级分时数据 |
+| `fin_get_intraday` | 日内分时明细 |
+| `fin_get_lhb_detail` | 龙虎榜详情 |
+| `fin_get_margin_detail` | 融资融券明细 |
+| `fin_get_top_holders` | 十大股东/流通股东 |
+| `fin_get_etf_spot` | ETF 实时行情快照 |
+| `fin_get_macro_china` | 宏观经济指标（GDP/CPI/PMI 等） |
+| `fin_get_concept_board` | 概念板块行情 |
+| `fin_get_industry_board` | 行业板块行情 |
+| `fin_get_individual_fund_flow` | 个股资金流向 |
+| `fin_get_hsgt_flow` | 沪深港通资金流向 |
+
+#### fund_expert — `fund_server`（10 个工具，数据源：akshare）
+
+| 工具 | 功能 |
+|---|---|
+| `fund_search_fund` | 基金模糊搜索（按名称/拼音） |
+| `fund_get_fund_info` | 基金基本信息（类型、规模、经理等） |
+| `fund_get_fund_nav` | 基金历史净值（单位/累计净值） |
+| `fund_get_fund_etf_spot` | ETF 基金实时行情 |
+| `fund_get_fund_lof_spot` | LOF 基金实时行情 |
+| `fund_get_fund_etf_hist` | ETF 历史 K 线数据 |
+| `fund_get_fund_holdings` | 基金持仓明细（重仓股） |
+| `fund_get_fund_rating` | 基金评级（招商/上海证券/济安金信） |
+| `fund_get_fund_rank` | 基金业绩排名（按区间收益率） |
+| `fund_get_fund_daily` | 开放式基金每日净值列表 |
+
+#### report_expert — `pdf_report_server`（4 个工具）
+
+| 工具 | 功能 |
+|---|---|
+| `report_search_disclosure` | 巨潮资讯公告搜索 |
+| `report_fetch_pdf` | PDF 下载并提取文本 |
+| `report_summarize_text` | 长文本摘要（LLM） |
+| `report_generate_briefing` | 生成结构化简报 |
+
+#### news_expert — `news_server`（5 个工具）
+
+| 工具 | 功能 |
+|---|---|
+| `news_get_em_news` | 东方财富个股新闻 |
+| `news_get_cls_telegraph` | 财联社电报快讯 |
+| `news_get_xueqiu_hot` | 雪球热帖榜 |
+| `news_get_baidu_finance` | 百度财经早晚报 |
+| `news_search_news` | 综合新闻搜索 |
+
+#### sentiment_expert — `news_sentiment_server`（2 个工具）
+
+| 工具 | 功能 |
+|---|---|
+| `sentiment_analyze_batch` | 批量文本情感量化打分 |
+| `sentiment_get_report` | 个股综合舆情报告 |
+
+#### knowledge_expert — in-process（4 个工具）
+
+| 工具 | 功能 |
+|---|---|
+| `knowledge_search` | Hybrid RAG 检索（FAISS + BM25 + Rerank） |
+| `knowledge_ingest` | PDF 入库 |
+| `knowledge_list_collections` | 列出知识库 |
+| `knowledge_delete_collection` | 删除知识库 |
+
+#### coder_expert — `code_server`（1 个工具）
+
+| 工具 | 功能 |
+|---|---|
+| `code_execute_python` | 沙箱 Python 代码执行 |
 
 ---
 
@@ -295,7 +380,7 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
    - 故事：「DeepSeek 宕机时，第 4 个用户不应再傻等 30 秒超时 —— 熔断器让 fallback 瞬间生效。」
 
 2. **Supervisor 模式 + 动态团队**（`graph/research_supervisor.py`）
-   - 任何 specialist 的工具集为空就自动从 prompt 里抹掉，避免 `transfer_to_<missing>` 幽灵路由。
+   - 七个 specialist（data / fund / report / coder / news / knowledge / sentiment），任何 specialist 的工具集为空就自动从 prompt 里抹掉，避免 `transfer_to_<missing>` 幽灵路由。
    - 故事：「supervisor 永远只看到一份与运行时团队一致的 system prompt — **配置漂移导致幻觉路由的常见坑**」。
 
 3. **Corrective RAG 全套**（`rag/` 模块拆成 5 个独立职责文件 + `mcp_servers/knowledge_server.py` 复用它们）
@@ -306,7 +391,7 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
    - 故事：「这套抽象之前散落在 `knowledge_server.py` 里，重构成 5 个文件后**每个组件都能独立测**（`tests/unit/test_rag_{retriever,grader,query_rewriter}.py` 共 26 个 case），**而且任何一个组件可独立替换**（比如把 grader 换成 LLM 打分，或 reranker 换成 bge-m3）。」
 
 4. **MCP 协议化工具 + 一个真实的取舍**（`mcp_servers/` + `tools/knowledge_tools.py`）
-   - 5 个 server 走真 stdio 子进程，1 个（knowledge）走进程内并诚实写在 docstring 里——因为 Windows + Python 3.13 + anyio + heavy ML import 链有死锁。
+   - 6 个 server 走真 stdio 子进程（fin_data / fund / pdf_report / code / news / news_sentiment），1 个（knowledge）走进程内并诚实写在 docstring 里——因为 Windows + Python 3.13 + anyio + heavy ML import 链有死锁。
    - `code_server.py` 沙箱：`execute_python` 用 **subprocess** 在独立子进程跑用户代码；内层 **API 白名单**（自定义 `__builtins__` 字典，只允许 `print/range/len/...`，禁止 `open/__import__/eval`）+ 预导入模块（math/statistics/json/collections/itertools）。`execute_python_inproc` 是降级方案（仅白名单、无进程隔离，与改造前相同）。
    - 故事：「从 `chromadb posthog 守护线程污染 stdout` → 写 `_stdio_firewall` → 迁 ChromaDB → FAISS → 发现 sentence-transformers 仍然干扰 → 工程上决定 in-process 同源代码，保留 MCP 接口作为契约文档。」
 
@@ -379,16 +464,16 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 ### 数据集
 
-`evals/datasets/supervisor_routing.json` — **100 条标注样本**，覆盖：
+`evals/datasets/supervisor_routing.json` — **110 条标注样本**，覆盖：
 
 | 类别 | 数量 | 说明 |
 |---|---|---|
-| `single_route` | 30 | 每个 specialist 5 条（6 个 specialist） |
-| `multi_route` | 22 | 2-5 个 specialist 的各种组合 |
-| `edge_case` | 15 | 寒暄、英文、模糊查询、股票代码、空输入 |
-| `robustness` | 10 | 口语化、拼写随意、中英混杂 |
+| `single_route` | 35 | 每个 specialist 5 条（7 个 specialist） |
+| `multi_route` | 30 | 2-5 个 specialist 的各种组合（含 fund_expert 跨专家协作 8 条） |
+| `edge_case` | 18 | 寒暄、英文、模糊查询、股票/基金代码、空输入 |
+| `robustness` | 13 | 口语化、拼写随意、中英混杂 |
 | `adversarial` | 8 | prompt injection、角色劫持、恶意代码注入 |
-| `memory_test` | 5 | 匿名 vs 登录用户的记忆写入验证 |
+| `memory_test` | 6 | 匿名 vs 登录用户的记忆写入验证 |
 
 ### 运行评估
 
@@ -412,7 +497,7 @@ pytest evals/test_evaluators.py -q
 ```
 ======================================================================
   EVALUATION REPORT — 2026-05-28T03:00:00
-  Dataset: supervisor_routing.json (100 examples)
+  Dataset: supervisor_routing.json (110 examples)
 ======================================================================
 
 Metric                       Mean      Min      Max      Std     N
@@ -480,6 +565,7 @@ docker compose up -d
 | 项 | 现状 | 计划 |
 |---|---|---|
 | **knowledge_server 不走 MCP-stdio** | 🟡 工程取舍：Windows + Python 3.13 + asyncio + heavy ML import 链有系统性死锁，已切到 in-process 同源代码——业务逻辑不变，MCP 协议契约保留在 `@mcp.tool` 装饰器上作为文档。详见 [ADR-0002](docs/adr/0002-knowledge-server-inprocess.md) | 若未来需跨进程/跨语言，可换 fastmcp 的 SSE/HTTP transport 绕开 stdio JSON-RPC 帧 |
+| **fund_server 仅覆盖公募基金** | 🟡 当前覆盖开放式基金、ETF、LOF 的净值/行情/持仓/评级/排名，尚未接入私募基金和 QDII 专项数据 | 按需扩展 akshare 私募/QDII 接口 |
 | **LangSmith 评估集已上 CI** | ✅ `evals/` 下有 100 条标注样本 + 5 个评估器 + 离线评估 runner + regression 对比工具；Nightly CI 自动跑路由评估 | 持续扩充样本 + 增加 RAG 召回率评估 |
 | **pgvector 引擎装了但未用作向量搜索后端** | 🟡 设计取舍：docker-compose 用 `pgvector/pgvector:pg16` 是为给 Postgres checkpointer + KV-style 长期记忆提供后端；RAG 走本地 FAISS 因为 demo 不依赖外部服务 | 当用户研究量 >100 条时，把"语义相似历史研究召回"切到 pgvector + ANN |
 | **LLM 响应缓存** | ❌ 未实现 | 金融场景幻觉缓存有风险（同一问题不同时间答案应不同），上线前需做"按问题类型条件缓存"，工作量中等 |
@@ -494,7 +580,7 @@ src/research_agent/
 ├── agents/              # Specialist 构造器 + 角色 prompt
 │   ├── __init__.py      # build_xxx_expert + SPECIALIST_BUILDERS 全 re-export
 │   ├── confidence.py    # 专家输出置信度校验（规则 + 可选 LLM 深度校验）
-│   └── specialists.py   # 6 个 build_xxx_expert + KNOWLEDGE/REPORT/NEWS/... PROMPT
+│   └── specialists.py   # 7 个 build_xxx_expert + KNOWLEDGE/REPORT/NEWS/FUND/... PROMPT
 ├── api/                 # FastAPI 层
 │   ├── middleware.py    # Auth + RateLimit + RequestTimeout + RequestId
 │   ├── dependencies.py  # FastAPI Depends 工厂
@@ -512,7 +598,7 @@ src/research_agent/
 │   └── token_quota.py   # Per-user Token 配额管理（Redis / 内存双后端）
 ├── graph/
 │   ├── minimal_supervisor.py    # Phase-3 教学版（math/time/text 三 toy 工具）
-│   ├── research_supervisor.py   # Phase-4 产品版（六 specialist + HEAVY supervisor + 可选 reflection + 可选 HITL human_review 节点）
+│   ├── research_supervisor.py   # Phase-4 产品版（七 specialist + HEAVY supervisor + 可选 reflection + 可选 HITL human_review 节点）
 │   └── reflection.py            # Phase-5 critic-first 反思子图（Writer / Reasoner 自评-重写）
 ├── llm/
 │   ├── provider.py      # ModelRouter（三档 tier + with_fallbacks 降级链；用 langchain-openai 直连 OpenAI/DeepSeek/Dashscope 兼容端点）
@@ -523,10 +609,11 @@ src/research_agent/
 │   ├── _pg_reachability.py  # TCP 探测预检
 │   ├── store.py         # 长期 InMemoryStore / SqliteStore / PostgresStore
 │   └── manager.py
-├── mcp_servers/         # 5 个走 stdio + 1 个 in-process（详见 ADR-0002）
+├── mcp_servers/         # 6 个走 stdio + 1 个 in-process（详见 ADR-0002）
 │   ├── code_server.py             # Python 沙箱执行
 │   ├── echo_server.py             # 调试用
-│   ├── fin_data_server.py         # akshare 行情/基本面
+│   ├── fin_data_server.py         # akshare A 股行情/基本面（18 工具：K 线、分时、龙虎榜、融资融券、股东、ETF、宏观、概念/行业板块、资金流、港股通等）
+│   ├── fund_server.py             # akshare 基金分析（10 工具：基金搜索、净值、ETF/LOF 行情、持仓、评级、排名等）
 │   ├── knowledge_server.py        # FAISS+BM25 RAG（生产入口在 tools/knowledge_tools.py，in-process）
 │   ├── news_server.py             # 东方财富 / 财联社新闻
 │   ├── news_sentiment_server.py   # SnowNLP + 金融词典量化情感
@@ -619,6 +706,6 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 ## 十二、Roadmap（待做）
 
 - LLM 响应缓存（条件缓存，避开金融场景的"过期数据"陷阱）
-- 增加更多业务 specialist（如 `macro_expert` / `fund_flow_expert`）
+- 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）

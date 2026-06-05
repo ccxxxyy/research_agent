@@ -30,9 +30,10 @@ async def list_conversations(
 async def get_conversation_messages(
     thread_id: str,
     request: Request,
+    user_id: str = Query(default="anonymous"),
 ) -> list[dict[str, Any]]:
     store = _store(request)
-    return await asyncio.to_thread(store.get_messages, thread_id)
+    return await asyncio.to_thread(store.get_messages, thread_id, user_id)
 
 
 @router.delete("/{thread_id}")

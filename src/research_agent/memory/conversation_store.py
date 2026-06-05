@@ -137,7 +137,20 @@ class ConversationStore:
         )
         c.commit()
 
-    def get_messages(self, thread_id: str, limit: int = 200) -> list[dict[str, Any]]:
+    def get_messages(
+        self, thread_id: str, user_id: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        if user_id is not None:
+            owner = (
+                self._conn()
+                .execute(
+                    "SELECT 1 FROM conversations WHERE thread_id = ? AND user_id = ?",
+                    (thread_id, user_id),
+                )
+                .fetchone()
+            )
+            if owner is None:
+                return []
         rows = (
             self._conn()
             .execute(

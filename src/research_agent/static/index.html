@@ -94,6 +94,8 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .msg .tool-call-line .tc-icon{color:var(--accent);font-size:11px}
 .msg .tool-call-line .tc-specialist{color:var(--accent2);font-weight:600}
 .msg .tool-call-line .tc-tool{color:var(--green,#4ade80)}
+.msg .tool-call-line .tc-source{font-size:10px;color:var(--accent);text-decoration:none;border:1px solid var(--border);border-radius:3px;padding:1px 5px;margin-left:4px;white-space:nowrap;transition:border-color .15s,background .15s}
+.msg .tool-call-line .tc-source:hover{border-color:var(--accent);background:rgba(108,99,255,0.1)}
 
 .md-table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px}
 .md-table th,.md-table td{border:1px solid var(--border);padding:6px 10px;text-align:left}
@@ -129,6 +131,8 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .input-row button:hover{background:var(--accent2)}
 .input-row button:disabled{background:var(--border);cursor:not-allowed}
 .input-row button svg{width:20px;height:20px}
+.input-row button.stop-mode{background:var(--red)}
+.input-row button.stop-mode:hover{background:#fca5a5}
 .input-meta{display:flex;gap:16px;margin-top:8px;font-size:11px;color:var(--text2)}
 .input-meta label{display:flex;align-items:center;gap:4px}
 .input-meta input{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text);font-size:11px;width:100px;outline:none;font-family:monospace}
@@ -208,8 +212,8 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
         <div class="examples">
           <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
           <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？科技股表现如何？</div>
-          <div class="example" onclick="fillQuery(this)">上证指数和创业板最近一周走势对比分析</div>
-          <div class="example" onclick="fillQuery(this)">查一下宁德时代最新财报和市场舆情</div>
+          <div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行，哪些基金表现最好？</div>
+          <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
         </div>
       </div>
     </div>
@@ -223,7 +227,7 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
       <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" hidden />
       <div class="input-row">
         <textarea id="queryInput" rows="1" placeholder="输入研究问题..." onkeydown="handleKey(event)"></textarea>
-        <button id="sendBtn" onclick="sendQuery()">
+        <button id="sendBtn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
         </button>
       </div>
@@ -240,6 +244,7 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 <script>
 const ALL_SPECIALISTS = [
   {id:'data_expert',    label:'数据专家',    desc:'财务数据 / 行情'},
+  {id:'fund_expert',    label:'基金专家',    desc:'基金分析 / ETF'},
   {id:'report_expert',  label:'公告专家',    desc:'公告 / 年报 PDF'},
   {id:'coder_expert',   label:'代码专家',    desc:'Python 计算'},
   {id:'news_expert',    label:'新闻专家',    desc:'新闻 / 快讯'},
@@ -258,6 +263,72 @@ let hitlPendingThread = null;
 // el 是一个 div 容器，持有该会话的所有消息 DOM（可脱离文档树）
 const threadData = new Map();
 const streamingThreads = new Set();
+const abortControllers = new Map();
+
+function _stockExchange(code) {
+  if (!code) return '';
+  if (code.startsWith('6')) return 'sh';
+  if (code.startsWith('0') || code.startsWith('3')) return 'sz';
+  if (code.startsWith('4') || code.startsWith('8')) return 'bj';
+  return 'sh';
+}
+function _parseArg(content, key) {
+  const re = new RegExp(key + "\\s*=\\s*['\"]([^'\"]+)['\"]");
+  const m = content.match(re);
+  return m ? m[1] : null;
+}
+
+const SOURCE_RULES = {
+  fin_get_stock_basic_info:     {label:'东方财富·个股',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://quote.eastmoney.com/${_stockExchange(s)}${s}.html`:null}},
+  fin_get_stock_price_history:  {label:'东方财富·行情',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://quote.eastmoney.com/${_stockExchange(s)}${s}.html`:null}},
+  fin_get_financial_abstract:   {label:'东方财富·财报',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://emweb.securities.eastmoney.com/pc_hsf10/pages/index.html?type=web&code=${_stockExchange(s).toUpperCase()}${s}#/cwfx`:null}},
+  fin_get_financial_indicators: {label:'东方财富·财报',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://emweb.securities.eastmoney.com/pc_hsf10/pages/index.html?type=web&code=${_stockExchange(s).toUpperCase()}${s}#/cwfx`:null}},
+  fin_search_stock_by_name:     {label:'东方财富',fn:c=>{const k=_parseArg(c,'keyword');return k?`https://so.eastmoney.com/web/s?keyword=${encodeURIComponent(k)}`:null}},
+  fin_get_index_quotes:         {label:'东方财富·指数',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#index_sh'},
+  fin_get_sector_fund_flow:     {label:'东方财富·板块资金',fn:()=>'https://data.eastmoney.com/bkzj/hy.html'},
+  fin_get_stock_rank:           {label:'东方财富·涨跌榜',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#hs_a_board'},
+  fin_get_intraday:             {label:'东方财富·分时',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://quote.eastmoney.com/${_stockExchange(s)}${s}.html`:null}},
+  fin_get_lhb_detail:           {label:'东方财富·龙虎榜',fn:()=>'https://data.eastmoney.com/stock/tradedetail.html'},
+  fin_get_margin_detail:        {label:'东方财富·融资融券',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://data.eastmoney.com/rzrq/detail/${s}.html`:null}},
+  fin_get_top_holders:          {label:'东方财富·股东',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://emweb.securities.eastmoney.com/pc_hsf10/pages/index.html?type=web&code=${_stockExchange(s).toUpperCase()}${s}#/gdyj`:null}},
+  fin_get_etf_spot:             {label:'东方财富·ETF',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#fund_etf'},
+  fin_get_macro_china:          {label:'东方财富·宏观',fn:()=>'https://data.eastmoney.com/cjsj/gdp.html'},
+  fin_get_concept_board:        {label:'东方财富·概念板块',fn:()=>'https://quote.eastmoney.com/center/boardlist.html#concept_board'},
+  fin_get_industry_board:       {label:'东方财富·行业板块',fn:()=>'https://quote.eastmoney.com/center/boardlist.html#industry_board'},
+  fin_get_individual_fund_flow: {label:'东方财富·资金流',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://data.eastmoney.com/zjlx/${s}.html`:null}},
+  fin_get_hsgt_flow:            {label:'东方财富·港股通',fn:()=>'https://data.eastmoney.com/hsgt/'},
+  news_get_stock_news:          {label:'东方财富·新闻',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://so.eastmoney.com/news/s?keyword=${s}`:null}},
+  news_get_market_telegraph:    {label:'财联社·快讯',fn:()=>'https://www.cls.cn/telegraph'},
+  news_get_xueqiu_discussion_hot_rank: {label:'雪球·热榜',fn:()=>'https://xueqiu.com/hq#exchange=CN&firstName=1&secondName=1'},
+  news_get_hot_keywords:        {label:'雪球·热搜',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://xueqiu.com/S/${_stockExchange(s).toUpperCase()}${s}`:null}},
+  news_get_economic_news:       {label:'百度财经',fn:()=>'https://finance.pae.baidu.com'},
+  sentiment_analyze_text_sentiment: {label:'SnowNLP',fn:()=>null},
+  sentiment_get_stock_sentiment_report: {label:'舆情综合',fn:()=>null},
+  pdf_search_announcements:     {label:'巨潮资讯·公告',fn:c=>{const s=_parseArg(c,'symbol');return s?`http://www.cninfo.com.cn/new/fulltextSearch?notautosubmit=&keyWord=${s}`:null}},
+  pdf_download_pdf:             {label:'巨潮资讯',fn:()=>'http://www.cninfo.com.cn'},
+  pdf_parse_pdf_pages:          {label:'PDF解析',fn:()=>null},
+  pdf_extract_pdf_metadata:     {label:'PDF元数据',fn:()=>null},
+  code_execute_python:          {label:'Python',fn:()=>null},
+  code_execute_python_inproc:   {label:'Python',fn:()=>null},
+  fund_search_fund:             {label:'天天基金·搜索',fn:c=>{const k=_parseArg(c,'keyword');return k?`https://so.eastmoney.com/fund/s?keyword=${encodeURIComponent(k)}`:'https://fund.eastmoney.com'}},
+  fund_get_fund_info:           {label:'天天基金·概况',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://fundf10.eastmoney.com/jbgk_${s}.html`:null}},
+  fund_get_fund_nav:            {label:'天天基金·净值',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://fundf10.eastmoney.com/F10DataApi/NavigationBar498.aspx?dt=0.5&mc=navNOTICE&fundcode=${s}`:`https://fund.eastmoney.com`}},
+  fund_get_fund_etf_spot:       {label:'东方财富·ETF',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#fund_etf'},
+  fund_get_fund_lof_spot:       {label:'东方财富·LOF',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#fund_lof'},
+  fund_get_fund_etf_hist:       {label:'天天基金·ETF',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://fund.eastmoney.com/${s}.html`:null}},
+  fund_get_fund_holdings:       {label:'天天基金·持仓',fn:c=>{const s=_parseArg(c,'symbol');return s?`https://fundf10.eastmoney.com/ccmx_${s}.html`:null}},
+  fund_get_fund_rating:         {label:'天天基金·评级',fn:()=>'https://fund.eastmoney.com/data/fundrating.html'},
+  fund_get_fund_rank:           {label:'天天基金·排行',fn:()=>'https://fund.eastmoney.com/data/fundranking.html'},
+  fund_get_fund_daily:          {label:'天天基金·净值',fn:()=>'https://fund.eastmoney.com/fund.html'},
+};
+
+function _sourceLink(toolName, callContent) {
+  const r = SOURCE_RULES[toolName];
+  if (!r) return '';
+  const url = r.fn(callContent || '');
+  if (!url) return `<span class="tc-source" style="cursor:default">${r.label}</span>`;
+  return `<a class="tc-source" href="${url}" target="_blank" rel="noopener" title="查看${r.label}数据出处">${r.label}</a>`;
+}
 
 function _getOrCreateThreadEl(threadId) {
   if (threadData.has(threadId)) return threadData.get(threadId).el;
@@ -272,9 +343,28 @@ function _isCurrentThreadStreaming() {
   return currentThread && streamingThreads.has(currentThread);
 }
 
+const _svgSend = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>';
+const _svgStop = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
 function _updateSendBtn() {
   const btn = document.getElementById('sendBtn');
-  btn.disabled = _isCurrentThreadStreaming();
+  if (_isCurrentThreadStreaming()) {
+    btn.innerHTML = _svgStop;
+    btn.classList.add('stop-mode');
+    btn.disabled = false;
+    btn.onclick = () => stopCurrentStream();
+  } else {
+    btn.innerHTML = _svgSend;
+    btn.classList.remove('stop-mode');
+    btn.disabled = false;
+    btn.onclick = () => sendQuery();
+  }
+}
+
+function stopCurrentStream() {
+  if (!currentThread) return;
+  const ac = abortControllers.get(currentThread);
+  if (ac) ac.abort();
 }
 
 // =====================================================================
@@ -288,6 +378,7 @@ function init() {
   setupUploadZone();
   setInterval(refreshUsage, 15000);
   autoResize(document.getElementById('queryInput'));
+  _updateSendBtn();
   loadConversations();
 }
 
@@ -375,7 +466,7 @@ async function switchConversation(threadId) {
   // 否则从后端加载
   msgArea.innerHTML = '<div style="text-align:center;color:var(--text2);padding:40px">加载中...</div>';
   try {
-    const resp = await fetch(`/api/conversations/${threadId}/messages`);
+    const resp = await fetch(`/api/conversations/${threadId}/messages?user_id=${encodeURIComponent(getUserId())}`);
     if (!resp.ok) throw new Error('Failed to load');
     const msgs = await resp.json();
     const container = _getOrCreateThreadEl(threadId);
@@ -423,8 +514,8 @@ function showWelcome() {
     <div class="examples">
       <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
       <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？科技股表现如何？</div>
-      <div class="example" onclick="fillQuery(this)">上证指数和创业板最近一周走势对比分析</div>
-      <div class="example" onclick="fillQuery(this)">查一下宁德时代最新财报和市场舆情</div>
+      <div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行，哪些基金表现最好？</div>
+      <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
     </div>
   </div>`;
 }
@@ -495,12 +586,14 @@ function sendQuery() {
 
 async function _runStream(query, sendThreadId, userId) {
   let threadId = sendThreadId;
+  const abortCtrl = new AbortController();
 
   try {
     const resp = await fetch('/api/supervisor/research/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ query, user_id: userId, thread_id: threadId }),
+      signal: abortCtrl.signal,
     });
 
     if (!resp.ok) {
@@ -518,6 +611,7 @@ async function _runStream(query, sendThreadId, userId) {
     td._title = query.slice(0, 40);
     td._activeSpecialist = null;
     streamingThreads.add(threadId);
+    abortControllers.set(threadId, abortCtrl);
 
     // 追加用户消息到该容器
     _appendUserMsg(container, query);
@@ -549,6 +643,7 @@ async function _runStream(query, sendThreadId, userId) {
     let tokenBuf = '';
     let tokenStreamStarted = false;
     let tokenStreamEl = null;
+    const usedSources = new Map();
 
     while (true) {
       const {done, value} = await reader.read();
@@ -591,11 +686,14 @@ async function _runStream(query, sendThreadId, userId) {
             tcLine.className = 'tool-call-line';
             const sp = evt.metadata?.specialist || evt.node || '';
             const tool = evt.metadata?.tool || '';
+            const callContent = evt.content || '';
+            if (SOURCE_RULES[tool]) usedSources.set(tool, callContent);
             tcLine.innerHTML =
               `<span class="tc-icon">⚙</span>` +
               `<span class="tc-specialist">${sp}</span> ` +
               `<span class="tc-tool">${tool}</span>` +
-              (evt.content ? `<span>(${evt.content.split('(').slice(1).join('(')})</span>` : '');
+              (callContent ? `<span>(${callContent.split('(').slice(1).join('(')})</span>` : '') +
+              _sourceLink(tool, callContent);
             contentEl.appendChild(tcLine);
             _scrollIfViewing(threadId);
             break;
@@ -677,19 +775,43 @@ async function _runStream(query, sendThreadId, userId) {
 
     if (finalText) contentEl.innerHTML = renderMarkdown(finalText);
     typingEl.style.display = 'none';
+
+    if (usedSources.size > 0) {
+      const seen = new Map();
+      for (const [tool, content] of usedSources) {
+        const r = SOURCE_RULES[tool];
+        if (r && !seen.has(r.label)) seen.set(r.label, r.fn(content));
+      }
+      let html = '<div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--text2)">数据来源：';
+      const parts = [];
+      for (const [label, url] of seen) {
+        if (url) parts.push(`<a href="${url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${label}</a>`);
+        else parts.push(label);
+      }
+      html += parts.join('、') + '</div>';
+      contentEl.insertAdjacentHTML('beforeend', html);
+    }
     refreshUsage();
 
   } catch (err) {
-    // 如果该 thread 有容器，在上面显示错误
+    const aborted = err.name === 'AbortError';
     if (threadData.has(threadId)) {
       const container = threadData.get(threadId).el;
       const lastAssistant = container.querySelector('.msg.assistant:last-of-type .content');
-      if (lastAssistant) lastAssistant.textContent = '请求失败: ' + err.message;
+      if (lastAssistant) {
+        if (aborted) {
+          const cur = lastAssistant.innerHTML || '';
+          lastAssistant.innerHTML = cur + '<div style="color:var(--text2);font-size:12px;margin-top:8px">— 已停止 —</div>';
+        } else {
+          lastAssistant.textContent = '请求失败: ' + err.message;
+        }
+      }
       const lastTyping = container.querySelector('.msg.assistant:last-of-type .typing');
       if (lastTyping) lastTyping.style.display = 'none';
     }
-    showToast('请求失败: ' + err.message);
+    if (!aborted) showToast('请求失败: ' + err.message);
   } finally {
+    abortControllers.delete(threadId);
     streamingThreads.delete(threadId);
     if (threadData.has(threadId)) threadData.get(threadId).streaming = false;
     _updateSendBtn();

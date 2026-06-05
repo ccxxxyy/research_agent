@@ -9,7 +9,20 @@
 2. ``get_stock_price_history`` — 日级 OHLCV 及简单汇总统计。
 3. ``get_financial_abstract`` — 按报告期的营收 / 净利润 / 现金流 / EPS。
 4. ``get_financial_indicators`` — 按报告期的 ROE / ROA / 利润率 / 杠杆比率。
-5. ``search_stock_by_name`` — 模糊匹配公司名称到 A 股代码（使用一次性内存缓存，避免每次调用都请求全市场名单）。
+5. ``search_stock_by_name`` — 模糊匹配公司名称到 A 股代码。
+6. ``get_index_quotes`` — A 股主要指数实时行情。
+7. ``get_sector_fund_flow`` — 板块资金流向排行。
+8. ``get_stock_rank`` — 今日涨跌幅排行。
+9. ``get_intraday`` — 分时 K 线（1/5/15/30/60 分钟）。
+10. ``get_lhb_detail`` — 龙虎榜详情。
+11. ``get_margin_detail`` — 个股融资融券数据。
+12. ``get_top_holders`` — 十大流通股东。
+13. ``get_etf_spot`` — ETF 基金实时行情排行。
+14. ``get_macro_china`` — 宏观经济指标（GDP/CPI/PMI/M2/社融）。
+15. ``get_concept_board`` — 概念板块行情 + 成分股。
+16. ``get_industry_board`` — 行业板块行情 + 成分股。
+17. ``get_individual_fund_flow`` — 个股资金流向。
+18. ``get_hsgt_flow`` — 沪深港通资金流向。
 
 设计说明
 --------
@@ -580,6 +593,410 @@ async def get_stock_rank(direction: str = "涨幅榜", limit: int = 20) -> dict:
         return await asyncio.to_thread(_call)
     except Exception as e:
         return _fmt_error(e, context=f"get_stock_rank(direction={direction!r})")
+
+
+# =====================================================================
+# 工具 9: 分时数据（日内 1/5/15/30/60 分钟 K 线）
+# =====================================================================
+@mcp.tool()
+async def get_intraday(
+    symbol: str,
+    period: str = "5",
+    limit: int = 48,
+) -> dict:
+    """返回 A 股的日内分时数据。
+
+    Args:
+        symbol: 6 位 A 股代码，例如 ``"600519"``。
+        period: 分钟周期 — ``"1"`` / ``"5"`` / ``"15"`` / ``"30"`` / ``"60"``。
+        limit: 返回条目数（默认 48，上限 240）。
+
+    Returns:
+        包含时间、开盘、收盘、最高、最低、成交量的列表。
+    """
+    limit = max(1, min(limit, 240))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.stock_zh_a_hist_min_em(symbol=symbol, period=period, adjust="")
+        df = df.tail(limit)
+        cols = [
+            c
+            for c in ["时间", "开盘", "收盘", "最高", "最低", "成交量", "成交额"]
+            if c in df.columns
+        ]
+        return {
+            "symbol": symbol,
+            "period": f"{period}min",
+            "records": _df_to_records(df[cols]),
+            "count": len(df),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_intraday(symbol={symbol!r}, period={period!r})")
+
+
+# =====================================================================
+# 工具 10: 龙虎榜详情（当日/指定日期）
+# =====================================================================
+@mcp.tool()
+async def get_lhb_detail(date: str = "", limit: int = 20) -> dict:
+    """返回龙虎榜（大单异动）详情。
+
+    Args:
+        date: 日期，格式 ``"YYYYMMDD"``。留空则取最近交易日。
+        limit: 返回条目数（默认 20，上限 50）。
+
+    Returns:
+        龙虎榜上榜个股列表，包含代码、名称、收盘价、涨跌幅、上榜原因、买入额、卖出额、净买入额等。
+    """
+    limit = max(1, min(limit, 50))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        if date:
+            df = ak.stock_lhb_detail_em(start_date=date, end_date=date)
+        else:
+            today = datetime.now().strftime("%Y%m%d")
+            week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+            df = ak.stock_lhb_detail_em(start_date=week_ago, end_date=today)
+        df = df.head(limit)
+        return {
+            "records": _df_to_records(df),
+            "count": len(df),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_lhb_detail(date={date!r})")
+
+
+# =====================================================================
+# 工具 11: 融资融券（个股明细）
+# =====================================================================
+@mcp.tool()
+async def get_margin_detail(symbol: str, limit: int = 20) -> dict:
+    """返回个股融资融券数据明细。
+
+    Args:
+        symbol: 6 位 A 股代码。
+        limit: 返回条目数（默认 20，上限 60）。
+
+    Returns:
+        包含日期、融资余额、融资买入额、融券余量、融券卖出量等字段。
+    """
+    limit = max(1, min(limit, 60))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.stock_margin_detail_sse(symbol=symbol)
+        if df.empty:
+            df = ak.stock_margin_detail_szse(symbol=symbol)
+        df = df.tail(limit)
+        return {
+            "symbol": symbol,
+            "records": _df_to_records(df),
+            "count": len(df),
+            "source": "sse/szse",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_margin_detail(symbol={symbol!r})")
+
+
+# =====================================================================
+# 工具 12: 十大流通股东
+# =====================================================================
+@mcp.tool()
+async def get_top_holders(symbol: str) -> dict:
+    """返回个股最新一期的十大流通股东。
+
+    Args:
+        symbol: 6 位 A 股代码。
+
+    Returns:
+        股东列表，包含股东名称、持股数量、持股比例、增减情况。
+    """
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.stock_gdfx_free_holding_detail_em(symbol=symbol)
+        if df.empty:
+            return {"symbol": symbol, "holders": [], "source": "eastmoney"}
+        latest_date = df.iloc[0].get("截止日期", df.iloc[0].get("日期", ""))
+        if "截止日期" in df.columns:
+            df = df[df["截止日期"] == latest_date]
+        return {
+            "symbol": symbol,
+            "report_date": str(latest_date),
+            "holders": _df_to_records(df.head(10)),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_top_holders(symbol={symbol!r})")
+
+
+# =====================================================================
+# 工具 13: ETF 实时行情
+# =====================================================================
+@mcp.tool()
+async def get_etf_spot(limit: int = 30) -> dict:
+    """返回 A 股 ETF 基金实时行情排行。
+
+    Args:
+        limit: 返回条目数（默认 30，上限 100）。
+
+    Returns:
+        按成交额排序的 ETF 列表，包含代码、名称、最新价、涨跌幅、成交额。
+    """
+    limit = max(1, min(limit, 100))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.fund_etf_spot_em()
+        df = df.sort_values("成交额", ascending=False).head(limit)
+        cols = [
+            c for c in ["代码", "名称", "最新价", "涨跌幅", "成交额", "流通市值"] if c in df.columns
+        ]
+        return {
+            "etfs": _df_to_records(df[cols] if cols else df),
+            "count": len(df),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context="get_etf_spot()")
+
+
+# =====================================================================
+# 工具 14: 宏观经济数据（GDP/CPI/PMI/社融等）
+# =====================================================================
+@mcp.tool()
+async def get_macro_china(indicator: str = "gdp", limit: int = 12) -> dict:
+    """返回中国宏观经济数据。
+
+    Args:
+        indicator: 指标名称，可选 ``"gdp"`` / ``"cpi"`` / ``"pmi"`` / ``"money_supply"`` / ``"social_financing"``。
+        limit: 返回条目数（默认 12 期）。
+
+    Returns:
+        该指标的时间序列数据。
+    """
+    limit = max(1, min(limit, 60))
+    indicator_map = {
+        "gdp": "macro_china_gdp",
+        "cpi": "macro_china_cpi",
+        "pmi": "macro_china_pmi",
+        "money_supply": "macro_china_money_supply",
+        "social_financing": "macro_china_shrzgm",
+    }
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        func_name = indicator_map.get(indicator, "macro_china_gdp")
+        fn = getattr(ak, func_name, None)
+        if fn is None:
+            return {"error": f"不支持的指标: {indicator}", "supported": list(indicator_map.keys())}
+        df = fn()
+        df = df.tail(limit)
+        return {
+            "indicator": indicator,
+            "records": _df_to_records(df),
+            "count": len(df),
+            "source": "eastmoney/stats.gov.cn",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_macro_china(indicator={indicator!r})")
+
+
+# =====================================================================
+# 工具 15: 概念板块列表 + 成分股
+# =====================================================================
+@mcp.tool()
+async def get_concept_board(board_name: str = "", limit: int = 20) -> dict:
+    """返回 A 股概念板块行情或指定板块的成分股。
+
+    Args:
+        board_name: 概念板块名称，如 ``"人工智能"`` / ``"芯片"``。
+            留空返回所有概念板块排行。
+        limit: 返回条目数（默认 20，上限 50）。
+
+    Returns:
+        板块行情列表（含板块名、涨跌幅、领涨股）或指定板块的成分股列表。
+    """
+    limit = max(1, min(limit, 50))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        if not board_name:
+            df = ak.stock_board_concept_name_em()
+            df = (
+                df.sort_values("涨跌幅", ascending=False).head(limit)
+                if "涨跌幅" in df.columns
+                else df.head(limit)
+            )
+            return {
+                "type": "概念板块列表",
+                "boards": _df_to_records(df),
+                "count": len(df),
+                "source": "eastmoney",
+            }
+        df = ak.stock_board_concept_cons_em(symbol=board_name)
+        df = df.head(limit)
+        cols = [c for c in ["代码", "名称", "最新价", "涨跌幅", "成交额"] if c in df.columns]
+        return {
+            "board": board_name,
+            "stocks": _df_to_records(df[cols] if cols else df),
+            "count": len(df),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_concept_board(board_name={board_name!r})")
+
+
+# =====================================================================
+# 工具 16: 行业板块列表 + 成分股
+# =====================================================================
+@mcp.tool()
+async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
+    """返回 A 股行业板块行情或指定行业的成分股。
+
+    Args:
+        board_name: 行业名称，如 ``"半导体"`` / ``"白酒"``。
+                    留空返回所有行业板块排行。
+        limit: 返回条目数（默认 20，上限 50）。
+
+    Returns:
+        行业列表（含板块名、涨跌幅、领涨股）或指定行业的成分股列表。
+    """
+    limit = max(1, min(limit, 50))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        if not board_name:
+            df = ak.stock_board_industry_name_em()
+            df = (
+                df.sort_values("涨跌幅", ascending=False).head(limit)
+                if "涨跌幅" in df.columns
+                else df.head(limit)
+            )
+            return {
+                "type": "行业板块列表",
+                "boards": _df_to_records(df),
+                "count": len(df),
+                "source": "eastmoney",
+            }
+        df = ak.stock_board_industry_cons_em(symbol=board_name)
+        df = df.head(limit)
+        cols = [c for c in ["代码", "名称", "最新价", "涨跌幅", "成交额"] if c in df.columns]
+        return {
+            "board": board_name,
+            "stocks": _df_to_records(df[cols] if cols else df),
+            "count": len(df),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_industry_board(board_name={board_name!r})")
+
+
+# =====================================================================
+# 工具 17: 个股资金流向
+# =====================================================================
+@mcp.tool()
+async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
+    """返回个股的资金流向数据（主力、超大单、大单、中单、小单）。
+
+    Args:
+        symbol: 6 位 A 股代码。
+        limit: 返回条目数（默认 20，上限 60）。
+
+    Returns:
+        按日期排列的资金流向数据。
+    """
+    limit = max(1, min(limit, 60))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.stock_individual_fund_flow(stock=symbol, market=_exchange_prefix(symbol))
+        df = df.tail(limit)
+        return {
+            "symbol": symbol,
+            "records": _df_to_records(df),
+            "count": len(df),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_individual_fund_flow(symbol={symbol!r})")
+
+
+# =====================================================================
+# 工具 18: 港股通（北向/南向资金流）
+# =====================================================================
+@mcp.tool()
+async def get_hsgt_flow(direction: str = "north", limit: int = 20) -> dict:
+    """返回沪深港通资金流向数据。
+
+    Args:
+        direction: ``"north"`` 北向资金（外资流入 A 股）或 ``"south"`` 南向资金（内资流入港股）。
+        limit: 返回条目数（默认 20，上限 60）。
+
+    Returns:
+        每日资金净流入/流出数据。
+    """
+    limit = max(1, min(limit, 60))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        if direction == "south":
+            df = ak.stock_hsgt_south_money_em()
+        else:
+            df = ak.stock_hsgt_north_money_em()
+        df = df.tail(limit)
+        return {
+            "direction": "北向" if direction == "north" else "南向",
+            "records": _df_to_records(df),
+            "count": len(df),
+            "source": "eastmoney",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_hsgt_flow(direction={direction!r})")
 
 
 if __name__ == "__main__":
