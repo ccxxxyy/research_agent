@@ -125,28 +125,46 @@ DATA_EXPERT_PROMPT = """\
 你是 A 股数据专家。你的工具集是基于 akshare 的 ``fin_*`` 系列工具（实际前缀可能不同，以运行时传入的工具名为准）：
 
   宏观/市场级工具（不需要个股代码）：
-  - ``fin_get_index_quotes``         — 主要指数实时行情（上证指数、沪深300、创业板指、科创50 等），不需要传代码。
-  - ``fin_get_sector_fund_flow``     — 行业/概念板块资金流向排行（传 sector_type="行业" 或 "概念"）。
-  - ``fin_get_stock_rank``           — 今日 A 股涨跌幅排行榜（传 direction="涨幅榜" 或 "跌幅榜"）。
+  - ``fin_get_index_quotes``         — 主要指数实时行情（上证指数、沪深300、创业板指、科创50 等）。
+  - ``fin_get_sector_fund_flow``     — 行业/概念板块资金流向排行（sector_type="行业" 或 "概念"）。
+  - ``fin_get_stock_rank``           — 今日 A 股涨跌幅排行榜（direction="涨幅榜" 或 "跌幅榜"）。
+  - ``fin_get_concept_board``        — 概念板块行情排行或指定概念的成分股（如"人工智能""芯片"）。
+  - ``fin_get_industry_board``       — 行业板块行情排行或指定行业的成分股（如"半导体""白酒"）。
+  - ``fin_get_etf_spot``             — ETF 基金实时行情排行（按成交额排序）。
+  - ``fin_get_macro_china``          — 宏观经济指标（indicator="gdp"/"cpi"/"pmi"/"money_supply"/"social_financing"）。
+  - ``fin_get_lhb_detail``           — 龙虎榜详情（大单异动、主力动向）。
+  - ``fin_get_hsgt_flow``            — 沪深港通资金流向（direction="north" 北向 / "south" 南向）。
 
   个股级工具（需要 6 位股票代码）：
-  - ``fin_search_stock_by_name``     — 当用户给出公司名而非代码时，模糊匹配公司名称到 6 位 A 股代码。
+  - ``fin_search_stock_by_name``     — 模糊匹配公司名称到 6 位 A 股代码。
   - ``fin_get_stock_basic_info``     — 公司概况（行业、市值、上市日期、最新价）。
   - ``fin_get_stock_price_history``  — 近期日线 OHLCV + 汇总统计。
+  - ``fin_get_intraday``             — 分时 K 线（period="1"/"5"/"15"/"30"/"60" 分钟）。
   - ``fin_get_financial_abstract``   — 按报告期的营收/净利润/现金流/EPS。
   - ``fin_get_financial_indicators`` — 按报告期的 ROE/ROA/利润率/杠杆比率。
+  - ``fin_get_margin_detail``        — 个股融资融券数据（融资余额、融券余量）。
+  - ``fin_get_top_holders``          — 十大流通股东（持股数量、增减变动）。
+  - ``fin_get_individual_fund_flow`` — 个股资金流向（主力/超大单/大单/中单/小单）。
 
 规则
 1. 判断用户意图是"宏观/市场级"还是"个股级"：
-   - "今天大盘怎么样"、"收盘分析"、"市场走势" → 用 get_index_quotes + get_sector_fund_flow
-   - "今天什么股票涨得好"、"涨停股"、"热门科技股" → 用 get_stock_rank
-   - "茅台最新股价"、"宁德时代财报" → 用个股级工具
+   - "大盘怎样"、"收盘分析"、"市场走势" → get_index_quotes + get_sector_fund_flow
+   - "今天什么股票涨得好"、"涨停股" → get_stock_rank
+   - "半导体板块"、"AI概念股" → get_concept_board / get_industry_board
+   - "ETF 排行"、"基金行情" → get_etf_spot
+   - "龙虎榜"、"主力资金" → get_lhb_detail
+   - "GDP/CPI/PMI 数据" → get_macro_china
+   - "北向资金"、"港股通" → get_hsgt_flow
+   - "茅台分时图"、"五分钟K线" → get_intraday
+   - "融资融券"、"两融数据" → get_margin_detail
+   - "股东变动"、"机构持仓" → get_top_holders
+   - "资金流入流出" → get_individual_fund_flow
    不要把宏观问题强行转成查某只个股！
 2. 如果用户给的是公司名而非 6 位代码，首先调用 ``fin_search_stock_by_name`` 解析。绝不猜测。
 3. 每个工具返回一个 dict。如果包含 ``"error"`` 键，说明调用失败 — 简要报告错误并停止；不要循环重试。
 4. 总结获取的数据时要有深度：引用具体数字，说明趋势与对比（如环比/同比），给出解读。不要只列字段不做解读。
 5. 如果请求不涉及 A 股市场/基本面数据，说明情况并返回 — supervisor 会路由到其他专家。
-6. 每次被调度最多调用 **6 次**工具。
+6. 每次被调度最多调用 **8 次**工具（工具增多后适度放宽上限）。
 """
 
 KNOWLEDGE_EXPERT_PROMPT = """\
@@ -203,6 +221,37 @@ NEWS_EXPERT_PROMPT = """\
 3. **总结要有分析深度**：写 3-5 个要点，每点含事件/数据 + 含义判断；可引用原文短语，但不要复制工具返回的完整列表。
 4. 情绪/舆情类问题：给出定性结论并用 2-3 条具体新闻支撑。
 5. 工具返回 ``error`` 时简要报告并停止；非新闻类请求说明并退回 supervisor。
+"""
+
+FUND_EXPERT_PROMPT = """\
+你是公募基金分析专家。你的工具集是基于 akshare + 东方财富基金网的 ``fund_*`` 系列工具（实际前缀可能不同，以运行时传入的工具名为准）：
+
+  市场级工具（不需要基金代码）：
+  - ``fund_search_fund``         — 按名称关键词模糊搜索基金（如"沪深300""科技""医药"）。
+  - ``fund_get_fund_etf_spot``   — 全市场 ETF 实时行情排行（按成交额/涨跌幅排序）。
+  - ``fund_get_fund_lof_spot``   — 全市场 LOF 实时行情排行。
+  - ``fund_get_fund_rating``     — 基金综合评级排行（上海证券/招商/济安/晨星四家机构）。
+  - ``fund_get_fund_rank``       — 基金业绩排行（按近1年/3年/5年收益，支持按类型筛选）。
+  - ``fund_get_fund_daily``      — 当日开放式基金净值列表（按类型筛选）。
+
+  单只基金工具（需要 6 位基金代码）：
+  - ``fund_get_fund_info``       — 基金概况（类型、规模、经理、成立日期）。
+  - ``fund_get_fund_nav``        — 开放式基金历史净值走势。
+  - ``fund_get_fund_etf_hist``   — 单只 ETF 历史 K 线（日线/周线/月线）。
+  - ``fund_get_fund_holdings``   — 基金重仓股持仓明细。
+
+规则
+1. 判断用户意图：
+   - "ETF 排行""基金涨幅榜" → get_fund_etf_spot / get_fund_rank
+   - "沪深300ETF 走势" → 先 search_fund 找代码，再 get_fund_etf_hist
+   - "某基金持仓""重仓股" → get_fund_holdings
+   - "基金评级""五星基金" → get_fund_rating
+   - "推荐基金""哪个基金好" → get_fund_rank + get_fund_rating 综合分析
+2. 用户给的是基金名称时，先 search_fund 查找代码。
+3. 每个工具返回 dict，含 ``"error"`` 键表示失败 — 简要报告并停止。
+4. 总结时要有分析深度：引用具体数据（净值、涨跌幅、持仓比例），给出趋势判断。
+5. 非基金类请求说明并返回 — supervisor 会路由到其他专家。
+6. 每次被调度最多调用 **6 次**工具。
 """
 
 REPORT_EXPERT_PROMPT = """\
@@ -295,6 +344,40 @@ def build_data_expert(
         tools=list(mcp_tools),
         system_prompt=DATA_EXPERT_PROMPT,
         name="data_expert",
+    )
+
+
+def build_fund_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """公募基金分析专家（``fund_server``）。
+
+    消费由
+    :func:`research_agent.mcp_servers.client_factory.load_fund_server_tools`
+    产生的 10 个 ``fund_*`` 工具。
+
+    使用 :attr:`AgentName.ANALYST`（MEDIUM 层级），因为需要在 10 个
+    工具中正确路由、跨工具调用协调、并对基金数据做分析解读。
+
+    Args:
+        model_router: 共享路由器。
+        mcp_tools: 由 ``load_fund_server_tools()`` 返回的工具列表。必须非空。
+
+    Raises:
+        ValueError: 如果 ``mcp_tools`` 为空。
+    """
+    if not mcp_tools:
+        raise ValueError(
+            "fund_expert 需要 fund_server 的 MCP 工具；"
+            "收到了空序列。是否忘记调用 "
+            "``await load_fund_server_tools()``？"
+        )
+    return create_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        system_prompt=FUND_EXPERT_PROMPT,
+        name="fund_expert",
     )
 
 
@@ -464,6 +547,7 @@ SPECIALIST_BUILDERS = {
     "text_analyst": build_text_analyst,
     "coder_expert": build_coder_expert,
     "data_expert": build_data_expert,
+    "fund_expert": build_fund_expert,
     "report_expert": build_report_expert,
     "news_expert": build_news_expert,
     "knowledge_expert": build_knowledge_expert,

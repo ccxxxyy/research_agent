@@ -28,6 +28,7 @@ from research_agent.config import LLMConfig
 from research_agent.graph.research_supervisor import (
     SUPERVISOR_PROMPT_CODER,
     SUPERVISOR_PROMPT_DATA,
+    SUPERVISOR_PROMPT_FUND,
     SUPERVISOR_PROMPT_KNOWLEDGE,
     SUPERVISOR_PROMPT_NEWS,
     SUPERVISOR_PROMPT_REPORT,
@@ -190,6 +191,7 @@ class TestSupervisorPrompt:
             has_knowledge=True,
             has_news=True,
             has_sentiment=True,
+            has_fund=True,
         )
         assert "data_expert" in prompt
         assert "report_expert" in prompt
@@ -197,12 +199,14 @@ class TestSupervisorPrompt:
         assert "knowledge_expert" in prompt
         assert "news_expert" in prompt
         assert "sentiment_expert" in prompt
+        assert "fund_expert" in prompt
         # 各节文本确实被追加。
         assert SUPERVISOR_PROMPT_DATA in prompt
         assert SUPERVISOR_PROMPT_REPORT in prompt
         assert SUPERVISOR_PROMPT_CODER in prompt
         assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
         assert SUPERVISOR_PROMPT_NEWS in prompt
+        assert SUPERVISOR_PROMPT_FUND in prompt
 
     def test_missing_specialists_are_not_mentioned(self) -> None:
         """提及团队中不存在的专家会导致 supervisor 发出在运行时失败的
@@ -214,6 +218,7 @@ class TestSupervisorPrompt:
             has_knowledge=False,
             has_news=False,
             has_sentiment=False,
+            has_fund=False,
         )
         assert "data_expert" in prompt
         assert "report_expert" not in prompt
@@ -221,6 +226,7 @@ class TestSupervisorPrompt:
         assert "knowledge_expert" not in prompt
         assert "news_expert" not in prompt
         assert "sentiment_expert" not in prompt
+        assert "fund_expert" not in prompt
 
     def test_knowledge_only_prompt_omits_other_experts(self) -> None:
         """针对仅含 knowledge_expert 团队的对称守护测试。"""
@@ -231,6 +237,7 @@ class TestSupervisorPrompt:
             has_knowledge=True,
             has_news=False,
             has_sentiment=False,
+            has_fund=False,
         )
         assert "knowledge_expert" in prompt
         assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
@@ -239,6 +246,7 @@ class TestSupervisorPrompt:
         assert "coder_expert" not in prompt
         assert "news_expert" not in prompt
         assert "sentiment_expert" not in prompt
+        assert "fund_expert" not in prompt
 
     def test_news_only_prompt_omits_other_experts(self) -> None:
         """针对仅含 news_expert 团队的对称守护测试。"""
@@ -249,6 +257,7 @@ class TestSupervisorPrompt:
             has_knowledge=False,
             has_news=True,
             has_sentiment=False,
+            has_fund=False,
         )
         assert "news_expert" in prompt
         assert SUPERVISOR_PROMPT_NEWS in prompt
@@ -257,19 +266,21 @@ class TestSupervisorPrompt:
         assert "coder_expert" not in prompt
         assert "knowledge_expert" not in prompt
         assert "sentiment_expert" not in prompt
+        assert "fund_expert" not in prompt
 
     def test_rules_always_included(self) -> None:
         """路由规则（"每次只移交一个子任务"、"不可捏造数字"等）是不可协商的 —
         无论团队组成如何，它们都必须出现。"""
-        # 每个元组是一个 (has_data, has_report, has_coder, has_knowledge, has_news, has_sentiment) 组合 — 六种单专家配置加一种全团队配置。
+        # 每个元组是一个 (has_data, has_report, has_coder, has_knowledge, has_news, has_sentiment, has_fund) 组合。
         for flags in [
-            (True, False, False, False, False, False),
-            (False, True, False, False, False, False),
-            (False, False, True, False, False, False),
-            (False, False, False, True, False, False),
-            (False, False, False, False, True, False),
-            (False, False, False, False, False, True),
-            (True, True, True, True, True, True),
+            (True, False, False, False, False, False, False),
+            (False, True, False, False, False, False, False),
+            (False, False, True, False, False, False, False),
+            (False, False, False, True, False, False, False),
+            (False, False, False, False, True, False, False),
+            (False, False, False, False, False, True, False),
+            (False, False, False, False, False, False, True),
+            (True, True, True, True, True, True, True),
         ]:
             prompt = _build_supervisor_prompt(
                 has_data=flags[0],
@@ -278,6 +289,7 @@ class TestSupervisorPrompt:
                 has_knowledge=flags[3],
                 has_news=flags[4],
                 has_sentiment=flags[5],
+                has_fund=flags[6],
             )
             assert "移交" in prompt
             assert "不要编造" in prompt

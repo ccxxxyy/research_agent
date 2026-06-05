@@ -209,6 +209,41 @@
     "expected_reply_keywords": ["舆情", "中信证券"],
     "category": "single_route"
   },
+  {
+    "query": "今天 ETF 涨幅排行榜前十是哪些",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["ETF", "涨幅"],
+    "category": "single_route"
+  },
+  {
+    "query": "帮我查一下沪深300ETF的最近一个月净值走势",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["净值", "沪深300"],
+    "category": "single_route"
+  },
+  {
+    "query": "易方达蓝筹精选的重仓股有哪些",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["重仓", "持仓"],
+    "category": "single_route"
+  },
+  {
+    "query": "目前五星评级的基金有哪些，按综合评级排个序",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["评级", "基金"],
+    "category": "single_route"
+  },
+  {
+    "query": "近一年收益率最高的股票型基金排名",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["收益率", "排名"],
+    "category": "single_route"
+  },
 
   {
     "query": "分析宁德时代 2023 年业绩：(1) 查营收和利润 (2) 找年报里的经营分析段落",
@@ -364,6 +399,62 @@
     "expected_reply_keywords": ["财务", "新闻", "代码", "舆情"],
     "category": "multi_route"
   },
+  {
+    "query": "查一下沪深300ETF的走势，再对比一下沪深300指数本身的K线数据",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert", "data_expert"],
+    "expected_reply_keywords": ["沪深300", "ETF", "指数"],
+    "category": "multi_route"
+  },
+  {
+    "query": "帮我找几只科技类基金，查出它们近一年收益率，用代码算出年化夏普比率",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["fund_expert", "coder_expert"],
+    "expected_reply_keywords": ["基金", "收益率"],
+    "category": "multi_route"
+  },
+  {
+    "query": "查一下易方达蓝筹精选的重仓股，然后看看这些重仓股最近有什么新闻",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert", "news_expert"],
+    "expected_reply_keywords": ["重仓", "新闻"],
+    "category": "multi_route"
+  },
+  {
+    "query": "今天 ETF 涨幅最大的几只是什么，对应的行业板块行情怎么样",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["fund_expert", "data_expert"],
+    "expected_reply_keywords": ["ETF", "板块"],
+    "category": "multi_route"
+  },
+  {
+    "query": "查一下华夏半导体ETF的持仓，然后分析这些持仓股的最新舆情",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert", "sentiment_expert"],
+    "expected_reply_keywords": ["持仓", "舆情"],
+    "category": "multi_route"
+  },
+  {
+    "query": "搜一下知识库有没有基金投资策略相关的内容，再帮我查当前五星评级的基金",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["knowledge_expert", "fund_expert"],
+    "expected_reply_keywords": ["知识库", "评级"],
+    "category": "multi_route"
+  },
+  {
+    "query": "综合分析新能源赛道：查新能源类基金排名，拉取宁德时代的股价数据，看最近新闻",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert", "data_expert", "news_expert"],
+    "expected_reply_keywords": ["基金", "新能源", "新闻"],
+    "category": "multi_route"
+  },
+  {
+    "query": "全面分析半导体ETF：查基金净值走势和持仓，查重仓股财务数据，看相关新闻和舆情",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["fund_expert", "data_expert", "news_expert", "sentiment_expert"],
+    "expected_reply_keywords": ["ETF", "净值", "持仓", "新闻"],
+    "category": "multi_route"
+  },
 
   {
     "query": "你好",
@@ -470,6 +561,27 @@
     "expected_reply_keywords": ["中际旭创"],
     "category": "edge_case"
   },
+  {
+    "query": "What are the top performing ETF funds in China this year?",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["ETF"],
+    "category": "edge_case"
+  },
+  {
+    "query": "查一下 510300 这只基金的基本信息和净值",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["510300", "净值"],
+    "category": "edge_case"
+  },
+  {
+    "query": "基金和股票到底有什么区别，帮我推荐个适合新手的基金",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["基金"],
+    "category": "edge_case"
+  },
 
   {
     "query": "宁德的股价多少钱啊",
@@ -539,6 +651,27 @@
     "user_id": "eval_user_02",
     "expected_specialists": ["data_expert", "report_expert", "sentiment_expert"],
     "expected_reply_keywords": ["数据", "报告", "情感"],
+    "category": "robustness"
+  },
+  {
+    "query": "etf涨幅榜拉一下 看看今天哪个板块猛",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["ETF", "涨幅"],
+    "category": "robustness"
+  },
+  {
+    "query": "那个什么蓝筹精选的基金 帮我看看持仓和净值情况",
+    "user_id": "eval_user_02",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["持仓", "净值"],
+    "category": "robustness"
+  },
+  {
+    "query": "有没有好的fund推荐 最近一年return高的那种 顺便查查它的holdings",
+    "user_id": "eval_user_01",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["基金"],
     "category": "robustness"
   },
 
@@ -632,6 +765,13 @@
     "user_id": "anonymous",
     "expected_specialists": ["news_expert"],
     "expected_reply_keywords": ["新闻"],
+    "category": "memory_test"
+  },
+  {
+    "query": "匿名查看今天ETF涨幅榜和LOF行情",
+    "user_id": "anonymous",
+    "expected_specialists": ["fund_expert"],
+    "expected_reply_keywords": ["ETF", "LOF"],
     "category": "memory_test"
   }
 ]

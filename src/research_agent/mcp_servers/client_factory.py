@@ -64,6 +64,7 @@ PDF_REPORT_SERVER_MODULE = "research_agent.mcp_servers.pdf_report_server"
 KNOWLEDGE_SERVER_MODULE = "research_agent.mcp_servers.knowledge_server"
 NEWS_SERVER_MODULE = "research_agent.mcp_servers.news_server"
 NEWS_SENTIMENT_SERVER_MODULE = "research_agent.mcp_servers.news_sentiment_server"
+FUND_SERVER_MODULE = "research_agent.mcp_servers.fund_server"
 
 
 async def load_code_server_tools() -> list[BaseTool]:
@@ -93,14 +94,8 @@ async def load_echo_server_tools() -> list[BaseTool]:
 async def load_fin_data_server_tools() -> list[BaseTool]:
     """通过 stdio 启动 ``fin_data_server`` 并返回其工具列表。
 
-    暴露五个 A 股数据工具，每个通过 ``tool_name_prefix=True`` 添加
-    ``fin_`` 前缀：
-
-    - ``fin_get_stock_basic_info``
-    - ``fin_get_stock_price_history``
-    - ``fin_get_financial_abstract``
-    - ``fin_get_financial_indicators``
-    - ``fin_search_stock_by_name``
+    暴露 18 个 A 股数据工具，每个通过 ``tool_name_prefix=True`` 添加 ``fin_`` 前缀，
+    涵盖个股行情、板块、龙虎榜、融资融券、股东、ETF、宏观经济、资金流、港股通等。
 
     首次调用 MCP 子进程会加载 ``akshare``，其内部延迟导入可能耗时约 1 秒；后续工具调用复用已预热的进程。
     """
@@ -146,6 +141,21 @@ async def load_news_sentiment_server_tools() -> list[BaseTool]:
     """
     client = MultiServerMCPClient(
         {"sentiment": _stdio_server_spec(NEWS_SENTIMENT_SERVER_MODULE)},
+        tool_name_prefix=True,
+    )
+    return await client.get_tools()
+
+
+async def load_fund_server_tools() -> list[BaseTool]:
+    """通过 stdio 启动 ``fund_server`` 并返回其工具列表。
+
+    暴露 10 个基金数据工具，每个通过 ``tool_name_prefix=True`` 添加
+    ``fund_`` 前缀，涵盖基金搜索、净值、ETF/LOF 行情、持仓、评级、业绩排行等。
+
+    数据来源：东方财富基金网 / 天天基金。
+    """
+    client = MultiServerMCPClient(
+        {"fund": _stdio_server_spec(FUND_SERVER_MODULE)},
         tool_name_prefix=True,
     )
     return await client.get_tools()
@@ -243,6 +253,7 @@ __all__ = [
     "CODE_SERVER_MODULE",
     "ECHO_SERVER_MODULE",
     "FIN_DATA_SERVER_MODULE",
+    "FUND_SERVER_MODULE",
     "KNOWLEDGE_SERVER_MODULE",
     "NEWS_SENTIMENT_SERVER_MODULE",
     "NEWS_SERVER_MODULE",
@@ -251,6 +262,7 @@ __all__ = [
     "load_code_server_tools",
     "load_echo_server_tools",
     "load_fin_data_server_tools",
+    "load_fund_server_tools",
     "load_knowledge_server_tools",
     "load_knowledge_tools_inproc",
     "load_news_sentiment_server_tools",

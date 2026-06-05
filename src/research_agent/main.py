@@ -53,6 +53,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
     from research_agent.mcp_servers.client_factory import (
         load_code_server_tools,
         load_fin_data_server_tools,
+        load_fund_server_tools,
         load_knowledge_tools_inproc,
         load_news_sentiment_server_tools,
         load_news_server_tools,
@@ -70,6 +71,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         asyncio.wait_for(load_knowledge_tools_inproc(), timeout=timeout),
         asyncio.wait_for(load_news_server_tools(), timeout=timeout),
         asyncio.wait_for(load_news_sentiment_server_tools(), timeout=timeout),
+        asyncio.wait_for(load_fund_server_tools(), timeout=timeout),
         return_exceptions=True,
     )
     names = (
@@ -79,6 +81,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         "knowledge_tools_inproc",
         "news_server",
         "news_sentiment_server",
+        "fund_server",
     )
     tools: dict[str, list] = {}
     for name, r in zip(names, results, strict=False):
@@ -102,6 +105,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         "knowledge_tools_inproc": "knowledge_expert",
         "news_server": "news_expert",
         "news_sentiment_server": "sentiment_expert",
+        "fund_server": "fund_expert",
     }
     roster = [spec for src, spec in tool_source_to_specialist.items() if tools.get(src)]
 
@@ -120,6 +124,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
             knowledge_tools=tools["knowledge_tools_inproc"] or None,
             news_tools=tools["news_server"] or None,
             sentiment_tools=tools["news_sentiment_server"] or None,
+            fund_tools=tools["fund_server"] or None,
             checkpointer=checkpointer,
             enable_reflection=reflect,
             reflection_pass_threshold=pass_threshold,

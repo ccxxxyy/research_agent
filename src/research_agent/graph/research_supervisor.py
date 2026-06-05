@@ -45,6 +45,7 @@ from loguru import logger
 from research_agent.agents.specialists import (
     build_coder_expert,
     build_data_expert,
+    build_fund_expert,
     build_knowledge_expert,
     build_news_expert,
     build_report_expert,
@@ -77,21 +78,43 @@ SUPERVISOR_PROMPT_BASE = """\
 """
 
 SUPERVISOR_PROMPT_DATA = """\
-  - data_expert   ：通过 akshare MCP 获取 A 股市场数据（指数 + 板块 + 个股）。
-    工具集（工具名可能带有 MCP 服务器前缀）：
-        * fin_get_index_quotes        — 主要指数实时行情（上证指数、沪深300、创业板指、科创50 等，不需要传代码）
+  - data_expert   ：通过 akshare MCP 获取 A 股全方位市场数据（指数/板块/个股/ETF/宏观/龙虎榜/融资融券/股东/资金流/港股通）。
+    工具集（18 个工具，工具名可能带有 MCP 前缀 fin_）：
+      宏观/市场级（不需要个股代码）：
+        * fin_get_index_quotes        — 主要指数实时行情
         * fin_get_sector_fund_flow    — 行业/概念板块资金流向排行
-        * fin_get_stock_rank          — 今日 A 股涨跌幅排行榜（涨幅榜/跌幅榜前 N）
-        * fin_search_stock_by_name    — 名称 → 6 位股票代码查询
-        * fin_get_stock_basic_info    — 公司简介 / 最新股价（需传入 6 位代码）
-        * fin_get_stock_price_history — OHLCV 行情 + 汇总统计（需传入 6 位代码）
-        * fin_get_financial_abstract  — 营收 / 利润 / 现金流
-        * fin_get_financial_indicators — ROE / 利润率 / 杠杆率
+        * fin_get_stock_rank          — 今日涨跌幅排行榜
+        * fin_get_concept_board       — 概念板块行情/成分股（如"人工智能""芯片"）
+        * fin_get_industry_board      — 行业板块行情/成分股（如"半导体""白酒"）
+        * fin_get_etf_spot            — ETF 基金实时行情排行
+        * fin_get_macro_china         — 宏观经济指标（GDP/CPI/PMI/M2/社融）
+        * fin_get_lhb_detail          — 龙虎榜详情
+        * fin_get_hsgt_flow           — 沪深港通北向/南向资金流
+
+      个股级（需要 6 位代码）：
+        * fin_search_stock_by_name    — 名称 → 6 位代码
+        * fin_get_stock_basic_info    — 公司概况/最新价
+        * fin_get_stock_price_history — 日线 OHLCV + 汇总
+        * fin_get_intraday            — 分时 K 线（1/5/15/30/60 分钟）
+        * fin_get_financial_abstract  — 营收/利润/现金流
+        * fin_get_financial_indicators — ROE/利润率/杠杆率
+        * fin_get_margin_detail       — 融资融券数据
+        * fin_get_top_holders         — 十大流通股东
+        * fin_get_individual_fund_flow — 个股资金流向
+
     路由策略：
-      - 用户问"今天大盘怎么样 / A 股整体走势 / 收盘情况" → 用 fin_get_index_quotes
-      - 用户问"哪些板块最强 / 科技板块涨了吗 / 资金流向" → 用 fin_get_sector_fund_flow
-      - 用户问"今天涨得最好的股票 / 涨停股 / 热门股" → 用 fin_get_stock_rank
-      - 用户问特定个股（股价/财务/行情） → 先 search_stock_by_name 拿代码，再查具体数据
+      - "大盘/整体走势" → get_index_quotes + get_sector_fund_flow
+      - "板块排行/科技板块" → get_concept_board / get_industry_board
+      - "涨停股/跌得最惨" → get_stock_rank
+      - "ETF/基金行情" → get_etf_spot
+      - "龙虎榜/主力动向" → get_lhb_detail
+      - "GDP/CPI/PMI" → get_macro_china
+      - "北向资金/港股通" → get_hsgt_flow
+      - "分时图/5分钟K线" → get_intraday
+      - "融资融券/两融" → get_margin_detail
+      - "十大股东/机构持仓" → get_top_holders
+      - "资金净流入" → get_individual_fund_flow
+      - 特定个股 → 先 search_stock_by_name 拿代码
 """
 
 SUPERVISOR_PROMPT_REPORT = """\
@@ -145,6 +168,29 @@ SUPERVISOR_PROMPT_SENTIMENT = """\
             可用于对其他专家返回的文本做二次情感标注。
     当用户询问以下内容时委派给该专家：个股舆情量化（"宁德时代最近舆情如何 / 市场情绪"）、新闻情感打分（"帮我分析这几条新闻的情绪"）、批量文本情感标注。
     与 news_expert 的区别：news_expert获取原始新闻文本，sentiment_expert 对文本做可复现的量化评分。二者配合使用效果最佳。
+"""
+
+SUPERVISOR_PROMPT_FUND = """\
+  - fund_expert  ：公募基金分析专家，通过东方财富基金网获取 ETF / LOF / 开放式基金数据。
+    工具集（10 个工具，前缀 fund_）：
+      市场级：
+        * fund_search_fund          — 按名称关键词搜索基金
+        * fund_get_fund_etf_spot    — ETF 实时行情排行
+        * fund_get_fund_lof_spot    — LOF 实时行情排行
+        * fund_get_fund_rating      — 基金综合评级（四家机构）
+        * fund_get_fund_rank        — 基金业绩排行（按收益率排序）
+        * fund_get_fund_daily       — 当日开放式基金净值
+
+      单只基金：
+        * fund_get_fund_info        — 基金概况
+        * fund_get_fund_nav         — 历史净值走势
+        * fund_get_fund_etf_hist    — ETF 历史 K 线
+        * fund_get_fund_holdings    — 重仓股持仓
+
+    当用户询问以下内容时委派给该专家：
+    "ETF 排行""基金推荐""沪深300ETF 走势""某基金重仓股""基金评级""今日基金涨幅榜""哪个基金收益最好""基金净值走势""LOF 行情"。
+    注意：data_expert 的 fin_get_etf_spot 工具也能查 ETF 行情，但 fund_expert 的工具更全面（含净值、持仓、评级）。
+    当用户明确需要基金层面的深度分析时，优先路由到 fund_expert。
 """
 
 # 注意：这些规则在所有团队组合中不变。它们绝不能按名称提及某个特定专家，
@@ -213,6 +259,7 @@ def _build_supervisor_prompt(
     has_knowledge: bool,
     has_news: bool,
     has_sentiment: bool,
+    has_fund: bool = False,
 ) -> str:
     """组装 supervisor 提示词，使其与实际团队成员匹配。
 
@@ -231,6 +278,8 @@ def _build_supervisor_prompt(
         parts.append(SUPERVISOR_PROMPT_KNOWLEDGE)
     if has_sentiment:
         parts.append(SUPERVISOR_PROMPT_SENTIMENT)
+    if has_fund:
+        parts.append(SUPERVISOR_PROMPT_FUND)
     parts.append("\n" + SUPERVISOR_PROMPT_RULES)
     return "".join(parts)
 
@@ -389,6 +438,7 @@ def build_research_supervisor(
     knowledge_tools: Sequence[BaseTool] | None = None,
     news_tools: Sequence[BaseTool] | None = None,
     sentiment_tools: Sequence[BaseTool] | None = None,
+    fund_tools: Sequence[BaseTool] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     supervisor_tier: ModelTier = ModelTier.HEAVY,
     enable_reflection: bool = False,
@@ -409,6 +459,7 @@ def build_research_supervisor(
         knowledge_tools: ``knowledge_*`` 工具。省略/空 → 无 ``knowledge_expert``。
         news_tools: ``news_*`` 工具。省略/空 → 无 ``news_expert``。
         sentiment_tools: ``sentiment_*`` 工具。省略/空 → 无 ``sentiment_expert``。
+        fund_tools: ``fund_*`` 工具。省略/空 → 无 ``fund_expert``。
         checkpointer: 可选的 LangGraph checkpointer。
         supervisor_tier: 默认 HEAVY。
         enable_reflection: 为 True 时，将 supervisor 包装在父图中，对其最终综合运行批评者+写作者反思循环。循环在批评者评分达到或
@@ -430,10 +481,19 @@ def build_research_supervisor(
     has_knowledge = bool(knowledge_tools)
     has_news = bool(news_tools)
     has_sentiment = bool(sentiment_tools)
+    has_fund = bool(fund_tools)
 
-    if not (has_data or has_report or has_coder or has_knowledge or has_news or has_sentiment):
+    if not (
+        has_data
+        or has_report
+        or has_coder
+        or has_knowledge
+        or has_news
+        or has_sentiment
+        or has_fund
+    ):
         raise ValueError(
-            "build_research_supervisor 至少需要一个专家的工具列表非空，但六组工具全部为空。"
+            "build_research_supervisor 至少需要一个专家的工具列表非空，但所有工具组全部为空。"
         )
 
     agents: list = []
@@ -457,6 +517,9 @@ def build_research_supervisor(
     if has_sentiment:
         agents.append(build_sentiment_expert(model_router, sentiment_tools or []))
         roster.append("sentiment_expert")
+    if has_fund:
+        agents.append(build_fund_expert(model_router, fund_tools or []))
+        roster.append("fund_expert")
 
     supervisor_model = model_router.get_model(supervisor_tier)
     prompt = _build_supervisor_prompt(
@@ -466,6 +529,7 @@ def build_research_supervisor(
         has_knowledge=has_knowledge,
         has_news=has_news,
         has_sentiment=has_sentiment,
+        has_fund=has_fund,
     )
 
     workflow = create_supervisor(
@@ -507,6 +571,7 @@ __all__ = [
     "build_research_supervisor",
     "SUPERVISOR_PROMPT_BASE",
     "SUPERVISOR_PROMPT_DATA",
+    "SUPERVISOR_PROMPT_FUND",
     "SUPERVISOR_PROMPT_REPORT",
     "SUPERVISOR_PROMPT_CODER",
     "SUPERVISOR_PROMPT_NEWS",
