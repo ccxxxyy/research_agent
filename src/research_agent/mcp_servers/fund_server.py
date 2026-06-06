@@ -4,7 +4,7 @@
 
 提供的工具
 ----------
-1. ``search_fund``          — 按名称/关键词模糊搜索基金代码。
+1. ``search_fund``          — 按名称/代码搜索基金。
 2. ``get_fund_info``        — 基金概况（类型、规模、基金经理、成立日期等）。
 3. ``get_fund_nav``         — 开放式基金历史净值（单位净值 + 累计净值）。
 4. ``get_fund_etf_spot``    — ETF 基金实时行情排行（成交额/涨跌幅排序）。
@@ -17,25 +17,33 @@
 
 数据来源
 --------
-- 东方财富基金网 (fund.eastmoney.com)
-- 天天基金网 (fund.eastmoney.com)
-- 同花顺基金 (fund.10jqka.com.cn)
+- 东方财富基金网 / 天天基金网 (fund.eastmoney.com)
+- push2.eastmoney.com — ETF/LOF 实时行情推送（工具 4/5/6 优先使用）
 
 设计说明
 --------
 - ``akshare`` 是同步的，用 ``asyncio.to_thread`` 包装避免阻塞。
-- 所有工具在边界捕获 ``Exception``，返回 ``{"error": "..."}``。
-- 基金代码为 6 位数字（如 510300、159915）。
+- 所有工具在边界捕获 ``Exception``，记录日志并返回 ``{"error": "..."}``。
+- 工具 4/5/6 实现双层逻辑：push2 可达时走实时行情，不可达时降级为收盘净值排行。
+- 基金代码为 6 位数字（如 510300、159915、018735）。
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any
 
 import pandas as pd
 from fastmcp import FastMCP
+
+logger = logging.getLogger("fund_server")
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 for _proxy_key in (
     "HTTP_PROXY",
@@ -50,10 +58,45 @@ os.environ["NO_PROXY"] = "*"
 
 mcp = FastMCP("FundData")
 
+
+def _probe_push2_connectivity() -> bool:
+    """探测 push2 端点是否可达（5 秒超时），结果缓存供实时工具降级决策。"""
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            "https://82.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=1&fs=m:1+t:2&fields=f12",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        urllib.request.urlopen(req, timeout=5)
+        return True
+    except Exception:
+        return False
+
+
+_PUSH2_AVAILABLE: bool | None = None
+
+
+def _is_push2_available() -> bool:
+    """惰性检测 push2 连通性（仅首次调用探测，后续用缓存值）。"""
+    global _PUSH2_AVAILABLE  # noqa: PLW0603
+    if _PUSH2_AVAILABLE is None:
+        _PUSH2_AVAILABLE = _probe_push2_connectivity()
+        if not _PUSH2_AVAILABLE:
+            logger.warning(
+                "push2.eastmoney.com 不可达——ETF/LOF 实时行情将降级为收盘净值排行。"
+                "常见原因：VPN/代理拦截、企业防火墙、ISP 限制。"
+            )
+        else:
+            logger.info("push2.eastmoney.com 连通性正常，ETF/LOF 使用实时行情")
+    return _PUSH2_AVAILABLE
+
+
 _FUND_NAME_CACHE: pd.DataFrame | None = None
 
 
 def _fmt_error(exc: Exception, *, context: str) -> dict[str, Any]:
+    logger.error("[%s] %s: %s", context, type(exc).__name__, exc)
     return {"error": f"{type(exc).__name__}: {exc}", "context": context}
 
 
@@ -92,10 +135,13 @@ def _ensure_fund_cache() -> pd.DataFrame:
 # =====================================================================
 @mcp.tool()
 async def search_fund(keyword: str, limit: int = 10) -> dict:
-    """按名称关键词模糊搜索基金，返回匹配的基金代码和名称。
+    """按名称或代码搜索基金，返回匹配的基金代码和名称。
+
+    同时匹配基金代码和基金简称。输入 ``"018735"`` 可以精确匹配代码，
+    输入 ``"沪深300"`` 可以模糊匹配名称。
 
     Args:
-        keyword: 搜索关键词，如 ``"沪深300"``、``"科技"``、``"医药"``。
+        keyword: 搜索关键词（基金代码或名称），如 ``"018735"``、``"沪深300"``、``"科技"``。
         limit: 返回条目数（默认 10，上限 30）。
 
     Returns:
@@ -105,7 +151,9 @@ async def search_fund(keyword: str, limit: int = 10) -> dict:
 
     def _call() -> dict[str, Any]:
         df = _ensure_fund_cache()
-        mask = df["基金简称"].str.contains(keyword, case=False, na=False)
+        code_mask = df["基金代码"].astype(str).str.contains(keyword, case=False, na=False)
+        name_mask = df["基金简称"].str.contains(keyword, case=False, na=False)
+        mask = code_mask | name_mask
         matched = df[mask].head(limit)
         cols = [c for c in ["基金代码", "基金简称", "基金类型"] if c in matched.columns]
         return {
@@ -128,8 +176,10 @@ async def search_fund(keyword: str, limit: int = 10) -> dict:
 async def get_fund_info(symbol: str) -> dict:
     """返回单只基金的概况信息。
 
+    优先东方财富（含规模、经理、费率等完整概况）。
+
     Args:
-        symbol: 6 位基金代码，如 ``"510300"``（沪深300ETF）。
+        symbol: 6 位基金代码，如 ``"510300"``（沪深300ETF）、``"018735"``（场外基金）。
 
     Returns:
         基金类型、成立日期、基金规模、基金经理、管理人、托管人等。
@@ -139,7 +189,17 @@ async def get_fund_info(symbol: str) -> dict:
         import akshare as ak
 
         df = ak.fund_overview_em(symbol=symbol)
-        info = dict(zip(df["item"].astype(str), df["value"].astype(str).tolist(), strict=False))
+        if df.empty:
+            raise ValueError(f"fund_overview_em 返回空数据: {symbol}")
+        # fund_overview_em 返回 1 行 × 20 列的 DataFrame，直接转为 dict
+        info: dict[str, Any] = {}
+        row = df.iloc[0]
+        for col in df.columns:
+            val = row[col]
+            if pd.isna(val):
+                info[str(col)] = None
+            else:
+                info[str(col)] = str(val)
         return {"symbol": symbol, "info": info, "source": "eastmoney"}
 
     try:
@@ -155,8 +215,10 @@ async def get_fund_info(symbol: str) -> dict:
 async def get_fund_nav(symbol: str, limit: int = 30) -> dict:
     """返回开放式基金的历史净值数据。
 
+    支持场内（ETF/LOF）和场外（开放式）基金。
+
     Args:
-        symbol: 6 位基金代码。
+        symbol: 6 位基金代码，如 ``"018735"``、``"510300"``。
         limit: 返回条目数（默认 30，上限 120）。
 
     Returns:
@@ -167,7 +229,9 @@ async def get_fund_nav(symbol: str, limit: int = 30) -> dict:
     def _call() -> dict[str, Any]:
         import akshare as ak
 
-        df = ak.fund_open_fund_info_em(fund=symbol, indicator="单位净值走势")
+        df = ak.fund_open_fund_info_em(symbol=symbol, indicator="单位净值走势")
+        if df is None or df.empty:
+            return {"symbol": symbol, "records": [], "count": 0, "source": "eastmoney"}
         df = df.tail(limit)
         return {
             "symbol": symbol,
@@ -189,16 +253,21 @@ async def get_fund_nav(symbol: str, limit: int = 30) -> dict:
 async def get_fund_etf_spot(sort_by: str = "成交额", limit: int = 30) -> dict:
     """返回全市场 ETF 基金实时行情排行。
 
+    优先通过 ``fund_etf_spot_em``（push2 实时推送）获取盘中价格、涨跌幅、成交额；
+    若 push2 不可达则降级为 ``fund_open_fund_rank_em``（收盘净值 + 周期收益率）。
+
     Args:
-        sort_by: 排序字段 — ``"成交额"``（默认）或 ``"涨跌幅"``。
+        sort_by: 排序字段 — 实时模式: ``"成交额"``（默认）/ ``"涨跌幅"``；
+                 降级模式: ``"今年来"`` / ``"近1周"`` / ``"近1月"`` / ``"近1年"``。
         limit: 返回条目数（默认 30，上限 100）。
 
     Returns:
-        ETF 列表，包含代码、名称、最新价、涨跌幅、成交额、折溢价率。
+        ETF 列表。实时模式含最新价/涨跌幅/成交额；降级模式含单位净值/周期收益率。
+        响应中 ``source`` 字段标识数据来源，``realtime`` 字段标识是否为实时数据。
     """
     limit = max(1, min(limit, 100))
 
-    def _call() -> dict[str, Any]:
+    def _call_realtime() -> dict[str, Any]:
         import akshare as ak
 
         df = ak.fund_etf_spot_em()
@@ -214,12 +283,44 @@ async def get_fund_etf_spot(sort_by: str = "成交额", limit: int = 30) -> dict
             "sort_by": sort_by,
             "etfs": _df_to_records(df[cols] if cols else df),
             "count": len(df),
-            "source": "eastmoney",
+            "source": "eastmoney_push2",
+            "realtime": True,
+        }
+
+    def _call_fallback() -> dict[str, Any]:
+        import akshare as ak
+
+        fallback_sort = sort_by if sort_by in ("今年来", "近1周", "近1月", "近1年") else "今年来"
+        df = ak.fund_open_fund_rank_em(symbol="指数型")
+        if fallback_sort in df.columns:
+            df[fallback_sort] = pd.to_numeric(df[fallback_sort], errors="coerce")
+            df = df.sort_values(fallback_sort, ascending=False)
+        df = df.head(limit)
+        cols = [
+            c
+            for c in ["基金代码", "基金简称", "单位净值", "今年来", "近1周", "近1月", "近1年"]
+            if c in df.columns
+        ]
+        return {
+            "sort_by": fallback_sort,
+            "etfs": _df_to_records(df[cols] if cols else df),
+            "count": len(df),
+            "source": "eastmoney_rank",
+            "realtime": False,
+            "note": "push2 不可达，已降级为收盘净值排行",
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        if _is_push2_available():
+            return await asyncio.to_thread(_call_realtime)
+        return await asyncio.to_thread(_call_fallback)
     except Exception as e:
+        # 实时端点运行时失败（如被限流），尝试 fallback
+        if _is_push2_available():
+            try:
+                return await asyncio.to_thread(_call_fallback)
+            except Exception as e2:
+                return _fmt_error(e2, context="get_fund_etf_spot(fallback)")
         return _fmt_error(e, context="get_fund_etf_spot()")
 
 
@@ -230,16 +331,21 @@ async def get_fund_etf_spot(sort_by: str = "成交额", limit: int = 30) -> dict
 async def get_fund_lof_spot(sort_by: str = "成交额", limit: int = 20) -> dict:
     """返回全市场 LOF 基金实时行情排行。
 
+    优先通过 ``fund_lof_spot_em``（push2 实时推送）获取盘中价格、涨跌幅、成交额；
+    若 push2 不可达则降级为 ``fund_open_fund_rank_em``（收盘净值 + 周期收益率）。
+
     Args:
-        sort_by: 排序字段 — ``"成交额"``（默认）或 ``"涨跌幅"``。
+        sort_by: 排序字段 — 实时模式: ``"成交额"``（默认）/ ``"涨跌幅"``；
+                 降级模式: ``"今年来"`` / ``"近1周"`` / ``"近1月"`` / ``"近1年"``。
         limit: 返回条目数（默认 20，上限 50）。
 
     Returns:
-        LOF 列表，包含代码、名称、最新价、涨跌幅、成交额。
+        LOF 列表。实时模式含最新价/涨跌幅/成交额；降级模式含单位净值/周期收益率。
+        响应中 ``source`` 字段标识数据来源，``realtime`` 字段标识是否为实时数据。
     """
     limit = max(1, min(limit, 50))
 
-    def _call() -> dict[str, Any]:
+    def _call_realtime() -> dict[str, Any]:
         import akshare as ak
 
         df = ak.fund_lof_spot_em()
@@ -247,18 +353,59 @@ async def get_fund_lof_spot(sort_by: str = "成交额", limit: int = 20) -> dict
             df = df.sort_values(sort_by, ascending=False)
         df = df.head(limit)
         cols = [
-            c for c in ["代码", "名称", "最新价", "涨跌幅", "成交额", "换手率"] if c in df.columns
+            c
+            for c in ["代码", "名称", "最新价", "涨跌幅", "成交额", "换手率"]
+            if c in df.columns
         ]
         return {
             "sort_by": sort_by,
             "lofs": _df_to_records(df[cols] if cols else df),
             "count": len(df),
-            "source": "eastmoney",
+            "source": "eastmoney_push2",
+            "realtime": True,
+        }
+
+    def _call_fallback() -> dict[str, Any]:
+        import akshare as ak
+
+        fallback_sort = sort_by if sort_by in ("今年来", "近1周", "近1月", "近1年") else "今年来"
+        try:
+            df = ak.fund_open_fund_rank_em(symbol="LOF")
+        except (IndexError, KeyError, ValueError):
+            df = ak.fund_open_fund_rank_em(symbol="全部")
+            df = df[df["基金简称"].str.contains("LOF", case=False, na=False)] if "基金简称" in df.columns else df
+
+        if df is None or df.empty:
+            return {"sort_by": fallback_sort, "lofs": [], "count": 0, "source": "eastmoney_rank", "realtime": False}
+
+        if fallback_sort in df.columns:
+            df[fallback_sort] = pd.to_numeric(df[fallback_sort], errors="coerce")
+            df = df.sort_values(fallback_sort, ascending=False)
+        df = df.head(limit)
+        cols = [
+            c
+            for c in ["基金代码", "基金简称", "单位净值", "今年来", "近1周", "近1月", "近1年"]
+            if c in df.columns
+        ]
+        return {
+            "sort_by": fallback_sort,
+            "lofs": _df_to_records(df[cols] if cols else df),
+            "count": len(df),
+            "source": "eastmoney_rank",
+            "realtime": False,
+            "note": "push2 不可达，已降级为收盘净值排行",
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        if _is_push2_available():
+            return await asyncio.to_thread(_call_realtime)
+        return await asyncio.to_thread(_call_fallback)
     except Exception as e:
+        if _is_push2_available():
+            try:
+                return await asyncio.to_thread(_call_fallback)
+            except Exception as e2:
+                return _fmt_error(e2, context="get_fund_lof_spot(fallback)")
         return _fmt_error(e, context="get_fund_lof_spot()")
 
 
@@ -271,19 +418,25 @@ async def get_fund_etf_hist(
     period: str = "daily",
     limit: int = 60,
 ) -> dict:
-    """返回单只 ETF 的历史 K 线数据。
+    """返回单只 ETF/LOF 的历史 K 线数据。
+
+    优先通过 ``fund_etf_hist_em``（push2 端点）获取完整 OHLCV K 线；
+    若 push2 不可达则降级为 ``fund_open_fund_info_em``（仅单位净值时间序列）。
 
     Args:
-        symbol: 6 位 ETF 代码，如 ``"510300"``。
-        period: ``"daily"``（日线）、``"weekly"``（周线）、``"monthly"``（月线）。
+        symbol: 6 位基金代码，如 ``"510300"``、``"159915"``。
+        period: K 线周期 — ``"daily"``（日线）/ ``"weekly"``（周线）/ ``"monthly"``（月线）。
+                仅实时模式有效，降级模式固定为日级净值。
         limit: 返回条目数（默认 60，上限 250）。
 
     Returns:
-        包含日期、开盘、收盘、最高、最低、成交量的列表。
+        实时模式: 日期、开盘、收盘、最高、最低、成交量、涨跌幅。
+        降级模式: 净值日期、单位净值、日增长率。
+        响应中 ``source`` 字段标识数据来源，``realtime`` 字段标识是否为实时 K 线。
     """
     limit = max(1, min(limit, 250))
 
-    def _call() -> dict[str, Any]:
+    def _call_realtime() -> dict[str, Any]:
         import akshare as ak
 
         df = ak.fund_etf_hist_em(symbol=symbol, period=period, adjust="qfq")
@@ -298,12 +451,37 @@ async def get_fund_etf_hist(
             "period": period,
             "records": _df_to_records(df[cols] if cols else df),
             "count": len(df),
-            "source": "eastmoney",
+            "source": "eastmoney_push2",
+            "realtime": True,
+        }
+
+    def _call_fallback() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.fund_open_fund_info_em(symbol=symbol, indicator="单位净值走势")
+        if df is None or df.empty:
+            return {"symbol": symbol, "records": [], "count": 0, "source": "eastmoney_nav", "realtime": False}
+        df = df.tail(limit)
+        return {
+            "symbol": symbol,
+            "period": "daily(nav)",
+            "records": _df_to_records(df),
+            "count": len(df),
+            "source": "eastmoney_nav",
+            "realtime": False,
+            "note": "push2 不可达，已降级为历史净值序列（无 OHLCV）",
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        if _is_push2_available():
+            return await asyncio.to_thread(_call_realtime)
+        return await asyncio.to_thread(_call_fallback)
     except Exception as e:
+        if _is_push2_available():
+            try:
+                return await asyncio.to_thread(_call_fallback)
+            except Exception as e2:
+                return _fmt_error(e2, context=f"get_fund_etf_hist(symbol={symbol!r}, fallback)")
         return _fmt_error(e, context=f"get_fund_etf_hist(symbol={symbol!r})")
 
 

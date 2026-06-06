@@ -39,12 +39,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
 from fastmcp import FastMCP
+
+logger = logging.getLogger("fin_data_server")
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 # akshare 通过 requests 发起 HTTP 请求，requests 会自动读取系统代理。
 # 国内数据源（东方财富/新浪/雪球）走代理反而不通，在子进程启动时清除。
@@ -62,6 +70,40 @@ os.environ["NO_PROXY"] = "*"
 mcp = FastMCP("FinDataAShare")
 
 
+def _probe_push2_connectivity() -> bool:
+    """启动时探测 push2 端点是否可达，结果缓存供工具降级决策用。"""
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            "https://82.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=1&fs=m:1+t:2&fields=f12",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        urllib.request.urlopen(req, timeout=5)
+        return True
+    except Exception:
+        return False
+
+
+_PUSH2_AVAILABLE: bool | None = None
+
+
+def _is_push2_available() -> bool:
+    """惰性检测 push2 连通性（仅首次调用探测，后续用缓存值）。"""
+    global _PUSH2_AVAILABLE  # noqa: PLW0603
+    if _PUSH2_AVAILABLE is None:
+        _PUSH2_AVAILABLE = _probe_push2_connectivity()
+        if not _PUSH2_AVAILABLE:
+            logger.warning(
+                "push2.eastmoney.com 不可达——实时行情/分时/板块/资金流等工具将降级。"
+                "常见原因：VPN/代理拦截、企业防火墙、ISP 限制。"
+                "历史 K 线将走新浪（sina）源；财务数据不受影响。"
+            )
+        else:
+            logger.info("push2.eastmoney.com 连通性正常")
+    return _PUSH2_AVAILABLE
+
+
 _ALL_STOCKS_CACHE: pd.DataFrame | None = None
 """``ak.stock_info_a_code_name()`` 的模块级缓存。
 
@@ -70,7 +112,8 @@ _ALL_STOCKS_CACHE: pd.DataFrame | None = None
 
 
 def _fmt_error(exc: Exception, *, context: str) -> dict[str, Any]:
-    """标准错误格式 — LLM 可读，无堆栈跟踪。"""
+    """标准错误格式 — LLM 可读，无堆栈跟踪。同时记录日志便于终端排查。"""
+    logger.error("[%s] %s: %s", context, type(exc).__name__, exc)
     return {"error": f"{type(exc).__name__}: {exc}", "context": context}
 
 
@@ -143,10 +186,30 @@ async def get_stock_basic_info(symbol: str) -> dict:
         包含 ``symbol``、``info`` 和 ``source`` 的字典 — ``source`` 为``"eastmoney"`` 或 ``"xueqiu"``，取决于哪个提供方响应了请求。
         若两个源都失败，返回 ``{"error": ...}``。
     """
+    def _basic_info_from_name_cache(sym: str) -> dict[str, Any]:
+        """从 A 股名单缓存获取基本名称信息（无网络请求）。"""
+        global _ALL_STOCKS_CACHE
+        if _ALL_STOCKS_CACHE is None:
+            import akshare as ak
+
+            _ALL_STOCKS_CACHE = ak.stock_info_a_code_name()
+        df = _ALL_STOCKS_CACHE
+        match = df[df["code"].astype(str) == sym]
+        if match.empty:
+            raise ValueError(f"未在 A 股名单中找到代码 {sym}")
+        name = str(match.iloc[0]["name"])
+        return {
+            "symbol": sym,
+            "info": {"股票代码": sym, "股票简称": name},
+            "source": "local_cache",
+            "note": "仅基本名称信息，实时行情端点当前不可达",
+        }
+
     errors: list[str] = []
     for label, fn in (
         ("eastmoney", _basic_info_from_eastmoney),
         ("xueqiu", _basic_info_from_xueqiu),
+        ("local_cache", _basic_info_from_name_cache),
     ):
         try:
             return await asyncio.to_thread(fn, symbol)
@@ -253,9 +316,10 @@ async def get_stock_price_history(
         )
 
     errors: list[str] = []
+    # 新浪优先：东财 push2 端点在部分网络环境下不可达
     for label, fn in (
-        ("eastmoney", _price_history_from_eastmoney),
         ("sina", _price_history_from_sina),
+        ("eastmoney", _price_history_from_eastmoney),
     ):
         try:
             return await asyncio.to_thread(fn, symbol, days, adjust)
@@ -504,6 +568,13 @@ async def get_index_quotes() -> dict:
         包含 ``indices`` 列表的字典，每项含 name/code/最新价/涨跌幅/成交额等。
     """
 
+    if not _is_push2_available():
+        return {
+            "error": "push2.eastmoney.com 不可达，实时指数行情暂不可用",
+            "context": "get_index_quotes()",
+            "hint": "可尝试 get_stock_price_history 查看指数成分股的历史走势",
+        }
+
     def _call() -> dict[str, Any]:
         import akshare as ak
 
@@ -536,6 +607,13 @@ async def get_sector_fund_flow(sector_type: str = "行业", limit: int = 15) -> 
         适合回答"今天哪些板块最强"、"科技板块资金流向"等问题。
     """
     limit = max(1, min(limit, 50))
+
+    if not _is_push2_available():
+        return {
+            "error": "push2.eastmoney.com 不可达，板块资金流向数据暂不可用",
+            "context": f"get_sector_fund_flow(sector_type={sector_type!r})",
+            "hint": "可用 get_stock_price_history 查看个股成交量变化",
+        }
 
     def _call() -> dict[str, Any]:
         import akshare as ak
@@ -570,6 +648,13 @@ async def get_stock_rank(direction: str = "涨幅榜", limit: int = 20) -> dict:
         适合回答"今天涨停最多的是什么股"、"哪些股票涨得最好"等问题。
     """
     limit = max(1, min(limit, 50))
+
+    if not _is_push2_available():
+        return {
+            "error": "push2.eastmoney.com 不可达，A股实时涨跌幅排行暂不可用",
+            "context": f"get_stock_rank(direction={direction!r})",
+            "hint": "可用 get_stock_price_history 查看个股历史涨跌",
+        }
 
     def _call() -> dict[str, Any]:
         import akshare as ak
@@ -615,6 +700,13 @@ async def get_intraday(
         包含时间、开盘、收盘、最高、最低、成交量的列表。
     """
     limit = max(1, min(limit, 240))
+
+    if not _is_push2_available():
+        return {
+            "error": "push2.eastmoney.com 不可达，分时数据暂不可用",
+            "context": f"get_intraday(symbol={symbol!r}, period={period!r})",
+            "hint": "可用 get_stock_price_history 查看日级K线",
+        }
 
     def _call() -> dict[str, Any]:
         import akshare as ak
@@ -697,15 +789,54 @@ async def get_margin_detail(symbol: str, limit: int = 20) -> dict:
     def _call() -> dict[str, Any]:
         import akshare as ak
 
-        df = ak.stock_margin_detail_sse(symbol=symbol)
-        if df.empty:
-            df = ak.stock_margin_detail_szse(symbol=symbol)
-        df = df.tail(limit)
+        # stock_margin_detail_sse/szse 按日期查询全市场，再按代码过滤
+        today = datetime.now().strftime("%Y%m%d")
+        errors: list[str] = []
+        for fn_name, fn in [
+            ("sse", ak.stock_margin_detail_sse),
+            ("szse", ak.stock_margin_detail_szse),
+        ]:
+            try:
+                df = fn(date=today)
+                if df.empty:
+                    continue
+                code_col = next(
+                    (c for c in df.columns if "代码" in c or "标的" in c or "code" in c.lower()),
+                    None,
+                )
+                if code_col:
+                    df = df[df[code_col].astype(str).str.contains(symbol, na=False)]
+                if not df.empty:
+                    df = df.tail(limit)
+                    return {
+                        "symbol": symbol,
+                        "records": _df_to_records(df),
+                        "count": len(df),
+                        "source": fn_name,
+                    }
+            except Exception as e:
+                errors.append(f"{fn_name}: {type(e).__name__}: {str(e)[:80]}")
+        # 全市场汇总作为 fallback
+        try:
+            if symbol.startswith("6"):
+                df = ak.stock_margin_sse(start_date=today, end_date=today)
+            else:
+                df = ak.stock_margin_szse(start_date=today, end_date=today)
+            return {
+                "symbol": symbol,
+                "records": _df_to_records(df.tail(limit)),
+                "count": len(df),
+                "source": "market_aggregate",
+                "note": "个股明细不可用，返回市场汇总",
+            }
+        except Exception:
+            pass
         return {
             "symbol": symbol,
-            "records": _df_to_records(df),
-            "count": len(df),
-            "source": "sse/szse",
+            "records": [],
+            "count": 0,
+            "source": "none",
+            "note": f"融资融券数据不可用: {'; '.join(errors) if errors else '无数据'}",
         }
 
     try:
@@ -731,12 +862,15 @@ async def get_top_holders(symbol: str) -> dict:
     def _call() -> dict[str, Any]:
         import akshare as ak
 
-        df = ak.stock_gdfx_free_holding_detail_em(symbol=symbol)
+        df = ak.stock_circulate_stock_holder(symbol=symbol)
         if df.empty:
             return {"symbol": symbol, "holders": [], "source": "eastmoney"}
-        latest_date = df.iloc[0].get("截止日期", df.iloc[0].get("日期", ""))
-        if "截止日期" in df.columns:
-            df = df[df["截止日期"] == latest_date]
+        date_col = next(
+            (c for c in df.columns if "日期" in c or "截止" in c or "报告" in c),
+            df.columns[0],
+        )
+        latest_date = df[date_col].iloc[0]
+        df = df[df[date_col] == latest_date]
         return {
             "symbol": symbol,
             "report_date": str(latest_date),
@@ -847,6 +981,13 @@ async def get_concept_board(board_name: str = "", limit: int = 20) -> dict:
     """
     limit = max(1, min(limit, 50))
 
+    if not _is_push2_available():
+        return {
+            "error": "push2.eastmoney.com 不可达，概念板块实时行情暂不可用",
+            "context": f"get_concept_board(board_name={board_name!r})",
+            "hint": "可用 get_stock_price_history 查看个股走势",
+        }
+
     def _call() -> dict[str, Any]:
         import akshare as ak
 
@@ -896,6 +1037,13 @@ async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
     """
     limit = max(1, min(limit, 50))
 
+    if not _is_push2_available():
+        return {
+            "error": "push2.eastmoney.com 不可达，行业板块实时行情暂不可用",
+            "context": f"get_industry_board(board_name={board_name!r})",
+            "hint": "可用 get_stock_price_history 查看个股走势",
+        }
+
     def _call() -> dict[str, Any]:
         import akshare as ak
 
@@ -944,6 +1092,13 @@ async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
     """
     limit = max(1, min(limit, 60))
 
+    if not _is_push2_available():
+        return {
+            "error": "push2.eastmoney.com 不可达，个股资金流向数据暂不可用",
+            "context": f"get_individual_fund_flow(symbol={symbol!r})",
+            "hint": "可用 get_stock_price_history 查看成交量变化趋势",
+        }
+
     def _call() -> dict[str, Any]:
         import akshare as ak
 
@@ -981,13 +1136,11 @@ async def get_hsgt_flow(direction: str = "north", limit: int = 20) -> dict:
     def _call() -> dict[str, Any]:
         import akshare as ak
 
-        if direction == "south":
-            df = ak.stock_hsgt_south_money_em()
-        else:
-            df = ak.stock_hsgt_north_money_em()
+        label = "北向资金" if direction == "north" else "南向资金"
+        df = ak.stock_hsgt_hist_em(symbol=label)
         df = df.tail(limit)
         return {
-            "direction": "北向" if direction == "north" else "南向",
+            "direction": label,
             "records": _df_to_records(df),
             "count": len(df),
             "source": "eastmoney",
