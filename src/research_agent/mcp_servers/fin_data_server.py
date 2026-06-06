@@ -186,6 +186,7 @@ async def get_stock_basic_info(symbol: str) -> dict:
         包含 ``symbol``、``info`` 和 ``source`` 的字典 — ``source`` 为``"eastmoney"`` 或 ``"xueqiu"``，取决于哪个提供方响应了请求。
         若两个源都失败，返回 ``{"error": ...}``。
     """
+
     def _basic_info_from_name_cache(sym: str) -> dict[str, Any]:
         """从 A 股名单缓存获取基本名称信息（无网络请求）。"""
         global _ALL_STOCKS_CACHE

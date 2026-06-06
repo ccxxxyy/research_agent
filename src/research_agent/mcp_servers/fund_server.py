@@ -353,9 +353,7 @@ async def get_fund_lof_spot(sort_by: str = "成交额", limit: int = 20) -> dict
             df = df.sort_values(sort_by, ascending=False)
         df = df.head(limit)
         cols = [
-            c
-            for c in ["代码", "名称", "最新价", "涨跌幅", "成交额", "换手率"]
-            if c in df.columns
+            c for c in ["代码", "名称", "最新价", "涨跌幅", "成交额", "换手率"] if c in df.columns
         ]
         return {
             "sort_by": sort_by,
@@ -373,10 +371,20 @@ async def get_fund_lof_spot(sort_by: str = "成交额", limit: int = 20) -> dict
             df = ak.fund_open_fund_rank_em(symbol="LOF")
         except (IndexError, KeyError, ValueError):
             df = ak.fund_open_fund_rank_em(symbol="全部")
-            df = df[df["基金简称"].str.contains("LOF", case=False, na=False)] if "基金简称" in df.columns else df
+            df = (
+                df[df["基金简称"].str.contains("LOF", case=False, na=False)]
+                if "基金简称" in df.columns
+                else df
+            )
 
         if df is None or df.empty:
-            return {"sort_by": fallback_sort, "lofs": [], "count": 0, "source": "eastmoney_rank", "realtime": False}
+            return {
+                "sort_by": fallback_sort,
+                "lofs": [],
+                "count": 0,
+                "source": "eastmoney_rank",
+                "realtime": False,
+            }
 
         if fallback_sort in df.columns:
             df[fallback_sort] = pd.to_numeric(df[fallback_sort], errors="coerce")
@@ -460,7 +468,13 @@ async def get_fund_etf_hist(
 
         df = ak.fund_open_fund_info_em(symbol=symbol, indicator="单位净值走势")
         if df is None or df.empty:
-            return {"symbol": symbol, "records": [], "count": 0, "source": "eastmoney_nav", "realtime": False}
+            return {
+                "symbol": symbol,
+                "records": [],
+                "count": 0,
+                "source": "eastmoney_nav",
+                "realtime": False,
+            }
         df = df.tail(limit)
         return {
             "symbol": symbol,
