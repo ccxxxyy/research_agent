@@ -179,7 +179,7 @@ async def test_basic_info_and_price_history_fallback() -> None:
         if "error" in basic:
             assert "attempts" in basic, basic
         else:
-            assert basic["source"] in {"eastmoney", "xueqiu"}, basic
+            assert basic["source"] in {"eastmoney", "xueqiu", "local_cache"}, basic
             assert isinstance(basic["info"], dict) and basic["info"]
 
         price = _parse(

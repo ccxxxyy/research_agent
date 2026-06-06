@@ -19,6 +19,7 @@ class TestFaissVectorBackend:
         assert await faiss_backend.collection_exists("test_coll") is False
         assert await faiss_backend.collection_count("test_coll") == 0
 
+    @pytest.mark.network
     @pytest.mark.asyncio
     async def test_add_and_search(self, faiss_backend: FaissVectorBackend) -> None:
         texts = ["宁德时代 2024 营收超过 4000 亿元", "比亚迪新能源汽车销量创新高"]
@@ -40,6 +41,7 @@ class TestFaissVectorBackend:
         results = await faiss_backend.similarity_search("no_such", "query", k=5)
         assert results == []
 
+    @pytest.mark.network
     @pytest.mark.asyncio
     async def test_delete_collection(self, faiss_backend: FaissVectorBackend) -> None:
         await faiss_backend.add_texts("to_delete", ["foo"], [{"x": 1}])
@@ -52,6 +54,7 @@ class TestFaissVectorBackend:
         not_deleted = await faiss_backend.delete_collection("never_existed")
         assert not_deleted is False
 
+    @pytest.mark.network
     @pytest.mark.asyncio
     async def test_list_collections(self, faiss_backend: FaissVectorBackend) -> None:
         await faiss_backend.add_texts("alpha", ["x"], [{}])
