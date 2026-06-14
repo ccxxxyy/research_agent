@@ -89,9 +89,21 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 
 .msg.user{align-self:flex-end;background:var(--accent);color:#fff;padding:12px 18px;border-radius:var(--radius) var(--radius) 4px var(--radius);font-size:14px}
 .msg.assistant{align-self:flex-start;background:var(--surface);border:1px solid var(--border);padding:16px 20px;border-radius:4px var(--radius) var(--radius) var(--radius);font-size:14px;width:85%}
-.msg.assistant .content{white-space:pre-wrap;word-break:break-word}
+.msg.assistant .content{white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7}
 .msg.assistant .content h3,.msg.assistant .content h4{margin:12px 0 6px;color:var(--accent2)}
 .msg.assistant .content ul,.msg.assistant .content ol{padding-left:20px;margin:6px 0}
+.msg.assistant .content li{margin:3px 0;font-size:14px}
+.msg.assistant .content .fin-highlight{color:var(--accent2);font-weight:600}
+.msg.assistant .content .fin-up{color:var(--red);font-weight:600}
+.msg.assistant .content .fin-down{color:var(--green);font-weight:600}
+.msg.assistant .content .section-title{display:block;font-weight:700;font-size:15px;color:var(--accent2);margin:16px 0 8px;padding-left:10px;border-left:3px solid var(--accent);letter-spacing:0.3px}
+.msg.assistant .content .md-table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px}
+.msg.assistant .content .md-table th{background:var(--surface2);color:var(--accent2);padding:7px 10px;text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid var(--accent)}
+.msg.assistant .content .md-table td{padding:6px 10px;border-bottom:1px solid var(--border);font-size:13px}
+.msg.assistant .content .md-table tr:hover td{background:rgba(108,99,255,0.05)}
+.msg.assistant .content .source-line{font-size:11px;color:var(--text2);margin-top:14px;padding-top:8px;border-top:1px solid var(--border);line-height:1.5}
+.msg.assistant .content .source-line a{color:var(--accent);text-decoration:none}
+.msg.assistant .content .source-line a:hover{text-decoration:underline}
 
 .msg .handoff-tag{display:inline-flex;align-items:center;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--accent2);margin:4px 4px 4px 0}
 .msg .handoff-tag::before{content:"→";color:var(--accent)}
@@ -117,14 +129,109 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .typing span:nth-child(3){animation-delay:.3s}
 @keyframes bounce{to{opacity:.3;transform:translateY(-4px)}}
 
-/* Welcome */
-.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text2);gap:12px;padding:40px}
-.welcome .icon{font-size:48px}
-.welcome h2{color:var(--text);font-size:22px;font-weight:600}
-.welcome p{max-width:420px;text-align:center;line-height:1.6;font-size:14px}
-.welcome .examples{display:flex;flex-direction:column;gap:8px;margin-top:12px;width:100%;max-width:480px}
-.welcome .example{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;font-size:13px;color:var(--text);cursor:pointer;transition:border-color .15s,background .15s;text-align:left}
-.welcome .example:hover{border-color:var(--accent);background:var(--surface2)}
+/* Dashboard */
+.dashboard{flex:1;display:flex;flex-direction:column;padding:20px 24px;overflow-y:auto;gap:16px}
+.dashboard::-webkit-scrollbar{width:5px}
+.dashboard::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* Header */
+.dash-header{text-align:center;padding:10px 0 4px}
+.dash-header .dash-title{font-size:20px;font-weight:800;color:var(--text);letter-spacing:.5px}
+.dash-header .dash-desc{display:block;font-size:12px;color:var(--text2);margin-top:6px;opacity:.7}
+
+/* Status Bar */
+.dash-status{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px}
+.dash-status .market-badge{padding:4px 12px;border-radius:12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
+.dash-status .market-badge.trading{background:rgba(248,113,113,0.15);color:var(--red)}
+.dash-status .market-badge.closed{background:rgba(139,143,163,0.15);color:var(--text2)}
+.dash-status .market-badge.pre{background:rgba(250,204,21,0.12);color:var(--yellow)}
+.dash-status .status-msg{color:var(--text2);flex:1}
+.dash-status .status-time{color:var(--text2);font-family:'Fira Code',monospace;font-size:11px}
+.dash-status .refresh-btn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--text2);padding:4px 12px;font-size:11px;cursor:pointer;transition:all .15s}
+.dash-status .refresh-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* Index Cards */
+.dash-top{display:grid;grid-template-columns:1fr 220px;gap:12px;align-items:start}
+.dash-top-left{}
+.dash-top-right .dash-panel{height:100%}
+.dash-indices{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.idx-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;cursor:pointer;transition:border-color .15s,transform .1s}
+.idx-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.idx-card .idx-name{font-size:12px;color:var(--text2);font-weight:600;margin-bottom:4px}
+.idx-card .idx-price{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.2}
+.idx-card .idx-row{display:flex;gap:10px;margin-top:4px;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.idx-card .idx-detail{display:flex;gap:8px;margin-top:6px;font-size:11px;color:var(--text2);font-variant-numeric:tabular-nums}
+.idx-card .idx-detail span{display:flex;gap:3px}
+.idx-card.up{border-left:3px solid var(--red)}
+.idx-card.up .idx-price,.idx-card.up .idx-row{color:var(--red)}
+.idx-card.down{border-left:3px solid var(--green)}
+.idx-card.down .idx-price,.idx-card.down .idx-row{color:var(--green)}
+.idx-card.flat .idx-price{color:var(--text)}
+
+/* Grid Rows */
+.dash-row3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.dash-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.dash-row2 .example-list{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dash-row2 .example{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text);cursor:pointer;transition:border-color .15s,background .15s;text-align:left;line-height:1.4}
+.dash-row2 .example:hover{border-color:var(--accent);background:var(--accent);color:#fff}
+
+/* Panel */
+.dash-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.dash-panel .panel-title{font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-shrink:0}
+.dash-panel .panel-title::before{content:'';width:3px;height:12px;background:var(--accent);border-radius:2px}
+
+/* Pie chart */
+.pie-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.pie-stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;font-size:11px;font-weight:600;justify-content:center}
+.pie-stats .stat-up{color:var(--red)}
+.pie-stats .stat-down{color:var(--green)}
+.pie-stats .stat-flat{color:#6b7280}
+.pie-stats .stat-zt{color:#fff;background:var(--red);padding:1px 6px;border-radius:4px;font-size:10px}
+.pie-stats .stat-dt{color:#fff;background:var(--green);padding:1px 6px;border-radius:4px;font-size:10px}
+.dash-top-right .dash-panel{overflow:visible}
+
+/* Lists */
+.zt-list{list-style:none;padding:0;margin:0;flex:1;overflow-y:auto;max-height:230px}
+.zt-list::-webkit-scrollbar{width:3px}
+.zt-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.zt-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;cursor:pointer;transition:background .12s;font-size:12px}
+.zt-item:hover{background:var(--surface2)}
+.zt-item .zt-name{flex:1;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.zt-item .zt-tag{font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,113,113,0.12);color:var(--red);font-weight:700;white-space:nowrap;flex-shrink:0}
+.zt-item .zt-industry{font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px}
+.zt-item .zt-time{font-size:10px;color:var(--text2);font-family:monospace}
+
+/* Hot Panel */
+.hot-tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:8px}
+.hot-tab{padding:6px 14px;font-size:12px;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;font-weight:600}
+.hot-tab:hover{color:var(--text)}
+.hot-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.hot-list{list-style:none;padding:0;margin:0;flex:1;overflow-y:auto;max-height:230px}
+.hot-list::-webkit-scrollbar{width:3px}
+.hot-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.hot-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;cursor:pointer;transition:background .12s;font-size:12px}
+.hot-item:hover{background:var(--surface2)}
+.hot-item .hot-rank{width:18px;height:18px;line-height:18px;text-align:center;font-weight:800;font-size:10px;color:var(--text2);flex-shrink:0;border-radius:4px;background:var(--surface2)}
+.hot-item:nth-child(1) .hot-rank{background:var(--red);color:#fff}
+.hot-item:nth-child(2) .hot-rank{background:#e06030;color:#fff}
+.hot-item:nth-child(3) .hot-rank{background:#c08040;color:#fff}
+.hot-item .hot-name{flex:1;color:var(--text);font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hot-item .hot-code{color:var(--text2);font-size:10px;font-family:monospace;flex-shrink:0}
+.hot-item .hot-price{color:var(--text);font-size:11px;min-width:44px;text-align:right;font-weight:500;font-variant-numeric:tabular-nums;flex-shrink:0}
+.hot-item .hot-change{font-size:11px;font-weight:700;min-width:50px;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
+.topic-tag{font-size:10px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:8px;white-space:nowrap;flex-shrink:0}
+
+/* LHB */
+.lhb-list .lhb-item{flex-wrap:wrap}
+.lhb-net{font-size:10px;font-weight:600;margin-left:4px;flex-shrink:0}
+.lhb-comment{display:block;width:100%;font-size:10px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Changes */
+.change-time{font-size:10px;color:var(--text2);min-width:46px;flex-shrink:0;font-family:monospace}
+.change-type{font-size:10px;color:var(--accent);margin-left:auto;background:rgba(99,102,241,.08);padding:2px 6px;border-radius:3px;flex-shrink:0;white-space:nowrap}
+
+.fin-up{color:var(--red)!important}
+.fin-down{color:var(--green)!important}
 
 /* Input */
 .input-area{padding:16px 24px 20px;border-top:1px solid var(--border);background:var(--surface);flex-shrink:0}
@@ -193,6 +300,7 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
   .msg.assistant{width:95%}
 }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -236,15 +344,39 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
     </div>
 
     <div class="messages" id="messages">
-      <div class="welcome" id="welcome">
-        <div class="icon">🔬</div>
-        <h2>A 股金融研究助手</h2>
-        <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
-        <div class="examples">
-          <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
-          <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？科技股表现如何？</div>
-          <div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行，哪些基金表现最好？</div>
-          <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
+      <div class="dashboard" id="dashboard">
+        <div class="dash-header">
+          <span class="dash-title">A 股金融研究助手</span>
+          <span class="dash-desc">基于 LangGraph 多智能体协作的金融深度研究系统 · 输入问题自动路由专家调研</span>
+        </div>
+        <div class="dash-status" id="dashStatus">
+          <span class="market-badge closed" id="dashBadge">加载中</span>
+          <span class="status-msg" id="dashMsg">正在获取行情数据...</span>
+          <span class="status-time" id="dashTime">--:--:--</span>
+          <button class="refresh-btn" onclick="refreshDashboard()" id="dashRefreshBtn">刷新</button>
+        </div>
+        <div class="dash-top">
+          <div class="dash-top-left"><div class="dash-indices" id="dashIndices"></div></div>
+          <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌分布</div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div></div>
+        </div>
+        <div class="dash-row3">
+          <div class="dash-panel"><div class="panel-title">今日涨停</div><ul class="zt-list" id="ztList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">市场热搜</div><div id="hotPanel"></div></div>
+          <div class="dash-panel"><div class="panel-title">热门研报</div><ul class="hot-list" id="topicList"></ul></div>
+        </div>
+        <div class="dash-row3">
+          <div class="dash-panel"><div class="panel-title">行业板块 TOP10</div><ul class="zt-list" id="industryList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">概念板块 TOP10</div><ul class="zt-list" id="conceptList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">盘中异动</div><ul class="zt-list" id="changesList"></ul></div>
+        </div>
+        <div class="dash-row3">
+          <div class="dash-panel"><div class="panel-title">强势股</div><ul class="zt-list" id="strongList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">昨日涨停表现</div><ul class="zt-list" id="prevZtList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">炸板股</div><ul class="zt-list" id="zbgcList"></ul></div>
+        </div>
+        <div class="dash-row2">
+          <div class="dash-panel"><div class="panel-title">龙虎榜</div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">快捷提问</div><div class="example-list" id="quickQueries"><div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div><div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？</div><div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行</div><div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div></div></div>
         </div>
       </div>
     </div>
@@ -405,6 +537,7 @@ function init() {
   autoResize(document.getElementById('queryInput'));
   _updateSendBtn();
   loadConversations();
+  initDashboard();
 }
 
 function getUserId() {
@@ -498,7 +631,7 @@ async function switchConversation(threadId) {
     container.innerHTML = '';
     if (msgs.length === 0) {
       msgArea.innerHTML = '';
-      showWelcome();
+      showDashboard();
       return;
     }
     msgs.forEach(m => {
@@ -530,25 +663,357 @@ async function deleteConversation(threadId) {
   } catch {}
 }
 
-function showWelcome() {
+// =====================================================================
+// 行情看板
+// =====================================================================
+let _dashData = null;
+let _dashTimer = null;
+let _dashCountdown = 30;
+let _dashCountdownTimer = null;
+let _pieChart = null;
+let _trendingData = {};
+let _trendingActiveTab = '';
+
+function showDashboard() {
   const m = document.getElementById('messages');
-  m.innerHTML = `<div class="welcome" id="welcome">
-    <div class="icon">🔬</div>
-    <h2>A 股金融研究助手</h2>
-    <p>基于 LangGraph 多智能体协作的 A 股深度研究系统。输入问题，supervisor 会自动路由到对应的专家完成调研。</p>
-    <div class="examples">
-      <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
-      <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？科技股表现如何？</div>
-      <div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行，哪些基金表现最好？</div>
-      <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
+  m.innerHTML = `<div class="dashboard" id="dashboard">
+    <div class="dash-header">
+      <span class="dash-title">A 股金融研究助手</span>
+      <span class="dash-desc">基于 LangGraph 多智能体协作的深度研究系统 · 输入问题自动路由专家调研</span>
+    </div>
+    <div class="dash-status" id="dashStatus">
+      <span class="market-badge closed" id="dashBadge">加载中</span>
+      <span class="status-msg" id="dashMsg">正在获取行情数据...</span>
+      <span class="status-time" id="dashTime">--:--:--</span>
+      <button class="refresh-btn" onclick="refreshDashboard()" id="dashRefreshBtn">刷新</button>
+    </div>
+    <div class="dash-top">
+      <div class="dash-top-left">
+        <div class="dash-indices" id="dashIndices"></div>
+      </div>
+      <div class="dash-top-right">
+        <div class="dash-panel"><div class="panel-title">涨跌分布</div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div>
+      </div>
+    </div>
+    <div class="dash-row3">
+      <div class="dash-panel"><div class="panel-title">今日涨停</div><ul class="zt-list" id="ztList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">市场热搜</div><div id="hotPanel"></div></div>
+      <div class="dash-panel"><div class="panel-title">热门研报</div><ul class="hot-list" id="topicList"></ul></div>
+    </div>
+    <div class="dash-row3">
+      <div class="dash-panel"><div class="panel-title">行业板块 TOP10</div><ul class="zt-list" id="industryList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">概念板块 TOP10</div><ul class="zt-list" id="conceptList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">盘中异动</div><ul class="zt-list" id="changesList"></ul></div>
+    </div>
+    <div class="dash-row3">
+      <div class="dash-panel"><div class="panel-title">强势股</div><ul class="zt-list" id="strongList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">昨日涨停表现</div><ul class="zt-list" id="prevZtList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">炸板股</div><ul class="zt-list" id="zbgcList"></ul></div>
+    </div>
+    <div class="dash-row2">
+      <div class="dash-panel"><div class="panel-title">龙虎榜</div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
+      <div class="dash-panel">
+        <div class="panel-title">快捷提问</div>
+        <div class="example-list" id="quickQueries">
+          <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
+          <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？</div>
+          <div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行</div>
+          <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
+        </div>
+      </div>
     </div>
   </div>`;
+  _pieChart = null;
+  initDashboard();
 }
+
+function initDashboard() {
+  refreshDashboard();
+  if (_dashTimer) clearInterval(_dashTimer);
+  _dashTimer = setInterval(refreshDashboard, 30000);
+  _startCountdown();
+}
+
+function _startCountdown() {
+  _dashCountdown = 30;
+  if (_dashCountdownTimer) clearInterval(_dashCountdownTimer);
+  _dashCountdownTimer = setInterval(() => {
+    _dashCountdown--;
+    const btn = document.getElementById('dashRefreshBtn');
+    if (btn) btn.textContent = _dashCountdown > 0 ? `${_dashCountdown}s` : '刷新中...';
+  }, 1000);
+}
+
+async function refreshDashboard() {
+  _startCountdown();
+  const btn = document.getElementById('dashRefreshBtn');
+  if (btn) btn.textContent = '刷新中...';
+  try {
+    const resp = await fetch('/api/dashboard');
+    if (!resp.ok) return;
+    _dashData = await resp.json();
+    _renderDashboard();
+  } catch { /* silent */ }
+  if (btn) btn.textContent = '30s';
+}
+
+function _renderDashboard() {
+  if (!_dashData) return;
+  _renderStatusBar(_dashData.market_status);
+  _renderIndexCards(_dashData.indices);
+  _renderPieChart(_dashData.breadth);
+  _renderZTPool(_dashData.zt_pool);
+  _renderHotPanel(_dashData.trending);
+  _renderTopics(_dashData.trending);
+  _renderStockList('strongList', _dashData.strong_pool, '强势');
+  _renderStockList('prevZtList', _dashData.previous_zt, '昨涨停');
+  _renderStockList('zbgcList', _dashData.zbgc_pool, '炸板');
+  _renderBoardList('industryList', _dashData.boards?.industry, '行业');
+  _renderBoardList('conceptList', _dashData.boards?.concept, '概念');
+  _renderChangesList(_dashData.changes);
+  _renderLHB(_dashData.lhb);
+  _renderDynamicQueries(_dashData);
+  const timeEl = document.getElementById('dashTime');
+  if (timeEl) timeEl.textContent = _dashData.updated_at || '';
+}
+
+function _renderStatusBar(status) {
+  if (!status) return;
+  const badge = document.getElementById('dashBadge');
+  const msg = document.getElementById('dashMsg');
+  if (!badge || !msg) return;
+  const s = status.status || 'unknown';
+  badge.className = 'market-badge ' + (s === 'trading' ? 'trading' : s === 'pre_market' || s === 'lunch_break' ? 'pre' : 'closed');
+  const labels = {trading:'交易中',closed:'已收盘',pre_market:'盘前',lunch_break:'午休',non_trading_day:'休市'};
+  badge.textContent = labels[s] || s;
+  msg.textContent = status.message || '';
+}
+
+function _renderIndexCards(indices) {
+  const el = document.getElementById('dashIndices');
+  if (!el || !indices) return;
+  el.innerHTML = indices.map(idx => {
+    const cls = idx.change > 0 ? 'up' : idx.change < 0 ? 'down' : 'flat';
+    const sign = idx.change > 0 ? '+' : '';
+    const query = `分析${idx.name}今日走势和后市展望`;
+    return `<div class="idx-card ${cls}" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <div class="idx-name">${idx.name}</div>
+      <div class="idx-price">${idx.price.toFixed(2)}</div>
+      <div class="idx-row"><span>${sign}${idx.change.toFixed(2)}</span><span>${sign}${idx.change_pct.toFixed(2)}%</span></div>
+      <div class="idx-detail">
+        <span>开 ${idx.open ? idx.open.toFixed(2) : '-'}</span>
+        <span>高 ${idx.high ? idx.high.toFixed(2) : '-'}</span>
+        <span>低 ${idx.low ? idx.low.toFixed(2) : '-'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _renderPieChart(breadth) {
+  if (!breadth) return;
+  const el = document.getElementById('pieChart');
+  if (!el) return;
+  if (!_pieChart && typeof echarts !== 'undefined') {
+    _pieChart = echarts.init(el, 'dark');
+    _pieChart.setOption({backgroundColor:'transparent'});
+  }
+  if (!_pieChart) return;
+  const data = [
+    {value:breadth.up, name:'上涨', itemStyle:{color:'#f87171'}},
+    {value:breadth.down, name:'下跌', itemStyle:{color:'#4ade80'}},
+  ];
+  if (breadth.flat > 0) data.push({value:breadth.flat, name:'平盘', itemStyle:{color:'#6b7280'}});
+  _pieChart.setOption({
+    series:[{
+      type:'pie', radius:['42%','72%'], center:['50%','48%'],
+      label:{show:false},
+      data: data,
+      emphasis:{scale:true,scaleSize:4}
+    }],
+    tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)',confine:true}
+  });
+  const stats = document.getElementById('pieStats');
+  if (stats) {
+    const flat = breadth.flat > 0 ? `<span class="stat-flat">平 ${breadth.flat}</span>` : '';
+    stats.innerHTML = `<span class="stat-up">涨 ${breadth.up}</span><span class="stat-down">跌 ${breadth.down}</span>${flat}<span class="stat-zt">涨停 ${breadth.zt}</span><span class="stat-dt">跌停 ${breadth.dt}</span>`;
+  }
+}
+
+function _renderZTPool(pool) {
+  const el = document.getElementById('ztList');
+  if (!el) return;
+  if (!pool || !pool.length) { el.innerHTML = '<li style="font-size:12px;color:var(--text2);padding:8px">暂无涨停数据</li>'; return; }
+  el.innerHTML = pool.map(s => {
+    const query = `分析${s.name}(${s.code})涨停原因、封板资金和后续走势`;
+    const streak = s.streak > 1 ? `<span class="zt-tag">${s.streak}连板</span>` : '';
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      ${streak}<span class="zt-name">${escHtml(s.name)}</span>
+      <span class="zt-time">${s.first_time || ''}</span>
+      <span class="zt-industry">${escHtml(s.industry || '')}</span>
+    </li>`;
+  }).join('');
+}
+
+function _renderHotPanel(trending) {
+  const panel = document.getElementById('hotPanel');
+  if (!panel || !trending) return;
+  const hotSources = ['eastmoney','surge'].filter(k => trending[k]?.items?.length);
+  if (!hotSources.length) { panel.innerHTML = '<span style="font-size:11px;opacity:0.5">暂无数据</span>'; return; }
+  _trendingData = trending;
+  if (!hotSources.includes(_trendingActiveTab)) _trendingActiveTab = hotSources[0];
+  let tabs = '<div class="hot-tabs">';
+  for (const key of hotSources) {
+    const label = trending[key].label || key;
+    const active = key === _trendingActiveTab ? ' active' : '';
+    tabs += `<div class="hot-tab${active}" onclick="_switchHotTab('${key}')">${label}</div>`;
+  }
+  tabs += '</div>';
+  panel.innerHTML = tabs + '<ul class="hot-list" id="hotList"></ul>';
+  _renderHotList();
+}
+
+function _switchHotTab(key) {
+  _trendingActiveTab = key;
+  document.querySelectorAll('#hotPanel .hot-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#hotPanel .hot-tab').forEach(t => { if (t.textContent === (_trendingData[key]?.label || key)) t.classList.add('active'); });
+  _renderHotList();
+}
+
+function _renderHotList() {
+  const list = document.getElementById('hotList');
+  if (!list) return;
+  const items = (_trendingData[_trendingActiveTab] || {}).items || [];
+  list.innerHTML = items.map(s => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const priceText = s.price != null ? parseFloat(s.price).toFixed(2) : '';
+    const query = `分析${s.name}(${s.code})的最新行情、资金流向和市场情绪`;
+    return `<li class="hot-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="hot-rank">${s.rank}</span>
+      <span class="hot-name">${escHtml(s.name)}</span>
+      <span class="hot-code">${s.code}</span>
+      ${priceText ? `<span class="hot-price">${priceText}</span>` : ''}
+      <span class="hot-change ${cls}">${changeText}</span>
+    </li>`;
+  }).join('');
+}
+
+function _renderTopics(trending) {
+  const el = document.getElementById('topicList');
+  if (!el) return;
+  const items = trending?.topics?.items || [];
+  if (!items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无研报</li>'; return; }
+  el.innerHTML = items.map((t, i) => {
+    const query = t.stock_name
+      ? `分析${t.stock_name}(${t.stock_code})的最新研报观点和投资价值`
+      : t.title;
+    return `<li class="hot-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="hot-rank">${i + 1}</span>
+      <span class="hot-name">${escHtml(t.title)}</span>
+      ${t.industry ? `<span class="topic-tag">${escHtml(t.industry)}</span>` : ''}
+      ${t.org ? `<span class="hot-code">${escHtml(t.org)}</span>` : ''}
+    </li>`;
+  }).join('');
+}
+
+function _renderStockList(elId, items, label) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = `<li style="font-size:11px;color:var(--text2);padding:8px">暂无${label}数据</li>`; return; }
+  el.innerHTML = items.map(s => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const query = `分析${s.name}(${s.code})的最新走势和市场表现`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-name">${escHtml(s.name)}</span>
+      <span class="hot-code">${s.code}</span>
+      <span class="hot-change ${cls}">${changeText}</span>
+    </li>`;
+  }).join('');
+}
+
+function _renderBoardList(elId, items, label) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = `<li style="font-size:11px;color:var(--text2);padding:8px">暂无${label}数据</li>`; return; }
+  el.innerHTML = items.map((s, i) => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const query = `分析${s.name}板块今日表现和主要成分股`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="hot-rank">${i + 1}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      <span class="hot-change ${cls}">${changeText}</span>
+    </li>`;
+  }).join('');
+}
+
+function _renderChangesList(items) {
+  const el = document.getElementById('changesList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无异动</li>'; return; }
+  el.innerHTML = items.map(s => {
+    const query = `分析${s.name}(${s.code})的异动原因和后续走势`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="change-time">${s.time || ''}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      <span class="hot-code">${s.code}</span>
+      <span class="change-type">${escHtml(s.type || '')}</span>
+    </li>`;
+  }).join('');
+}
+
+function _renderLHB(items) {
+  const el = document.getElementById('lhbList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无龙虎榜数据</li>'; return; }
+  el.innerHTML = items.map(s => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const netBuy = s.net_buy ? (s.net_buy / 10000).toFixed(0) + '万' : '';
+    const netCls = s.net_buy > 0 ? 'fin-up' : s.net_buy < 0 ? 'fin-down' : '';
+    const query = `分析${s.name}(${s.code})的龙虎榜资金动向和游资情况`;
+    return `<li class="zt-item lhb-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-name">${escHtml(s.name)}</span>
+      <span class="hot-code">${s.code}</span>
+      <span class="hot-change ${cls}">${changeText}</span>
+      <span class="lhb-net ${netCls}">${netBuy}</span>
+      <span class="lhb-comment">${escHtml(s.comment || '')}</span>
+    </li>`;
+  }).join('');
+}
+function _renderDynamicQueries(data) {
+  const el = document.getElementById('quickQueries');
+  if (!el) return;
+  const fixed = [
+    '分析今日收盘情况，预测明天走势',
+    '今天哪些板块和个股涨得最好？',
+  ];
+  const dynamic = [];
+  const topBoard = data.boards?.concept?.[0];
+  if (topBoard) dynamic.push(`${topBoard.name}概念今日领涨原因是什么？相关龙头有哪些？`);
+  const topZt = data.zt_pool?.[0];
+  if (topZt) dynamic.push(`分析${topZt.name}(${topZt.code})涨停原因和后续空间`);
+  const topHot = data.trending?.eastmoney?.items?.[0];
+  if (topHot && !dynamic.some(d => d.includes(topHot.name))) dynamic.push(`${topHot.name}(${topHot.code})为什么今天人气这么高？`);
+  const topReport = data.trending?.topics?.items?.[0];
+  if (topReport?.stock_name && !dynamic.some(d => d.includes(topReport.stock_name))) dynamic.push(`分析${topReport.stock_name}的最新研报观点`);
+  const topIndustry = data.boards?.industry?.[0];
+  if (topIndustry && !dynamic.some(d => d.includes(topIndustry.name))) dynamic.push(`${topIndustry.name}行业今日表现突出，有哪些值得关注的个股？`);
+  const all = [...fixed, ...dynamic.slice(0, 4)];
+  el.innerHTML = all.map(q => `<div class="example" onclick="fillQuery(this)">${escHtml(q)}</div>`).join('');
+}
+
+function escHtmlAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function newThread() {
   currentThread = null;
   document.getElementById('threadDisplay').textContent = '-';
-  showWelcome();
+  showDashboard();
   clearHighlights();
   _updateSendBtn();
   document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
@@ -573,7 +1038,9 @@ function _appendAssistantMsg(container) {
 }
 
 function addUserMsg(text) {
-  document.getElementById('welcome')?.remove();
+  document.getElementById('dashboard')?.remove();
+  if (_dashTimer) { clearInterval(_dashTimer); _dashTimer = null; }
+  if (_dashCountdownTimer) { clearInterval(_dashCountdownTimer); _dashCountdownTimer = null; }
   const d = document.createElement('div');
   d.className = 'msg user';
   d.textContent = text;
@@ -1065,7 +1532,8 @@ function autoResize(el) {
 
 function fillQuery(el) {
   const input = document.getElementById('queryInput');
-  input.value = el.textContent; input.focus();
+  input.value = el.dataset.query || el.textContent;
+  input.focus();
   input.dispatchEvent(new Event('input'));
 }
 
@@ -1112,18 +1580,37 @@ function renderMarkdown(text) {
 }
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escAndInline(s) {
-  return escHtml(s)
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/`([^`]+)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
+  s = escHtml(s);
+  s = s.replace(/([+-]?\d+\.?\d*%)/g, (match) => {
+    const num = parseFloat(match);
+    if (num > 0) return `<span class="fin-up">${match.startsWith('+') ? '' : '+'}${match}</span>`;
+    if (num < 0) return `<span class="fin-down">${match}</span>`;
+    return match;
+  });
+  s = s.replace(/\*\*(.+?)\*\*/g, '<span class="fin-highlight">$1</span>');
+  s = s.replace(/`([^`]+)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--accent);text-decoration:none">$1</a>');
+  return s;
 }
 function renderLine(line) {
   let s = escHtml(line);
-  s = s.replace(/^#{1,6}\s+(.+)$/gm, '<div style="font-weight:600;margin:8px 0 4px">$1</div>');
-  if (/^\s*[-*_]{3,}\s*$/.test(s)) return '<br>';
-  s = s.replace(/\*\*(.+?)\*\*/g, '$1');
+  if (/^#{1,3}\s+(.+)$/.test(s)) {
+    s = s.replace(/^#{1,3}\s+(.+)$/, '<span class="section-title">$1</span>');
+    return s;
+  }
+  if (/^\s*[-*_]{3,}\s*$/.test(s)) return '<div style="border-top:1px solid var(--border);margin:8px 0"></div>';
+  s = s.replace(/([+-]?\d+\.?\d*%)/g, (match) => {
+    const num = parseFloat(match);
+    if (num > 0) return `<span class="fin-up">${match.startsWith('+') ? '' : '+'}${match}</span>`;
+    if (num < 0) return `<span class="fin-down">${match}</span>`;
+    return match;
+  });
+  s = s.replace(/\*\*(.+?)\*\*/g, '<span class="fin-highlight">$1</span>');
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--accent);text-decoration:none">$1</a>');
   s = s.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
   s = s.replace(/^\s*(\d+)\. (.+)$/gm, '<li>$2</li>');
   s = s.replace(/`([^`]+)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
+  if (/^数据来源[：:]/.test(line.trim())) return `<div class="source-line">${s}</div>`;
   if (s.trim() === '') s = '<br>';
   return s;
 }
