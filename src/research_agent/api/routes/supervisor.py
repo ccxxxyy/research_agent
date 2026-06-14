@@ -327,69 +327,13 @@ def _format_sse(event: ResearchSupervisorSSEEvent) -> str:
     return f"data: {event.model_dump_json()}\n\n"
 
 
-_TABLE_SEP_RE = re.compile(r"^\s*\|[-:\s|]+\|\s*$")
-_HR_RE = re.compile(r"^\s*[-*_]{3,}\s*$")
-_HEADING_RE = re.compile(r"^(\s*)(#{1,6})\s+(.*)")
-_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
-
-
 def _clean_markdown(text: str) -> str:
-    """将 LLM 输出中的 markdown 格式清洗为纯文本风格。
+    """对 LLM 输出做轻量清洗，保留 markdown 格式供前端渲染。
 
-    处理：表格 → 缩进文本；``---`` 水平线 → 删除；``#`` 标题 → 加粗纯文本；
-    ``**粗体**`` → 保留文字去掉星号。
+    仅执行：压缩连续空行为最多 1 个。
+    表格、标题、粗体等 markdown 语法由前端 renderMarkdown 负责渲染。
     """
-    lines = text.split("\n")
-    out: list[str] = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        # --- markdown 表格 ---
-        if (
-            line.strip().startswith("|")
-            and i + 1 < len(lines)
-            and _TABLE_SEP_RE.match(lines[i + 1])
-        ):
-            headers = [c.strip() for c in line.split("|") if c.strip()]
-            i += 2
-            rows: list[list[str]] = []
-            while i < len(lines) and lines[i].strip().startswith("|"):
-                cells = [c.strip() for c in lines[i].split("|") if c.strip()]
-                rows.append(cells)
-                i += 1
-            for row in rows:
-                parts = []
-                for h, c in zip(headers, row, strict=False):
-                    parts.append(f"{h}: {c}")
-                out.append("- " + " | ".join(parts))
-            continue
-
-        # --- 水平线 (---, ***, ___) → 空行 ---
-        if _HR_RE.match(line):
-            if out and out[-1].strip():
-                out.append("")
-            i += 1
-            continue
-
-        # --- 标题 (# / ## / ### ...) → 纯文本 ---
-        hm = _HEADING_RE.match(line)
-        if hm:
-            heading_text = hm.group(3).strip()
-            if out and out[-1].strip():
-                out.append("")
-            out.append(heading_text)
-            i += 1
-            continue
-
-        out.append(line)
-        i += 1
-
-    result = "\n".join(out)
-    # 去掉 **粗体** 标记，保留文字
-    result = _BOLD_RE.sub(r"\1", result)
-    # 压缩连续空行为最多1个
-    result = re.sub(r"\n{3,}", "\n\n", result)
+    result = re.sub(r"\n{3,}", "\n\n", text)
     return result.strip()
 
 
