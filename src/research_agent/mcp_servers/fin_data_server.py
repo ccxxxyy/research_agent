@@ -1494,9 +1494,7 @@ async def get_market_status() -> dict:
         return _fmt_error(e, context="get_market_status()")
 
 
-def _compute_market_status(
-    *, _now: datetime | None = None
-) -> dict[str, Any]:
+def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
     """纯函数：根据当前时间和交易日历计算市场状态。
 
     ``_now`` 仅供单元测试注入假时间，生产代码不传。

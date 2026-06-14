@@ -252,7 +252,11 @@ def _source_matches(stored_source: str, target: str) -> bool:
         return False
     stored_name = _display_source_name(stored_source)
     target_name = Path(target).name
-    return stored_source == target or Path(stored_source).name == target_name or stored_name == target_name
+    return (
+        stored_source == target
+        or Path(stored_source).name == target_name
+        or stored_name == target_name
+    )
 
 
 def _load_ingested_hashes(collection: str, *, db_dir: Path | None = None) -> dict[str, str]:
@@ -460,8 +464,10 @@ async def ingest_pdf(
             old_name = existing_hashes[file_hash]
             new_is_real = not Path(display_source).name.lower().startswith("tmp")
             old_is_tmp = Path(old_name).name.lower().startswith("tmp")
-            if display_source and new_is_real and (
-                old_is_tmp or not _source_matches(old_name, display_source)
+            if (
+                display_source
+                and new_is_real
+                and (old_is_tmp or not _source_matches(old_name, display_source))
             ):
                 existing_hashes[file_hash] = display_source
                 cdir = _collection_dir(collection)
@@ -796,11 +802,13 @@ async def list_collections() -> dict:
                 {_display_source_name(p) for p in hashes.values() if p},
                 key=str.lower,
             )
-            out.append({
-                "name": child.name,
-                "chunk_count": chunk_count,
-                "sources": sources,
-            })
+            out.append(
+                {
+                    "name": child.name,
+                    "chunk_count": chunk_count,
+                    "sources": sources,
+                }
+            )
         return {"db_dir": str(DEFAULT_DB_DIR), "collections": out}
 
     try:
@@ -872,11 +880,7 @@ async def delete_document(collection: str, source: str) -> dict:
             }
 
         hashes = _load_ingested_hashes(collection)
-        new_hashes = {
-            h: name
-            for h, name in hashes.items()
-            if not _source_matches(name, source)
-        }
+        new_hashes = {h: name for h, name in hashes.items() if not _source_matches(name, source)}
         cdir = _collection_dir(collection)
         (cdir / _HASH_FILENAME).write_text(
             json.dumps(new_hashes, ensure_ascii=False, indent=2),
@@ -913,7 +917,9 @@ async def delete_document(collection: str, source: str) -> dict:
     try:
         return await asyncio.to_thread(_delete_doc)
     except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"delete_document(collection={collection!r}, source={source!r})")
+        return _fmt_error(
+            e, context=f"delete_document(collection={collection!r}, source={source!r})"
+        )
 
 
 # ---------------------------------------------------------------------

@@ -59,6 +59,7 @@ def _safe_filename(name: str) -> str:
     """将文件名中不安全的字符替换为下划线。"""
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
 
+
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 _USER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,61}[a-zA-Z0-9]$")
@@ -168,9 +169,7 @@ async def ingest_pdf(
     suffix = Path(file.filename).suffix
     # 保留原始文件名，用前缀避免冲突
     safe_name = re.sub(r'[<>:"/\\|?*]', "_", Path(file.filename).stem)
-    with tempfile.NamedTemporaryFile(
-        delete=False, suffix=suffix, prefix=f"{safe_name}_"
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix=f"{safe_name}_") as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
@@ -263,7 +262,7 @@ async def list_collections(
     # 仅保留当前用户的集合并去除前缀
     user_collections = [
         {
-            "name": c["name"][len(prefix):],
+            "name": c["name"][len(prefix) :],
             "chunk_count": c["chunk_count"],
             "sources": c.get("sources", []),
         }
