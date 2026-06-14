@@ -24,10 +24,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel, Field
-
-from fastapi.responses import FileResponse
 
 from research_agent.mcp_servers.knowledge_server import (
     DEFAULT_DB_DIR as _DEFAULT_DB_DIR,

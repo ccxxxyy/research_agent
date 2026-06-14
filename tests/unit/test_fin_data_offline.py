@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime as _dt
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -569,7 +570,6 @@ async def test_hsgt_flow_south():
 
 
 # ── 工具 19: get_market_status（A股市场交易状态）──────────────────────
-from datetime import datetime as _dt
 
 
 def test_market_status_trading_day_closed():

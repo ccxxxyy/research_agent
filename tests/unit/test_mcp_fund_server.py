@@ -138,9 +138,11 @@ async def test_etf_spot_fallback_path():
         }
     )
 
-    with patch("akshare.fund_etf_category_sina", side_effect=ConnectionError("down")):
-        with patch("akshare.fund_open_fund_rank_em", return_value=fallback_df):
-            result = await mod.get_fund_etf_spot(sort_by="今年来", limit=10)
+    with (
+        patch("akshare.fund_etf_category_sina", side_effect=ConnectionError("down")),
+        patch("akshare.fund_open_fund_rank_em", return_value=fallback_df),
+    ):
+        result = await mod.get_fund_etf_spot(sort_by="今年来", limit=10)
     assert result["realtime"] is False
     assert result["source"] == "eastmoney_rank"
     assert "note" in result
@@ -187,9 +189,11 @@ async def test_lof_spot_fallback_path():
         }
     )
 
-    with patch("akshare.fund_etf_category_sina", side_effect=ConnectionError("down")):
-        with patch("akshare.fund_open_fund_rank_em", return_value=fallback_df):
-            result = await mod.get_fund_lof_spot(sort_by="今年来", limit=10)
+    with (
+        patch("akshare.fund_etf_category_sina", side_effect=ConnectionError("down")),
+        patch("akshare.fund_open_fund_rank_em", return_value=fallback_df),
+    ):
+        result = await mod.get_fund_lof_spot(sort_by="今年来", limit=10)
     assert result["realtime"] is False
     assert result["source"] == "eastmoney_rank"
     assert "source_url" in result
