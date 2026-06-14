@@ -45,7 +45,12 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 @keyframes convPulse{0%,100%{opacity:1}50%{opacity:.2}}
 .conv-empty{font-size:12px;color:var(--text2);padding:8px 20px;opacity:0.6}
 
-.specialist-list{padding:0 12px;overflow-y:auto}
+.specialist-list{padding:0 12px;overflow-y:auto;max-height:260px;scrollbar-width:none}
+.specialist-list:hover{scrollbar-width:thin;scrollbar-color:rgba(46,47,69,0.5) transparent}
+.specialist-list::-webkit-scrollbar{width:0;transition:width .2s}
+.specialist-list:hover::-webkit-scrollbar{width:3px}
+.specialist-list::-webkit-scrollbar-track{background:transparent}
+.specialist-list::-webkit-scrollbar-thumb{background:rgba(46,47,69,0.5);border-radius:2px}
 .specialist{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:2px;transition:background .15s}
 .specialist:hover{background:var(--surface2)}
 .specialist .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--border);transition:background .3s,box-shadow .3s}
@@ -137,15 +142,31 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .input-meta label{display:flex;align-items:center;gap:4px}
 .input-meta input{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text);font-size:11px;width:100px;outline:none;font-family:monospace}
 
-.upload-zone{border:1px dashed var(--border);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;text-align:center;font-size:12px;color:var(--text2);cursor:pointer;transition:border-color .15s,background .15s}
+.upload-zone{border:1px dashed var(--border);border-radius:8px;padding:10px 12px;margin:6px 12px 8px;text-align:center;font-size:11px;color:var(--text2);cursor:pointer;transition:border-color .15s,background .15s;display:none}
+.upload-zone.visible{display:block}
 .upload-zone:hover,.upload-zone.dragover{border-color:var(--accent);background:rgba(108,99,255,0.08);color:var(--text)}
-.upload-zone .upload-title{color:var(--text);font-size:13px;margin-bottom:4px}
-.upload-zone .upload-hint{font-size:11px}
-.upload-status{font-size:11px;color:var(--text2);margin-top:6px;min-height:16px}
+.upload-zone .upload-title{color:var(--text);font-size:12px;margin-bottom:2px}
+.upload-zone .upload-hint{font-size:10px}
+.upload-status{font-size:10px;color:var(--text2);margin-top:4px;min-height:14px}
 .upload-status.ok{color:var(--green)}
 .upload-status.err{color:var(--red)}
-.knowledge-list{font-size:11px;color:var(--text2);padding:0 20px 12px;max-height:80px;overflow-y:auto}
-.knowledge-list .kb-item{padding:2px 0;display:flex;justify-content:space-between;gap:8px}
+.kb-header{display:flex;align-items:center;padding:16px 20px 6px;gap:6px}
+.kb-header .section-title{padding:0;margin:0;flex:1}
+.kb-btn{width:22px;height:22px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text2);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;line-height:1;padding:0}
+.kb-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(108,99,255,0.1)}
+.kb-btn.active{border-color:var(--accent);color:var(--accent)}
+.knowledge-list{font-size:11px;color:var(--text2);padding:0 12px 8px;max-height:140px;overflow-y:auto}
+.knowledge-list::-webkit-scrollbar{width:3px}
+.knowledge-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.kb-item{padding:4px 8px;display:flex;align-items:center;justify-content:space-between;gap:6px;border-radius:6px;transition:background .15s}
+.kb-item:hover{background:var(--surface2)}
+.kb-item .kb-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb-item .kb-count{color:var(--text2);font-size:10px;flex-shrink:0}
+.kb-item .kb-delete{display:none;background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:1px 4px;border-radius:4px;flex-shrink:0;opacity:0.6;transition:opacity .15s}
+.kb-item .kb-delete:hover{opacity:1;background:rgba(248,113,113,0.15)}
+.kb-item .kb-open{background:none;border:none;color:var(--blue);cursor:pointer;font-size:12px;padding:1px 4px;border-radius:4px;flex-shrink:0;opacity:0.5;transition:opacity .15s;text-decoration:none}
+.kb-item .kb-open:hover{opacity:1;background:rgba(96,165,250,0.15)}
+.knowledge-list.delete-mode .kb-item .kb-delete{display:inline-flex}
 
 /* HITL review panel */
 .review-panel{background:var(--surface2);border:1px solid var(--accent);border-radius:var(--radius);padding:16px 20px;margin-top:12px;animation:fadeIn .25s ease}
@@ -185,7 +206,17 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
     <div class="conv-list" id="convList"><div class="conv-empty">暂无对话</div></div>
     <div class="section-title">专家团队</div>
     <div class="specialist-list" id="specialistList"></div>
-    <div class="section-title">知识库</div>
+    <div class="kb-header">
+      <div class="section-title">知识库</div>
+      <button class="kb-btn" id="kbAddBtn" title="上传 PDF" onclick="toggleKbUpload()">+</button>
+      <button class="kb-btn" id="kbDelBtn" title="删除集合" onclick="toggleKbDelete()">−</button>
+    </div>
+    <div class="upload-zone" id="sidebarUploadZone" onclick="document.getElementById('pdfFileInput').click()">
+      <div class="upload-title">拖拽 PDF 或点击上传</div>
+      <div class="upload-hint">导入到知识库集合</div>
+      <div class="upload-status" id="uploadStatus"></div>
+    </div>
+    <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" hidden />
     <div class="knowledge-list" id="knowledgeList">暂无集合</div>
     <div class="stats" id="statsPanel">
       <div class="section-title" style="padding:0 0 8px">会话统计</div>
@@ -219,12 +250,6 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
     </div>
 
     <div class="input-area">
-      <div class="upload-zone" id="uploadZone" onclick="document.getElementById('pdfFileInput').click()">
-        <div class="upload-title">拖拽 PDF 到此处，或点击上传</div>
-        <div class="upload-hint">导入后可向知识库专家提问，例如「在我上传的报告里检索…」</div>
-        <div class="upload-status" id="uploadStatus"></div>
-      </div>
-      <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" hidden />
       <div class="input-row">
         <textarea id="queryInput" rows="1" placeholder="输入研究问题..." onkeydown="handleKey(event)"></textarea>
         <button id="sendBtn">
@@ -820,10 +845,12 @@ async function _runStream(query, sendThreadId, userId) {
 }
 
 // =====================================================================
-// 上传、知识库
+// 上传、知识库（侧栏 +/- 按钮控制）
 // =====================================================================
+let _kbDeleteMode = false;
+
 function setupUploadZone() {
-  const zone = document.getElementById('uploadZone');
+  const zone = document.getElementById('sidebarUploadZone');
   const input = document.getElementById('pdfFileInput');
   if (!zone || !input) return;
   ['dragenter', 'dragover'].forEach(ev => {
@@ -842,6 +869,38 @@ function setupUploadZone() {
   });
 }
 
+function toggleKbUpload() {
+  const zone = document.getElementById('sidebarUploadZone');
+  const btn = document.getElementById('kbAddBtn');
+  const isVisible = zone.classList.contains('visible');
+  zone.classList.toggle('visible', !isVisible);
+  btn.classList.toggle('active', !isVisible);
+  if (!isVisible) { _kbDeleteMode = false; document.getElementById('kbDelBtn').classList.remove('active'); document.getElementById('knowledgeList').classList.remove('delete-mode'); }
+}
+
+function toggleKbDelete() {
+  _kbDeleteMode = !_kbDeleteMode;
+  const btn = document.getElementById('kbDelBtn');
+  const list = document.getElementById('knowledgeList');
+  btn.classList.toggle('active', _kbDeleteMode);
+  list.classList.toggle('delete-mode', _kbDeleteMode);
+  if (_kbDeleteMode) { document.getElementById('sidebarUploadZone').classList.remove('visible'); document.getElementById('kbAddBtn').classList.remove('active'); }
+}
+
+async function deleteKbDocument(collection, source) {
+  if (!confirm(`确定删除「${source}」？`)) return;
+  const userId = getUserId();
+  try {
+    const qs = new URLSearchParams({collection, source});
+    const resp = await fetch(`/api/knowledge/documents?${qs}`, {
+      method: 'DELETE', headers: {'X-User-ID': userId},
+    });
+    if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.detail || resp.statusText); }
+    showToast(`已删除「${source}」`);
+    refreshKnowledgeCollections();
+  } catch (err) { showToast('删除失败: ' + err.message); }
+}
+
 async function uploadPdf(file) {
   const statusEl = document.getElementById('uploadStatus');
   if (!file) return;
@@ -851,22 +910,22 @@ async function uploadPdf(file) {
   }
   const userId = getUserId();
   if (userId === 'anonymous') {
-    statusEl.textContent = '请设置用户 ID（勿用 anonymous）后再上传';
+    statusEl.textContent = '请先设置用户 ID';
     statusEl.className = 'upload-status err'; showToast('上传前请填写有效的用户 ID'); return;
   }
   const collection = document.getElementById('collectionInput').value.trim() || 'default';
   statusEl.textContent = `正在上传 ${file.name}…`; statusEl.className = 'upload-status';
-  const form = new FormData(); form.append('file', file);
+  const form = new FormData(); form.append('file', file, file.name);
   try {
     const resp = await fetch(`/api/knowledge/ingest?collection=${encodeURIComponent(collection)}`, {
       method: 'POST', headers: {'X-User-ID': userId}, body: form,
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.detail || resp.statusText);
-    statusEl.textContent = `已导入「${data.source}」→ 集合 ${data.collection}（${data.num_chunks_added} 块，共 ${data.total_chunks_in_collection} 块）`;
+    statusEl.textContent = `✓ ${data.source} → ${data.num_chunks_added} 块`;
     statusEl.className = 'upload-status ok'; showToast('PDF 已导入知识库'); refreshKnowledgeCollections();
   } catch (err) {
-    statusEl.textContent = '上传失败: ' + err.message; statusEl.className = 'upload-status err';
+    statusEl.textContent = '失败: ' + err.message; statusEl.className = 'upload-status err';
     showToast('上传失败: ' + err.message);
   }
 }
@@ -875,15 +934,36 @@ async function refreshKnowledgeCollections() {
   const el = document.getElementById('knowledgeList');
   if (!el) return;
   const userId = getUserId();
-  if (userId === 'anonymous') { el.textContent = '填写用户 ID 后可查看集合'; return; }
+  if (userId === 'anonymous') { el.innerHTML = '<div style="padding:4px 8px;opacity:.6">设置用户 ID 后查看</div>'; return; }
   try {
     const resp = await fetch('/api/knowledge/collections', { headers: {'X-User-ID': userId} });
-    if (!resp.ok) { el.textContent = '无法加载集合'; return; }
+    if (!resp.ok) { el.innerHTML = '<div style="padding:4px 8px">无法加载</div>'; return; }
     const data = await resp.json();
     const cols = data.collections || [];
-    if (!cols.length) { el.textContent = '暂无集合（上传 PDF 后自动创建）'; return; }
-    el.innerHTML = cols.map(c => `<div class="kb-item"><span>${c.name}</span><span>${c.chunk_count} 块</span></div>`).join('');
-  } catch { el.textContent = '无法加载集合'; }
+    if (!cols.length) { el.innerHTML = '<div style="padding:4px 8px;opacity:.6">暂无集合</div>'; return; }
+    let html = '';
+    for (const c of cols) {
+      const sources = c.sources || [];
+      if (sources.length) {
+        for (const src of sources) {
+          const safeSrc = src.replace(/'/g, "\\'");
+          const viewUrl = `/api/knowledge/documents/view?collection=${encodeURIComponent(c.name)}&source=${encodeURIComponent(src)}&user_id=${encodeURIComponent(getUserId())}`;
+          html += `<div class="kb-item">` +
+            `<span class="kb-name" title="${c.name} / ${src}">📄 ${src}</span>` +
+            `<a class="kb-open" href="${viewUrl}" target="_blank" title="在新窗口查看 PDF">↗</a>` +
+            `<button class="kb-delete" onclick="deleteKbDocument('${c.name}','${safeSrc}')" title="删除此 PDF">✕</button>` +
+          `</div>`;
+        }
+      } else {
+        html += `<div class="kb-item">` +
+          `<span class="kb-name" title="${c.name}">${c.name}</span>` +
+          `<span class="kb-count">${c.chunk_count} 块</span>` +
+        `</div>`;
+      }
+    }
+    el.innerHTML = html;
+    if (_kbDeleteMode) el.classList.add('delete-mode');
+  } catch { el.innerHTML = '<div style="padding:4px 8px">无法加载</div>'; }
 }
 
 // =====================================================================

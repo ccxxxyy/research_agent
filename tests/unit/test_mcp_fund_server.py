@@ -16,10 +16,13 @@ def _reset_push2_cache():
     """每个测试前重置 push2 探测缓存。"""
     import research_agent.mcp_servers.fund_server as mod
 
-    original = mod._PUSH2_AVAILABLE
+    orig_push2 = mod._PUSH2_AVAILABLE
+    orig_push2his = mod._PUSH2HIS_AVAILABLE
     mod._PUSH2_AVAILABLE = None
+    mod._PUSH2HIS_AVAILABLE = None
     yield
-    mod._PUSH2_AVAILABLE = original
+    mod._PUSH2_AVAILABLE = orig_push2
+    mod._PUSH2HIS_AVAILABLE = orig_push2his
 
 
 def test_df_to_records_basic():
@@ -96,33 +99,34 @@ def test_push2_probe_available():
 
 @pytest.mark.asyncio
 async def test_etf_spot_realtime_path():
-    """push2 可达时 get_fund_etf_spot 走实时路径。"""
+    """新浪行情可用时 get_fund_etf_spot 走实时路径。"""
     import research_agent.mcp_servers.fund_server as mod
 
     mock_df = pd.DataFrame(
         {
-            "代码": ["510300", "159915"],
+            "代码": ["sh510300", "sz159915"],
             "名称": ["沪深300ETF", "创业板ETF"],
             "最新价": [4.0, 2.5],
             "涨跌幅": [1.2, -0.5],
             "成交额": [5e8, 3e8],
+            "成交量": [1e7, 8e6],
         }
     )
 
-    mod._PUSH2_AVAILABLE = True
-    with patch("akshare.fund_etf_spot_em", return_value=mock_df):
+    with patch("akshare.fund_etf_category_sina", return_value=mock_df):
         result = await mod.get_fund_etf_spot(sort_by="成交额", limit=10)
     assert result["realtime"] is True
-    assert result["source"] == "eastmoney_push2"
+    assert result["source"] == "sina_realtime"
+    assert "source_url" in result
     assert len(result["etfs"]) == 2
 
 
 @pytest.mark.asyncio
 async def test_etf_spot_fallback_path():
-    """push2 不可达时 get_fund_etf_spot 走降级路径。"""
+    """新浪不可用时 get_fund_etf_spot 走降级路径。"""
     import research_agent.mcp_servers.fund_server as mod
 
-    mock_df = pd.DataFrame(
+    fallback_df = pd.DataFrame(
         {
             "基金代码": ["510300"],
             "基金简称": ["沪深300ETF"],
@@ -134,42 +138,46 @@ async def test_etf_spot_fallback_path():
         }
     )
 
-    mod._PUSH2_AVAILABLE = False
-    with patch("akshare.fund_open_fund_rank_em", return_value=mock_df):
+    with (
+        patch("akshare.fund_etf_category_sina", side_effect=ConnectionError("down")),
+        patch("akshare.fund_open_fund_rank_em", return_value=fallback_df),
+    ):
         result = await mod.get_fund_etf_spot(sort_by="今年来", limit=10)
     assert result["realtime"] is False
     assert result["source"] == "eastmoney_rank"
     assert "note" in result
+    assert "source_url" in result
 
 
 @pytest.mark.asyncio
 async def test_lof_spot_realtime_path():
-    """push2 可达时 get_fund_lof_spot 走实时路径。"""
+    """新浪行情可用时 get_fund_lof_spot 走实时路径。"""
     import research_agent.mcp_servers.fund_server as mod
 
     mock_df = pd.DataFrame(
         {
-            "代码": ["160119"],
+            "代码": ["sz160119"],
             "名称": ["南方中证500ETF联接LOF"],
             "最新价": [1.8],
             "涨跌幅": [0.9],
             "成交额": [1e8],
+            "成交量": [5e6],
         }
     )
 
-    mod._PUSH2_AVAILABLE = True
-    with patch("akshare.fund_lof_spot_em", return_value=mock_df):
+    with patch("akshare.fund_etf_category_sina", return_value=mock_df):
         result = await mod.get_fund_lof_spot(sort_by="成交额", limit=10)
     assert result["realtime"] is True
-    assert result["source"] == "eastmoney_push2"
+    assert result["source"] == "sina_realtime"
+    assert "source_url" in result
 
 
 @pytest.mark.asyncio
 async def test_lof_spot_fallback_path():
-    """push2 不可达时 get_fund_lof_spot 走降级路径。"""
+    """新浪不可用时 get_fund_lof_spot 走降级路径。"""
     import research_agent.mcp_servers.fund_server as mod
 
-    mock_df = pd.DataFrame(
+    fallback_df = pd.DataFrame(
         {
             "基金代码": ["160119"],
             "基金简称": ["南方中证500LOF"],
@@ -181,16 +189,19 @@ async def test_lof_spot_fallback_path():
         }
     )
 
-    mod._PUSH2_AVAILABLE = False
-    with patch("akshare.fund_open_fund_rank_em", return_value=mock_df):
+    with (
+        patch("akshare.fund_etf_category_sina", side_effect=ConnectionError("down")),
+        patch("akshare.fund_open_fund_rank_em", return_value=fallback_df),
+    ):
         result = await mod.get_fund_lof_spot(sort_by="今年来", limit=10)
     assert result["realtime"] is False
     assert result["source"] == "eastmoney_rank"
+    assert "source_url" in result
 
 
 @pytest.mark.asyncio
 async def test_etf_hist_realtime_path():
-    """push2 可达时 get_fund_etf_hist 走实时 K 线路径。"""
+    """curl_cffi 可用时 get_fund_etf_hist 走 push2his 直连路径。"""
     import research_agent.mcp_servers.fund_server as mod
 
     mock_df = pd.DataFrame(
@@ -205,17 +216,16 @@ async def test_etf_hist_realtime_path():
         }
     )
 
-    mod._PUSH2_AVAILABLE = True
-    with patch("akshare.fund_etf_hist_em", return_value=mock_df):
+    with patch.object(mod, "_fetch_etf_kline_via_curl", return_value=mock_df):
         result = await mod.get_fund_etf_hist(symbol="510300", period="daily", limit=60)
     assert result["realtime"] is True
-    assert result["source"] == "eastmoney_push2"
+    assert result["source"] == "eastmoney_push2his_curl"
     assert result["period"] == "daily"
 
 
 @pytest.mark.asyncio
 async def test_etf_hist_fallback_path():
-    """push2 不可达时 get_fund_etf_hist 走净值降级路径。"""
+    """curl_cffi 和 push2his 均不可达时走净值降级路径。"""
     import research_agent.mcp_servers.fund_server as mod
 
     mock_df = pd.DataFrame(
@@ -226,8 +236,12 @@ async def test_etf_hist_fallback_path():
         }
     )
 
-    mod._PUSH2_AVAILABLE = False
-    with patch("akshare.fund_open_fund_info_em", return_value=mock_df):
+    mod._PUSH2HIS_AVAILABLE = False
+    with (
+        patch.object(mod, "_fetch_etf_kline_via_curl", return_value=None),
+        patch.object(mod, "_is_push2his_available", return_value=False),
+        patch("akshare.fund_open_fund_info_em", return_value=mock_df),
+    ):
         result = await mod.get_fund_etf_hist(symbol="510300", limit=60)
     assert result["realtime"] is False
     assert result["source"] == "eastmoney_nav"

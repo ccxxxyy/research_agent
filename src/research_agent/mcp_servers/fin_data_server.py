@@ -23,14 +23,16 @@
 16. ``get_industry_board`` — 行业板块行情 + 成分股。
 17. ``get_individual_fund_flow`` — 个股资金流向。
 18. ``get_hsgt_flow`` — 沪深港通资金流向。
+19. ``get_market_status`` — 市场交易状态（开盘/收盘/午休/非交易日）。
 
 设计说明
 --------
 - ``akshare`` 是同步且 I/O 密集的。每个工具用 ``asyncio.to_thread``包装，确保单个慢请求不会阻塞 MCP stdio 事件循环中的其他请求。
 - ``akshare`` 在上游 HTML / JSON 结构变化时偶尔抛出 ``KeyError`` / ``AttributeError`` / ``ValueError``，网络故障则表现为 ``ConnectionError``
   / ``ProxyError``。在工具边界捕获 ``Exception``，因为抛出异常的 MCP 工具会导致子进程崩溃；取而代之返回结构化的 ``{"error": "..."}`` 负载，LLM 可据此推理。
-- 多源容灾：位于 ``push2*.eastmoney.com`` 的两个端点（实时报价 +日K线）出了名地不稳定——它们会被 Windows 注册表代理探测阻断、被限流、偶尔从中国境外返回 451。
-  对于这两个工具，级联备选提供方（雪球、新浪），使用户获得可用结果而非 ProxyError。
+- 多源容灾：``push2*.eastmoney.com`` 端点不稳定（TLS 指纹检测、代理阻断、限流）。
+  所有工具采用"先尝试再说"策略——直接调用 akshare，如果失败则在工具边界捕获异常返回 error dict，
+  而不是预先检测 push2 连通性后拒绝服务。涨跌榜使用新浪/腾讯双层兜底，指数行情使用腾讯兜底。
   每个响应携带 ``source`` 字段，让调用者知道实际由哪个提供方响应。
 - 所有股票代码必须是 6 位数字（如宁德时代为 ``300750``）。不接受带交易所前缀的形式（``sh300750``）。内部按各上游需求添加/去除前缀。
 - 列名保持中文，因为 ``akshare`` 就是这样返回的，且下游 LLM（DeepSeek / Qwen）能流畅阅读中文。
@@ -67,41 +69,222 @@ for _proxy_key in (
     os.environ.pop(_proxy_key, None)
 os.environ["NO_PROXY"] = "*"
 
+# requests 在 Windows 上会从注册表读取系统代理（即使环境变量已清除），
+# 导致 push2 请求被代理转发后断开。必须禁用 trust_env。
+import requests as _requests  # noqa: E402
+import urllib3 as _urllib3  # noqa: E402
+
+_urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
+
+_orig_session_init = _requests.Session.__init__
+
+
+def _patched_session_init(self: _requests.Session, *args, **kwargs):  # type: ignore[no-untyped-def]
+    _orig_session_init(self, *args, **kwargs)
+    self.trust_env = False
+    self.verify = False
+
+
+_requests.Session.__init__ = _patched_session_init  # type: ignore[method-assign]
+
 mcp = FastMCP("FinDataAShare")
+
+# ---------------------------------------------------------------------------
+# push2 连通性检测 + curl_cffi 直连助手
+# ---------------------------------------------------------------------------
+import time as _time  # noqa: E402
+
+try:
+    from curl_cffi import requests as _curl_requests  # noqa: E402
+
+    _HAS_CURL_CFFI = True
+except ImportError:
+    _HAS_CURL_CFFI = False
+
+
+def _curl_get_json(url: str, *, timeout: int = 10) -> dict | None:
+    """用 curl_cffi（Chrome TLS 指纹）请求 JSON，返回 dict 或 None。"""
+    if not _HAS_CURL_CFFI:
+        return None
+    try:
+        resp = _curl_requests.get(url, impersonate="chrome", timeout=timeout)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.debug("curl_cffi 请求失败 (%s): %s", url, e)
+    return None
 
 
 def _probe_push2_connectivity() -> bool:
-    """启动时探测 push2 端点是否可达，结果缓存供工具降级决策用。"""
-    import urllib.request
-
-    try:
-        req = urllib.request.Request(
-            "https://82.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=1&fs=m:1+t:2&fields=f12",
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        urllib.request.urlopen(req, timeout=5)
+    """探测 push2 实时端点是否可达（先 curl_cffi 再 requests）。"""
+    url = "https://88.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=1&fs=b:MK0021&fields=f12"
+    data = _curl_get_json(url, timeout=8)
+    if data and data.get("data"):
+        logger.info("push2 实时端点探测成功 (curl_cffi)")
         return True
+    try:
+        resp = _requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code == 200 and resp.text:
+            logger.info("push2 实时端点探测成功 (requests)")
+            return True
     except Exception:
-        return False
+        pass
+    return False
 
 
 _PUSH2_AVAILABLE: bool | None = None
+_PROBE_TS: float = 0.0
+_PROBE_TTL: float = 300.0
 
 
 def _is_push2_available() -> bool:
-    """惰性检测 push2 连通性（仅首次调用探测，后续用缓存值）。"""
-    global _PUSH2_AVAILABLE  # noqa: PLW0603
-    if _PUSH2_AVAILABLE is None:
+    """检测 push2 实时端点连通性（带 5 分钟 TTL 缓存）。"""
+    global _PUSH2_AVAILABLE, _PROBE_TS  # noqa: PLW0603
+    now = _time.time()
+    if _PUSH2_AVAILABLE is None or (now - _PROBE_TS > _PROBE_TTL):
+        _PROBE_TS = now
         _PUSH2_AVAILABLE = _probe_push2_connectivity()
         if not _PUSH2_AVAILABLE:
             logger.warning(
                 "push2.eastmoney.com 不可达——实时行情/分时/板块/资金流等工具将降级。"
-                "常见原因：VPN/代理拦截、企业防火墙、ISP 限制。"
                 "历史 K 线将走新浪（sina）源；财务数据不受影响。"
             )
         else:
             logger.info("push2.eastmoney.com 连通性正常")
     return _PUSH2_AVAILABLE
+
+
+def _fetch_stock_kline_via_curl(
+    symbol: str, period: str = "daily", adjust: str = "qfq", limit: int = 120
+) -> pd.DataFrame | None:
+    """通过 curl_cffi 直连 push2his 获取股票/ETF K 线，绕过 TLS 指纹检测。"""
+    if not _HAS_CURL_CFFI:
+        return None
+
+    period_map = {"daily": "101", "weekly": "102", "monthly": "103"}
+    adjust_map = {"qfq": "1", "hfq": "2", "": "0"}
+    market_id = 1 if symbol.startswith(("5", "6")) else 0
+
+    url = (
+        f"https://push2his.eastmoney.com/api/qt/stock/kline/get?"
+        f"secid={market_id}.{symbol}&fields1=f1,f2,f3,f4,f5,f6"
+        f"&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
+        f"&klt={period_map.get(period, '101')}"
+        f"&fqt={adjust_map.get(adjust, '1')}"
+        f"&end=20500101&lmt={limit}"
+        f"&ut=7eea3edcaed734bea9cbfc24409ed989"
+    )
+    data = _curl_get_json(url, timeout=12)
+    if not data or not data.get("data") or not data["data"].get("klines"):
+        return None
+
+    rows = [row.split(",") for row in data["data"]["klines"]]
+    cols = [
+        "日期",
+        "开盘",
+        "收盘",
+        "最高",
+        "最低",
+        "成交量",
+        "成交额",
+        "振幅",
+        "涨跌幅",
+        "涨跌额",
+        "换手率",
+    ]
+    df = pd.DataFrame(rows, columns=cols[: len(rows[0])])
+    for c in df.columns:
+        if c != "日期":
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+def _fetch_tencent_realtime(codes: list[str]) -> pd.DataFrame | None:
+    """通过腾讯行情 qt.gtimg.cn 批量获取实时行情，绕过东方财富 TLS 限制。"""
+    if not _HAS_CURL_CFFI or not codes:
+        return None
+    tencent_codes = []
+    for c in codes:
+        if c.startswith(("5", "6")):
+            tencent_codes.append(f"sh{c}")
+        else:
+            tencent_codes.append(f"sz{c}")
+
+    all_records: list[dict[str, Any]] = []
+    batch_size = 80
+    for i in range(0, len(tencent_codes), batch_size):
+        batch = tencent_codes[i : i + batch_size]
+        url = f"https://qt.gtimg.cn/q={','.join(batch)}"
+        try:
+            resp = _curl_requests.get(url, impersonate="chrome", timeout=10)
+            for line in resp.text.strip().split("\n"):
+                line = line.strip().rstrip(";")
+                if not line or "=" not in line:
+                    continue
+                parts = line.split("~")
+                if len(parts) < 45:
+                    continue
+                try:
+                    rec: dict[str, Any] = {
+                        "代码": parts[2],
+                        "名称": parts[1],
+                        "最新价": float(parts[3]) if parts[3] else None,
+                        "涨跌幅": float(parts[32]) if parts[32] else None,
+                        "涨跌额": float(parts[31]) if parts[31] else None,
+                        "成交额": float(parts[37]) * 10000 if parts[37] else None,
+                        "换手率": float(parts[38]) if parts[38] else None,
+                    }
+                    if rec["最新价"] and rec["最新价"] > 0:
+                        all_records.append(rec)
+                except (ValueError, IndexError):
+                    continue
+        except Exception as e:
+            logger.debug("腾讯行情批次查询失败: %s", e)
+            continue
+
+    if not all_records:
+        return None
+    return pd.DataFrame(all_records)
+
+
+def _fetch_realtime_quotes_via_curl(fs: str, *, limit: int = 50) -> pd.DataFrame | None:
+    """通过 curl_cffi 直连 push2 获取实时排行（涨跌幅/资金流等）。"""
+    if not _HAS_CURL_CFFI:
+        return None
+
+    url = (
+        f"https://88.push2.eastmoney.com/api/qt/clist/get?pn=1&pz={limit}&po=1&np=1"
+        f"&fltt=2&invt=2&fid=f3&fs={fs}"
+        f"&fields=f2,f3,f4,f5,f6,f7,f12,f14,f15,f16,f17,f18,f20,f21"
+    )
+    data = _curl_get_json(url, timeout=10)
+    if not data or not data.get("data") or not data["data"].get("diff"):
+        return None
+
+    col_map = {
+        "f12": "代码",
+        "f14": "名称",
+        "f2": "最新价",
+        "f3": "涨跌幅",
+        "f4": "涨跌额",
+        "f5": "成交量",
+        "f6": "成交额",
+        "f7": "振幅",
+        "f15": "最高",
+        "f16": "最低",
+        "f17": "今开",
+        "f18": "昨收",
+        "f20": "总市值",
+        "f21": "流通市值",
+    }
+    records = []
+    for r in data["data"]["diff"]:
+        rec = {}
+        for fk, cn in col_map.items():
+            val = r.get(fk, "-")
+            rec[cn] = val if val != "-" else None
+        records.append(rec)
+    return pd.DataFrame(records)
 
 
 _ALL_STOCKS_CACHE: pd.DataFrame | None = None
@@ -141,9 +324,9 @@ def _df_to_records(df: pd.DataFrame, *, limit: int | None = None) -> list[dict[s
         for col, val in row.items():
             if pd.isna(val):
                 rec[str(col)] = None
-            elif isinstance(val, (pd.Timestamp, datetime)):
+            elif isinstance(val, pd.Timestamp | datetime):
                 rec[str(col)] = val.strftime("%Y-%m-%d")
-            elif isinstance(val, (int, float, str, bool)):
+            elif isinstance(val, int | float | str | bool):
                 rec[str(col)] = val
             else:
                 rec[str(col)] = str(val)
@@ -569,14 +752,44 @@ async def get_index_quotes() -> dict:
         包含 ``indices`` 列表的字典，每项含 name/code/最新价/涨跌幅/成交额等。
     """
 
-    if not _is_push2_available():
+    def _call_curl_cffi() -> dict[str, Any] | None:
+        # 指数在 push2 的 fs 参数为各指数的 secid
+        core_codes = set(_INDEX_MAP.values())
+        secids = []
+        for code in core_codes:
+            # 上证指数=1.000001, 深证/创业板=0.399xxx
+            prefix = "1" if code.startswith("0000") and code != "000300" else "0"
+            if code in ("000300", "000905", "000852", "000688"):
+                prefix = "1"
+            secids.append(f"{prefix}.{code}")
+        fs = ",".join(secids)
+
+        url = (
+            f"https://88.push2.eastmoney.com/api/qt/ulist.np/get?"
+            f"fltt=2&fields=f2,f3,f4,f6,f12,f14&secids={fs}"
+        )
+        data = _curl_get_json(url, timeout=8)
+        if not data or not data.get("data") or not data["data"].get("diff"):
+            return None
+        records = []
+        for r in data["data"]["diff"]:
+            records.append(
+                {
+                    "代码": r.get("f12"),
+                    "名称": r.get("f14"),
+                    "最新价": r.get("f2"),
+                    "涨跌幅": r.get("f3"),
+                    "涨跌额": r.get("f4"),
+                    "成交额": r.get("f6"),
+                }
+            )
         return {
-            "error": "push2.eastmoney.com 不可达，实时指数行情暂不可用",
-            "context": "get_index_quotes()",
-            "hint": "可尝试 get_stock_price_history 查看指数成分股的历史走势",
+            "indices": records,
+            "source": "eastmoney_push2_curl",
+            "source_url": "https://quote.eastmoney.com/center/gridlist.html#index_sz",
         }
 
-    def _call() -> dict[str, Any]:
+    def _call_akshare() -> dict[str, Any]:
         import akshare as ak
 
         df = ak.stock_zh_index_spot_em()
@@ -584,10 +797,77 @@ async def get_index_quotes() -> dict:
         mask = df["代码"].isin(core_codes)
         result = df[mask][["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额"]].copy()
         records = _df_to_records(result)
-        return {"indices": records, "source": "eastmoney"}
+        return {
+            "indices": records,
+            "source": "eastmoney",
+            "source_url": "https://quote.eastmoney.com/center/gridlist.html#index_sz",
+        }
+
+    def _call_tencent_index() -> dict[str, Any] | None:
+        """通过腾讯 qt.gtimg.cn 获取指数实时行情，不依赖 push2。"""
+        tencent_map = {
+            "上证指数": "sh000001",
+            "深证成指": "sz399001",
+            "沪深300": "sh000300",
+            "创业板指": "sz399006",
+            "科创50": "sh000688",
+            "中证500": "sh000905",
+            "中证1000": "sh000852",
+            "上证50": "sh000016",
+        }
+        url = f"https://qt.gtimg.cn/q={','.join(tencent_map.values())}"
+        try:
+            resp = _curl_requests.get(url, impersonate="chrome", timeout=10)
+            records = []
+            for line in resp.text.strip().split("\n"):
+                line = line.strip().rstrip(";")
+                if not line or "=" not in line:
+                    continue
+                parts = line.split("~")
+                if len(parts) < 45:
+                    continue
+                try:
+                    records.append(
+                        {
+                            "代码": parts[2],
+                            "名称": parts[1],
+                            "最新价": float(parts[3]) if parts[3] else None,
+                            "涨跌幅": float(parts[32]) if parts[32] else None,
+                            "涨跌额": float(parts[31]) if parts[31] else None,
+                            "成交额": float(parts[37]) * 10000 if parts[37] else None,
+                        }
+                    )
+                except (ValueError, IndexError):
+                    continue
+            if records:
+                return {
+                    "indices": records,
+                    "source": "tencent_realtime",
+                    "source_url": "https://quote.eastmoney.com/center/gridlist.html#index_sz",
+                }
+        except Exception as e:
+            logger.debug("腾讯指数行情失败: %s", e)
+        return None
 
     try:
-        return await asyncio.to_thread(_call)
+        result = await asyncio.to_thread(_call_curl_cffi)
+        if result:
+            return result
+        # 不再预先检查 push2 连通性，直接尝试 akshare
+        try:
+            return await asyncio.to_thread(_call_akshare)
+        except Exception as e:
+            logger.debug("akshare 指数行情失败: %s", e)
+        # 腾讯兜底
+        if _HAS_CURL_CFFI:
+            result = await asyncio.to_thread(_call_tencent_index)
+            if result:
+                return result
+        return {
+            "error": "所有指数行情数据源均不可用",
+            "context": "get_index_quotes()",
+            "hint": "可尝试 get_stock_price_history 查看指数成分股的历史走势",
+        }
     except Exception as e:
         return _fmt_error(e, context="get_index_quotes()")
 
@@ -609,13 +889,6 @@ async def get_sector_fund_flow(sector_type: str = "行业", limit: int = 15) -> 
     """
     limit = max(1, min(limit, 50))
 
-    if not _is_push2_available():
-        return {
-            "error": "push2.eastmoney.com 不可达，板块资金流向数据暂不可用",
-            "context": f"get_sector_fund_flow(sector_type={sector_type!r})",
-            "hint": "可用 get_stock_price_history 查看个股成交量变化",
-        }
-
     def _call() -> dict[str, Any]:
         import akshare as ak
 
@@ -625,7 +898,13 @@ async def get_sector_fund_flow(sector_type: str = "行业", limit: int = 15) -> 
             df = ak.stock_board_industry_name_em()
         df = df.head(limit)
         records = _df_to_records(df)
-        return {"sector_type": sector_type, "sectors": records, "source": "eastmoney"}
+        sector_slug = "concept" if sector_type == "概念" else "industry"
+        return {
+            "sector_type": sector_type,
+            "sectors": records,
+            "source": "eastmoney",
+            "source_url": f"https://data.eastmoney.com/bkzj/{sector_slug}.html",
+        }
 
     try:
         return await asyncio.to_thread(_call)
@@ -650,33 +929,73 @@ async def get_stock_rank(direction: str = "涨幅榜", limit: int = 20) -> dict:
     """
     limit = max(1, min(limit, 50))
 
-    if not _is_push2_available():
-        return {
-            "error": "push2.eastmoney.com 不可达，A股实时涨跌幅排行暂不可用",
-            "context": f"get_stock_rank(direction={direction!r})",
-            "hint": "可用 get_stock_price_history 查看个股历史涨跌",
-        }
-
-    def _call() -> dict[str, Any]:
+    def _call_sina() -> dict[str, Any] | None:
+        """新浪实时行情：全部 A 股，约 34 秒。"""
         import akshare as ak
 
-        df = ak.stock_zh_a_spot_em()
-        if direction == "跌幅榜":
-            df = df.sort_values("涨跌幅", ascending=True).head(limit)
-        else:
-            df = df.sort_values("涨跌幅", ascending=False).head(limit)
-        cols = ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额", "换手率"]
+        df = ak.stock_zh_a_spot()
+        if df is None or df.empty:
+            return None
+        # 统一列名（新浪用中文列名: 代码/名称/最新价/涨跌幅/涨跌额/成交量/成交额）
+        if "代码" in df.columns:
+            df["代码"] = df["代码"].astype(str).str.replace(r"^(sh|sz|bj)", "", regex=True)
+        for col in ("最新价", "涨跌幅", "涨跌额", "成交额"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        ascending = direction == "跌幅榜"
+        df = df.sort_values("涨跌幅", ascending=ascending).head(limit)
+        cols = ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额"]
         available_cols = [c for c in cols if c in df.columns]
-        records = _df_to_records(df[available_cols])
+        rank_slug = "fall" if direction == "跌幅榜" else "rise"
         return {
             "direction": direction,
-            "stocks": records,
-            "count": len(records),
-            "source": "eastmoney",
+            "stocks": _df_to_records(df[available_cols]),
+            "count": len(df),
+            "source": "sina_realtime",
+            "source_url": f"https://quote.eastmoney.com/center/gridlist.html#hs_a_board-{rank_slug}",
+        }
+
+    def _call_tencent() -> dict[str, Any] | None:
+        """腾讯批量行情：需先获取代码列表再批量查询，约 21 秒。"""
+        global _ALL_STOCKS_CACHE  # noqa: PLW0603
+        if _ALL_STOCKS_CACHE is None:
+            import akshare as ak
+
+            _ALL_STOCKS_CACHE = ak.stock_info_a_code_name()
+        all_codes = [
+            c
+            for c in _ALL_STOCKS_CACHE["code"].tolist()
+            if c.startswith(("0", "3", "6")) and not c.startswith(("200", "900"))
+        ]
+        df = _fetch_tencent_realtime(all_codes)
+        if df is None or df.empty:
+            return None
+        ascending = direction == "跌幅榜"
+        df["涨跌幅"] = pd.to_numeric(df["涨跌幅"], errors="coerce")
+        df = df.sort_values("涨跌幅", ascending=ascending).head(limit)
+        cols = ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额", "换手率"]
+        available_cols = [c for c in cols if c in df.columns]
+        rank_slug = "fall" if direction == "跌幅榜" else "rise"
+        return {
+            "direction": direction,
+            "stocks": _df_to_records(df[available_cols]),
+            "count": len(df),
+            "source": "tencent_realtime",
+            "source_url": f"https://quote.eastmoney.com/center/gridlist.html#hs_a_board-{rank_slug}",
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        result = await asyncio.to_thread(_call_sina)
+        if result:
+            return result
+        result = await asyncio.to_thread(_call_tencent)
+        if result:
+            return result
+        return {
+            "error": "实时行情数据源均不可用",
+            "context": f"get_stock_rank(direction={direction!r})",
+            "hint": "可用 get_stock_price_history 查看个股历史涨跌",
+        }
     except Exception as e:
         return _fmt_error(e, context=f"get_stock_rank(direction={direction!r})")
 
@@ -701,13 +1020,6 @@ async def get_intraday(
         包含时间、开盘、收盘、最高、最低、成交量的列表。
     """
     limit = max(1, min(limit, 240))
-
-    if not _is_push2_available():
-        return {
-            "error": "push2.eastmoney.com 不可达，分时数据暂不可用",
-            "context": f"get_intraday(symbol={symbol!r}, period={period!r})",
-            "hint": "可用 get_stock_price_history 查看日级K线",
-        }
 
     def _call() -> dict[str, Any]:
         import akshare as ak
@@ -982,13 +1294,6 @@ async def get_concept_board(board_name: str = "", limit: int = 20) -> dict:
     """
     limit = max(1, min(limit, 50))
 
-    if not _is_push2_available():
-        return {
-            "error": "push2.eastmoney.com 不可达，概念板块实时行情暂不可用",
-            "context": f"get_concept_board(board_name={board_name!r})",
-            "hint": "可用 get_stock_price_history 查看个股走势",
-        }
-
     def _call() -> dict[str, Any]:
         import akshare as ak
 
@@ -1038,13 +1343,6 @@ async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
     """
     limit = max(1, min(limit, 50))
 
-    if not _is_push2_available():
-        return {
-            "error": "push2.eastmoney.com 不可达，行业板块实时行情暂不可用",
-            "context": f"get_industry_board(board_name={board_name!r})",
-            "hint": "可用 get_stock_price_history 查看个股走势",
-        }
-
     def _call() -> dict[str, Any]:
         import akshare as ak
 
@@ -1092,13 +1390,6 @@ async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
         按日期排列的资金流向数据。
     """
     limit = max(1, min(limit, 60))
-
-    if not _is_push2_available():
-        return {
-            "error": "push2.eastmoney.com 不可达，个股资金流向数据暂不可用",
-            "context": f"get_individual_fund_flow(symbol={symbol!r})",
-            "hint": "可用 get_stock_price_history 查看成交量变化趋势",
-        }
 
     def _call() -> dict[str, Any]:
         import akshare as ak
@@ -1151,6 +1442,154 @@ async def get_hsgt_flow(direction: str = "north", limit: int = 20) -> dict:
         return await asyncio.to_thread(_call)
     except Exception as e:
         return _fmt_error(e, context=f"get_hsgt_flow(direction={direction!r})")
+
+
+# =====================================================================
+# 工具 19: 市场交易状态（开盘/收盘/节假日）
+# =====================================================================
+_TRADE_DATES_CACHE: set[str] | None = None
+_TRADE_DATES_TS: float = 0.0
+
+
+def _load_trade_dates() -> set[str]:
+    """加载新浪交易日历并缓存 24 小时。"""
+    global _TRADE_DATES_CACHE, _TRADE_DATES_TS  # noqa: PLW0603
+    import time
+
+    now = time.time()
+    if _TRADE_DATES_CACHE and (now - _TRADE_DATES_TS < 86400):
+        return _TRADE_DATES_CACHE
+    try:
+        import akshare as ak
+
+        df = ak.tool_trade_date_hist_sina()
+        _TRADE_DATES_CACHE = set(df["trade_date"].astype(str).str[:10])
+        _TRADE_DATES_TS = now
+    except Exception:
+        if _TRADE_DATES_CACHE:
+            return _TRADE_DATES_CACHE
+        _TRADE_DATES_CACHE = set()
+    return _TRADE_DATES_CACHE
+
+
+@mcp.tool()
+async def get_market_status() -> dict:
+    """返回 A 股市场当前交易状态（开盘中 / 已收盘 / 未开盘 / 非交易日）。
+
+    无需参数。返回字典包含：
+    - ``status``: ``"trading"`` / ``"closed"`` / ``"pre_market"`` / ``"non_trading_day"``
+    - ``is_trading_day``: 今天是否为交易日
+    - ``current_time``: 当前北京时间
+    - ``message``: 中文状态描述
+    - ``last_trading_day``: 最近一个交易日（如果今天非交易日或盘前）
+    - ``hint``: 给 LLM 的指导提示
+
+    **建议**：当用户问"今天大盘怎么样""收盘分析""市场情况"等问题时，
+    先调用此工具判断市场状态，再决定如何描述数据的时效性。
+    """
+
+    try:
+        return await asyncio.to_thread(_compute_market_status)
+    except Exception as e:
+        return _fmt_error(e, context="get_market_status()")
+
+
+def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
+    """纯函数：根据当前时间和交易日历计算市场状态。
+
+    ``_now`` 仅供单元测试注入假时间，生产代码不传。
+    """
+    from zoneinfo import ZoneInfo
+
+    bj = ZoneInfo("Asia/Shanghai")
+    now = _now or datetime.now(bj)
+    today_str = now.strftime("%Y-%m-%d")
+    current_time = now.strftime("%Y-%m-%d %H:%M:%S")
+    weekday = now.weekday()
+
+    trade_dates = _load_trade_dates()
+    is_trading_day = today_str in trade_dates if trade_dates else weekday < 5
+
+    def _find_last_trading_day() -> str:
+        d = now.date() - timedelta(days=1)
+        for _ in range(10):
+            ds = d.strftime("%Y-%m-%d")
+            if trade_dates:
+                if ds in trade_dates:
+                    return ds
+            elif d.weekday() < 5:
+                return ds
+            d -= timedelta(days=1)
+        return (now.date() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    if not is_trading_day:
+        reason = "周末" if weekday >= 5 else "节假日"
+        last_td = _find_last_trading_day()
+        return {
+            "status": "non_trading_day",
+            "is_trading_day": False,
+            "current_time": current_time,
+            "today": today_str,
+            "reason": reason,
+            "last_trading_day": last_td,
+            "message": f"今天（{today_str}）是{reason}，A 股不开盘。",
+            "hint": (
+                f"当前可用数据为上一个交易日（{last_td}）的收盘数据。"
+                f"请明确告知用户数据对应的日期，不要说'今日收盘分析'。"
+            ),
+        }
+
+    hour_min = now.hour * 100 + now.minute
+    if hour_min < 915:
+        last_td = _find_last_trading_day()
+        return {
+            "status": "pre_market",
+            "is_trading_day": True,
+            "current_time": current_time,
+            "today": today_str,
+            "last_trading_day": last_td,
+            "message": f"今天是交易日，但尚未开盘（当前 {now.strftime('%H:%M')}，9:30 开盘）。",
+            "hint": (
+                f"当前可用数据为上一个交易日（{last_td}）的收盘数据。"
+                f"请告知用户'盘前，以下为昨日收盘数据'。"
+            ),
+        }
+    if hour_min < 930:
+        return {
+            "status": "call_auction",
+            "is_trading_day": True,
+            "current_time": current_time,
+            "today": today_str,
+            "message": f"集合竞价中（{now.strftime('%H:%M')}），9:30 正式开盘。",
+            "hint": "可获取集合竞价阶段的参考价格，但正式行情需等 9:30。",
+        }
+    if hour_min <= 1130 or (1300 <= hour_min <= 1500):
+        return {
+            "status": "trading",
+            "is_trading_day": True,
+            "current_time": current_time,
+            "today": today_str,
+            "message": f"A 股交易中（{now.strftime('%H:%M')}）。",
+            "hint": "市场正在交易，获取的行情数据为实时数据。",
+        }
+    if 1130 < hour_min < 1300:
+        return {
+            "status": "lunch_break",
+            "is_trading_day": True,
+            "current_time": current_time,
+            "today": today_str,
+            "message": f"午间休市（{now.strftime('%H:%M')}，13:00 恢复交易）。",
+            "hint": "上午交易已结束，数据为上午收盘时的最新状态，13:00 后恢复实时更新。",
+        }
+    return {
+        "status": "closed",
+        "is_trading_day": True,
+        "current_time": current_time,
+        "today": today_str,
+        "last_trading_day": today_str,
+        "message": f"今日 A 股已收盘（{now.strftime('%H:%M')}）。",
+        "hint": "市场已收盘，获取的数据为今日收盘数据，可以直接说'今日收盘分析'。",
+    }
 
 
 if __name__ == "__main__":

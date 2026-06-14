@@ -4655,12 +4655,14 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "rank-bm25" },
     { name = "redis" },
+    { name = "requests" },
     { name = "rich" },
     { name = "sentence-transformers" },
     { name = "snownlp" },
     { name = "sqlalchemy" },
     { name = "sse-starlette" },
     { name = "unstructured", extra = ["md", "pdf"] },
+    { name = "urllib3" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -4718,6 +4720,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "rank-bm25" },
     { name = "redis" },
+    { name = "requests", specifier = ">=2.33.1" },
     { name = "rich" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "sentence-transformers" },
@@ -4725,6 +4728,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "sse-starlette" },
     { name = "unstructured", extras = ["md", "pdf"] },
+    { name = "urllib3", specifier = ">=2.6.3" },
     { name = "uvicorn", extras = ["standard"] },
 ]
 provides-extras = ["dev", "modelscope"]

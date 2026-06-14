@@ -24,11 +24,18 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from research_agent.mcp_servers.knowledge_server import (
+    DEFAULT_DB_DIR as _DEFAULT_DB_DIR,
+)
+from research_agent.mcp_servers.knowledge_server import (
     delete_collection as _delete_collection,
+)
+from research_agent.mcp_servers.knowledge_server import (
+    delete_document as _delete_document,
 )
 from research_agent.mcp_servers.knowledge_server import (
     ingest_pdf as _ingest_pdf,
@@ -39,6 +46,19 @@ from research_agent.mcp_servers.knowledge_server import (
 from research_agent.mcp_servers.knowledge_server import (
     search as _search,
 )
+
+_PDF_SUBDIR = "pdfs"
+
+
+def _pdf_storage_dir(scoped_collection: str) -> Path:
+    """持久化 PDF 存储目录：``data/knowledge_db/{collection}/pdfs/``。"""
+    return _DEFAULT_DB_DIR / scoped_collection / _PDF_SUBDIR
+
+
+def _safe_filename(name: str) -> str:
+    """将文件名中不安全的字符替换为下划线。"""
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
+
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
@@ -96,6 +116,7 @@ class SearchResponse(BaseModel):
 class CollectionInfo(BaseModel):
     name: str
     chunk_count: int
+    sources: list[str] = []
 
 
 class ListCollectionsResponse(BaseModel):
@@ -107,6 +128,14 @@ class DeleteCollectionResponse(BaseModel):
     collection: str
     existed: bool
     deleted: bool
+
+
+class DeleteDocumentResponse(BaseModel):
+    collection: str
+    source: str
+    removed_chunks: int
+    deleted: bool
+    existed: bool = True
 
 
 # =====================================================================
@@ -138,7 +167,9 @@ async def ingest_pdf(
 
     scoped = _scoped_collection(user_id, collection)
     suffix = Path(file.filename).suffix
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+    # 保留原始文件名，用前缀避免冲突
+    safe_name = re.sub(r'[<>:"/\\|?*]', "_", Path(file.filename).stem)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix=f"{safe_name}_") as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
@@ -156,17 +187,28 @@ async def ingest_pdf(
         collection=scoped,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+        source_name=file.filename,
     )
 
     if "error" in result:
+        with contextlib.suppress(OSError):
+            Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=result["error"],
         )
 
-    # 成功后清理临时文件
-    with contextlib.suppress(OSError):
-        Path(tmp_path).unlink(missing_ok=True)
+    # 将 PDF 持久化到集合的 pdfs/ 子目录供后续查看
+    pdf_dir = _pdf_storage_dir(scoped)
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    dest = pdf_dir / _safe_filename(file.filename)
+    try:
+        import shutil
+
+        shutil.move(str(tmp_path), str(dest))
+    except OSError:
+        with contextlib.suppress(OSError):
+            Path(tmp_path).unlink(missing_ok=True)
 
     # 返回面向用户的集合名（不含内部前缀）
     result["collection"] = collection
@@ -219,7 +261,11 @@ async def list_collections(
 
     # 仅保留当前用户的集合并去除前缀
     user_collections = [
-        {"name": c["name"][len(prefix) :], "chunk_count": c["chunk_count"]}
+        {
+            "name": c["name"][len(prefix) :],
+            "chunk_count": c["chunk_count"],
+            "sources": c.get("sources", []),
+        }
         for c in result.get("collections", [])
         if c["name"].startswith(prefix)
     ]
@@ -249,3 +295,69 @@ async def delete_collection(
 
     result["collection"] = collection_name
     return DeleteCollectionResponse(**result)
+
+
+@router.delete("/documents", response_model=DeleteDocumentResponse)
+async def delete_document(
+    collection: str = "default",
+    source: str = "",
+    x_user_id: str = Header(..., alias="X-User-ID"),
+) -> DeleteDocumentResponse:
+    """从集合中删除单个 PDF 文档（按显示文件名匹配）。"""
+    user_id = _validate_user_id(x_user_id)
+    if not source.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="source query parameter is required",
+        )
+    scoped = _scoped_collection(user_id, collection)
+    result = await _delete_document(collection=scoped, source=source)
+    if "error" in result:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=result["error"],
+        )
+    # 同时删除持久化的 PDF 文件
+    if result.get("deleted"):
+        pdf_path = _pdf_storage_dir(scoped) / _safe_filename(source)
+        with contextlib.suppress(OSError):
+            pdf_path.unlink(missing_ok=True)
+    result["collection"] = collection
+    return DeleteDocumentResponse(**result)
+
+
+@router.get("/documents/view")
+async def view_document(
+    collection: str = "default",
+    source: str = "",
+    user_id: str = "",
+) -> FileResponse:
+    """以浏览器可渲染方式返回已上传的 PDF 原始文件。
+
+    此端点通过 query param ``user_id`` 鉴权（而非 header），
+    因为浏览器直接在新窗口打开链接时无法附加自定义请求头。
+    """
+    uid = user_id.strip()
+    if not uid or not _USER_ID_PATTERN.match(uid):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="user_id query parameter is required",
+        )
+    if not source.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="source query parameter is required",
+        )
+    scoped = _scoped_collection(uid, collection)
+    pdf_dir = _pdf_storage_dir(scoped)
+    target = pdf_dir / _safe_filename(source)
+    if not target.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"PDF file not found: {source}",
+        )
+    return FileResponse(
+        path=str(target),
+        media_type="application/pdf",
+        filename=source,
+    )

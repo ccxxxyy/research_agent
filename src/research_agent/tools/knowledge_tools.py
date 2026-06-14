@@ -222,7 +222,13 @@ async def _list_collections(
     for c in result.get("collections", []):
         unscoped = _unscoped_collection(user_id, c["name"])
         if unscoped is not None:
-            user_collections.append({"name": unscoped, "chunk_count": c["chunk_count"]})
+            user_collections.append(
+                {
+                    "name": unscoped,
+                    "chunk_count": c["chunk_count"],
+                    "sources": c.get("sources", []),
+                }
+            )
     result["collections"] = user_collections
     return result
 
