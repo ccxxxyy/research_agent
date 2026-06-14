@@ -239,6 +239,7 @@ async def test_etf_hist_fallback_path():
     mod._PUSH2HIS_AVAILABLE = False
     with (
         patch.object(mod, "_fetch_etf_kline_via_curl", return_value=None),
+        patch.object(mod, "_is_push2his_available", return_value=False),
         patch("akshare.fund_open_fund_info_em", return_value=mock_df),
     ):
         result = await mod.get_fund_etf_hist(symbol="510300", limit=60)
