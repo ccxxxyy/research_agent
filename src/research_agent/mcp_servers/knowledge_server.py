@@ -236,10 +236,29 @@ def _save_faiss_store(collection: str, store: Any, *, db_dir: Path | None = None
 _HASH_FILENAME = ".ingested_hashes.json"
 
 
+def _display_source_name(stored: str) -> str:
+    """将注册表/FAISS 中的 source 转为用户可读的文件名。"""
+    if not stored:
+        return "未知文档"
+    name = Path(stored).name
+    if name.lower().startswith("tmp") and name.lower().endswith(".pdf"):
+        return "历史导入文档.pdf"
+    return name
+
+
+def _source_matches(stored_source: str, target: str) -> bool:
+    """判断 FAISS/注册表中的 source 是否对应要删除的目标文件名。"""
+    if not stored_source or not target:
+        return False
+    stored_name = _display_source_name(stored_source)
+    target_name = Path(target).name
+    return stored_source == target or Path(stored_source).name == target_name or stored_name == target_name
+
+
 def _load_ingested_hashes(collection: str, *, db_dir: Path | None = None) -> dict[str, str]:
     """加载集合的已导入文件哈希注册表。
 
-    返回 ``{sha256_hex: source_path}`` 映射。文件不存在时返回空字典。
+    返回 ``{sha256_hex: display_name}`` 映射。文件不存在时返回空字典。
     """
     cdir = _collection_dir(collection, db_dir=db_dir)
     hash_file = cdir / _HASH_FILENAME
@@ -252,13 +271,13 @@ def _load_ingested_hashes(collection: str, *, db_dir: Path | None = None) -> dic
 
 
 def _save_ingested_hash(
-    collection: str, file_hash: str, source_path: str, *, db_dir: Path | None = None
+    collection: str, file_hash: str, display_name: str, *, db_dir: Path | None = None
 ) -> None:
     """将新的文件哈希追加到集合的注册表中。"""
     cdir = _collection_dir(collection, db_dir=db_dir)
     cdir.mkdir(parents=True, exist_ok=True)
     hashes = _load_ingested_hashes(collection, db_dir=db_dir)
-    hashes[file_hash] = source_path
+    hashes[file_hash] = display_name
     (cdir / _HASH_FILENAME).write_text(
         json.dumps(hashes, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -383,6 +402,7 @@ async def ingest_pdf(
     collection: str = "default",
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    source_name: str = "",
 ) -> dict:
     """将单个 PDF 导入持久化知识库。
 
@@ -433,12 +453,26 @@ async def ingest_pdf(
         )
 
     def _ingest() -> dict[str, Any]:
+        display_source = source_name or path.name
         file_hash = _compute_file_hash(path)
         existing_hashes = _load_ingested_hashes(collection)
         if file_hash in existing_hashes:
+            old_name = existing_hashes[file_hash]
+            new_is_real = not Path(display_source).name.lower().startswith("tmp")
+            old_is_tmp = Path(old_name).name.lower().startswith("tmp")
+            if display_source and new_is_real and (
+                old_is_tmp or not _source_matches(old_name, display_source)
+            ):
+                existing_hashes[file_hash] = display_source
+                cdir = _collection_dir(collection)
+                cdir.mkdir(parents=True, exist_ok=True)
+                (cdir / _HASH_FILENAME).write_text(
+                    json.dumps(existing_hashes, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
             return {
                 "collection": collection,
-                "source": str(path),
+                "source": _display_source_name(existing_hashes[file_hash]),
                 "num_pages": 0,
                 "num_chunks_added": 0,
                 "total_chunks_in_collection": _collection_count(collection),
@@ -451,14 +485,14 @@ async def ingest_pdf(
         pages = _load_pdf_pages(path)
         chunks = _chunk_pages(
             pages,
-            source=str(path),
+            source=display_source,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
         if not chunks:
             return {
                 "collection": collection,
-                "source": str(path),
+                "source": display_source,
                 "num_pages": len(pages),
                 "num_chunks_added": 0,
                 "total_chunks_in_collection": _collection_count(collection),
@@ -481,10 +515,10 @@ async def ingest_pdf(
             store = existing
         _save_faiss_store(collection, store)
         _invalidate_bm25(collection)
-        _save_ingested_hash(collection, file_hash, str(path))
+        _save_ingested_hash(collection, file_hash, display_source)
         return {
             "collection": collection,
-            "source": str(path),
+            "source": _display_source_name(display_source),
             "num_pages": len(pages),
             "num_chunks_added": len(chunks),
             "total_chunks_in_collection": _collection_count(collection),
@@ -694,10 +728,12 @@ async def search(
     results: list[dict[str, Any]] = []
     for rec in final_records:
         meta = rec["metadata"] or {}
+        raw_source = meta.get("source", "")
         results.append(
             {
                 "content": rec["content"],
-                "source": meta.get("source", ""),
+                "source": _display_source_name(raw_source) if raw_source else "",
+                "source_path": raw_source,
                 "page": meta.get("page"),
                 "vector_score": round(rec["vector_score"], 4),
                 "bm25_score": round(rec["bm25_score"], 4),
@@ -755,7 +791,16 @@ async def list_collections() -> dict:
                 chunk_count = _collection_count(child.name)
             except Exception:  # noqa: BLE001
                 chunk_count = -1
-            out.append({"name": child.name, "chunk_count": chunk_count})
+            hashes = _load_ingested_hashes(child.name)
+            sources = sorted(
+                {_display_source_name(p) for p in hashes.values() if p},
+                key=str.lower,
+            )
+            out.append({
+                "name": child.name,
+                "chunk_count": chunk_count,
+                "sources": sources,
+            })
         return {"db_dir": str(DEFAULT_DB_DIR), "collections": out}
 
     try:
@@ -765,7 +810,114 @@ async def list_collections() -> dict:
 
 
 # ---------------------------------------------------------------------
-# 工具 4：删除集合
+# 工具 4：删除单个 PDF 文档
+# ---------------------------------------------------------------------
+@mcp.tool()
+async def delete_document(collection: str, source: str) -> dict:
+    """从集合中删除单个 PDF 文档及其全部分块。
+
+    Args:
+        collection: 集合名。
+        source: 要删除的 PDF 文件名（与列表中显示的名称一致）。
+
+    Returns:
+        ``{collection, source, removed_chunks, deleted}``。
+    """
+    try:
+        _validate_collection_name(collection)
+    except ValueError as e:
+        return _fmt_error(e, context=f"delete_document(collection={collection!r})")
+    if not source.strip():
+        return _fmt_error(ValueError("source is required"), context="delete_document()")
+
+    def _delete_doc() -> dict[str, Any]:
+        if not _faiss_index_exists(collection):
+            return {
+                "collection": collection,
+                "source": source,
+                "removed_chunks": 0,
+                "deleted": False,
+                "existed": False,
+            }
+
+        store = _load_faiss_store(collection)
+        if store is None:
+            return {
+                "collection": collection,
+                "source": source,
+                "removed_chunks": 0,
+                "deleted": False,
+                "existed": False,
+            }
+
+        keep_texts: list[str] = []
+        keep_metas: list[dict[str, Any]] = []
+        removed = 0
+        for doc_id in store.index_to_docstore_id.values():
+            doc = store.docstore.search(doc_id)
+            meta_source = (doc.metadata or {}).get("source", "")
+            if _source_matches(meta_source, source):
+                removed += 1
+                continue
+            keep_texts.append(doc.page_content)
+            keep_metas.append(doc.metadata or {})
+
+        if removed == 0:
+            return {
+                "collection": collection,
+                "source": source,
+                "removed_chunks": 0,
+                "deleted": False,
+                "existed": False,
+            }
+
+        hashes = _load_ingested_hashes(collection)
+        new_hashes = {
+            h: name
+            for h, name in hashes.items()
+            if not _source_matches(name, source)
+        }
+        cdir = _collection_dir(collection)
+        (cdir / _HASH_FILENAME).write_text(
+            json.dumps(new_hashes, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        _FAISS_STORES.pop(collection, None)
+        _invalidate_bm25(collection)
+        if keep_texts:
+            from langchain_community.vectorstores import FAISS
+
+            embedder = _get_embedder()
+            new_store = FAISS.from_texts(
+                texts=keep_texts,
+                embedding=embedder,
+                metadatas=keep_metas,
+            )
+            _save_faiss_store(collection, new_store)
+        else:
+            import shutil
+
+            if cdir.exists():
+                shutil.rmtree(cdir)
+
+        return {
+            "collection": collection,
+            "source": _display_source_name(source),
+            "removed_chunks": removed,
+            "deleted": True,
+            "existed": True,
+            "total_chunks_in_collection": _collection_count(collection),
+        }
+
+    try:
+        return await asyncio.to_thread(_delete_doc)
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=f"delete_document(collection={collection!r}, source={source!r})")
+
+
+# ---------------------------------------------------------------------
+# 工具 5：删除集合
 # ---------------------------------------------------------------------
 @mcp.tool()
 async def delete_collection(collection: str) -> dict:
