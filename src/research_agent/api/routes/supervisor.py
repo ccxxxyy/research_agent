@@ -44,6 +44,7 @@ from research_agent.security.prompt_guard import FINANCIAL_DISCLAIMER, PromptGua
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from research_agent.cache.semantic_cache import SemanticHit
     from research_agent.memory.manager import MemoryManager
     from research_agent.security.token_quota import TokenQuotaManager
 
@@ -86,6 +87,24 @@ def _check_token_quota(quota: TokenQuotaManager, user_id: str) -> None:
             ),
             headers={"Retry-After": "3600"},
         )
+
+
+async def _try_semantic_knowledge_cache(query: str) -> SemanticHit | None:
+    """静态知识语义缓存短路：命中则跳过整个 research graph / LLM。
+
+    仅对 glossary / FAQ / 口径 / 模板等非时效问题生效；
+    含股票代码或「最新行情」类动态语义的问题直接返回 ``None``。
+    """
+    from research_agent.cache.semantic_cache import get_semantic_cache
+
+    cache = get_semantic_cache()
+    if not cache.enabled:
+        return None
+    try:
+        return await asyncio.to_thread(cache.lookup, query)
+    except Exception as exc:  # noqa: BLE001 — 缓存故障不得阻断研究主路径
+        logger.warning("semantic_cache lookup failed: {}", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +273,26 @@ async def supervisor_research(
             detail="Request blocked by security filter.",
         )
 
+    # --- 静态知识语义缓存：命中则不启动 research graph ---
+    cache_hit = await _try_semantic_knowledge_cache(request.query)
+    if cache_hit is not None:
+        reply = _clean_markdown(cache_hit.answer) + FINANCIAL_DISCLAIMER
+        logger.info(
+            "Research short-circuited by semantic_cache: domain={}, exact={}, user={}, thread={}",
+            cache_hit.cache_domain,
+            cache_hit.exact,
+            user_id,
+            thread_id,
+        )
+        return ResearchSupervisorResponse(
+            reply=reply,
+            thread_id=thread_id,
+            specialists_reached=[],
+            message_count=0,
+            cache_hit=True,
+            cache_domain=cache_hit.cache_domain,
+        )
+
     config = _graph_config(thread_id, request.recursion_limit, user_id=user_id)
 
     logger.info("Research-supervisor invoke: user={}, thread={}", user_id, thread_id)
@@ -310,6 +349,8 @@ async def supervisor_research(
         thread_id=thread_id,
         specialists_reached=_specialists_reached(messages),
         message_count=len(messages),
+        cache_hit=False,
+        cache_domain=None,
     )
 
 
@@ -871,6 +912,47 @@ async def supervisor_research_stream(
         )
 
     logger.info("Research-supervisor stream: user={}, thread={}", user_id, thread_id)
+
+    # --- 静态知识语义缓存短路（流式：直接 final + done）---
+    cache_hit = await _try_semantic_knowledge_cache(request.query)
+    if cache_hit is not None:
+        reply = _clean_markdown(cache_hit.answer) + FINANCIAL_DISCLAIMER
+
+        async def _cached_event_stream() -> AsyncIterator[str]:
+            yield _format_sse(
+                ResearchSupervisorSSEEvent(
+                    phase=ResearchSupervisorSSEPhase.FINAL,
+                    node="semantic_cache",
+                    content=reply,
+                    metadata={
+                        "cache_hit": True,
+                        "cache_domain": cache_hit.cache_domain,
+                        "exact": cache_hit.exact,
+                        "score": cache_hit.score,
+                        "matched_question": cache_hit.matched_question,
+                    },
+                )
+            )
+            yield _format_sse(
+                ResearchSupervisorSSEEvent(phase=ResearchSupervisorSSEPhase.DONE)
+            )
+
+        logger.info(
+            "Research stream short-circuited by semantic_cache: domain={}, thread={}",
+            cache_hit.cache_domain,
+            thread_id,
+        )
+        return StreamingResponse(
+            _cached_event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Thread-ID": thread_id,
+                "X-User-ID": user_id,
+                "X-Cache-Hit": "1",
+                "X-Cache-Domain": cache_hit.cache_domain,
+            },
+        )
 
     # -- 将用户消息写入会话历史 --
     conv_store = getattr(raw_request.app.state, "conversation_store", None)

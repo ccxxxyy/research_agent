@@ -1,5 +1,14 @@
-"""工具结果缓存（缓存 MCP 原始返回值，而非 LLM 回答）。"""
+"""缓存子系统：工具原始结果 TTL 缓存 + 静态知识语义缓存。"""
 
+from research_agent.cache.semantic_cache import (
+    CACHE_DOMAINS,
+    SemanticHit,
+    SemanticKnowledgeCache,
+    get_semantic_cache,
+    is_cacheable_query,
+    normalize_query,
+    reset_semantic_cache_for_tests,
+)
 from research_agent.cache.tool_cache import (
     TTL_DAILY,
     TTL_LONG,
@@ -13,13 +22,20 @@ from research_agent.cache.tool_cache import (
 )
 
 __all__ = [
+    "CACHE_DOMAINS",
     "TTL_DAILY",
     "TTL_LONG",
     "TTL_MEDIUM",
     "TTL_REALTIME",
     "TTL_SHORT",
+    "SemanticHit",
+    "SemanticKnowledgeCache",
     "ToolResultCache",
     "cached_tool",
+    "get_semantic_cache",
     "get_tool_cache",
+    "is_cacheable_query",
+    "normalize_query",
+    "reset_semantic_cache_for_tests",
     "reset_tool_cache_for_tests",
 ]
