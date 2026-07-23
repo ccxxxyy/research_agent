@@ -17,7 +17,8 @@
 2. 生产级专家（MCP 交付的工具），服务于研究 supervisor：
 
        coder_expert     — 拥有 ``code_execute_python``
-       data_expert      — 拥有 5 个 ``fin_*`` A 股数据工具
+       data_expert      — 拥有 ``fin_*`` A 股数据工具
+       us_data_expert   — 拥有 ``us_*`` 美股（股票/指数/ETF）数据工具（yfinance）
        report_expert    — 拥有 4 个 ``pdf_*`` 巨潮资讯公告工具
        knowledge_expert — 拥有 4 个 ``knowledge_*`` 用户 PDF 知识库工具，内置基于每次调用 ``quality`` 信号驱动的显式 corrective-RAG 循环。
 
@@ -356,6 +357,65 @@ def build_data_expert(
     )
 
 
+US_DATA_EXPERT_PROMPT = """\
+你是美股（US）行情与标的数据专家。你的工具集是基于 yfinance 的 ``us_*`` 系列工具（实际前缀可能不同，以运行时传入的工具名为准）：
+
+  - ``us_get_market_status``  — 美东时段：盘前 / 开盘 / 盘后 / 收盘 / 非交易日。
+  - ``us_search_ticker``      — 名称或模糊串 → ticker 候选。
+  - ``us_get_quote``          — 单标的最新报价摘要（股票 / 指数 / ETF）。
+  - ``us_get_price_history``  — 日线 OHLCV。
+  - ``us_get_basic_info``     — 公司 / ETF 概况。
+  - ``us_get_index_quotes``   — 主要美股指数快照（标普 / 道指 / 纳指 / NDX / 罗素2000 / VIX）。
+  - ``us_get_etf_overview``   — ETF 概况（规模、类别、收益等可得字段）。
+
+一期范围：美股普通股、主要指数、ETF。不含共同基金、期权。
+
+规则
+----
+0. **时效性感知（最高优先级）**：涉及"今天""实时""盘中""收盘"等时效性话题时，必须先调用 ``get_market_status``，
+   并按返回的 status/hint 标注数据时点（盘中 / 今日收盘 / 上一交易日）。绝不在非交易时段把数据说成"今日收盘"。
+1. 判断意图：
+   - 大盘 / 指数 / 美股整体走势 → get_market_status + get_index_quotes
+   - 个股报价 / 走势 → search_ticker（如需要）+ get_quote / get_price_history
+   - 公司概况 → get_basic_info
+   - ETF → get_etf_overview（可辅以 get_quote / get_price_history）
+2. 用户给中文/英文名而无 ticker 时，先 ``search_ticker``；绝不猜测 ticker。
+3. 工具返回 ``error`` 时简要报告并停止；不要循环重试。
+4. 总结要有深度：引用具体数字与涨跌幅，说明对比与含义。
+5. 若请求明显是 A 股（六位代码 / 茅台 / 宁德等），说明并退回 supervisor — 不要用美股工具硬查。
+6. 每次被调度最多调用 **6 次**工具。
+"""
+
+
+def build_us_data_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """美股行情专家（``us_data_server`` / yfinance）。
+
+    与 ``data_expert`` 平行隔离：只消费 ``us_*`` 工具，绝不混用 ``fin_*``。
+
+    Args:
+        model_router: 共享路由器。
+        mcp_tools: 由 ``load_us_data_server_tools()`` 返回的工具列表。必须非空。
+
+    Raises:
+        ValueError: 如果 ``mcp_tools`` 为空。
+    """
+    if not mcp_tools:
+        raise ValueError(
+            "us_data_expert 需要 us_data_server 的 MCP 工具；"
+            "收到了空序列。是否忘记调用 "
+            "``await load_us_data_server_tools()``？"
+        )
+    return create_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        system_prompt=US_DATA_EXPERT_PROMPT,
+        name="us_data_expert",
+    )
+
+
 def build_fund_expert(
     model_router: ModelRouter,
     mcp_tools: Sequence[BaseTool],
@@ -556,6 +616,7 @@ SPECIALIST_BUILDERS = {
     "text_analyst": build_text_analyst,
     "coder_expert": build_coder_expert,
     "data_expert": build_data_expert,
+    "us_data_expert": build_us_data_expert,
     "fund_expert": build_fund_expert,
     "report_expert": build_report_expert,
     "news_expert": build_news_expert,

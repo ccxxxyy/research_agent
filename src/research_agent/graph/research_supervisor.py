@@ -50,6 +50,7 @@ from research_agent.agents.specialists import (
     build_news_expert,
     build_report_expert,
     build_sentiment_expert,
+    build_us_data_expert,
 )
 from research_agent.graph.reflection import build_reflection_subgraph
 from research_agent.llm.tier import ModelTier
@@ -65,26 +66,25 @@ if TYPE_CHECKING:
 
 SUPERVISOR_PROMPT_BASE = """\
 你是金融研究 Supervisor（主管）。你协调一个小型专家团队，为用户提供简明、有引用来源的回答。
-当前**已上线工具集以 A 股（CN_A）为主**；
-美股（US）仅完成市场判定契约，``us_*`` 专家将在后续阶段上线。
+当前工具按市场**平行隔离**：A 股（CN_A）走 ``fin_*`` / 巨潮 / 东财新闻等；美股（US）走 ``us_*``（股票/指数/ETF）。
 你的默认语言跟随用户 — 如果用户使用中文，则用中文回答。
 
 ## 市场路由（必须遵守）
 系统会在上下文中注入 ``[MarketResolution]``（由问句中的股票/基金名字、代码、市场关键词，以及用户偏好 ``preferred_market`` 解析得到）。
 你必须按其中的 ``market`` 字段路由：
 
-- **CN_A**：使用当前已挂载的 A 股侧专家（行情 / 基金 / 披露 / 新闻 / 舆情 / 知识库）。
-- **US**：尚无美股侧专家挂载时，**明确告知用户美股数据能力未上线**，
-  **禁止**用 ``fin_*`` / ``news_*`` / 巨潮 PDF 工具去查美股 ticker 或英文公司名。
-- **MIXED**：拆成 A 股子问题与美股子问题；美股侧未就绪时如实说明缺口，仅完成 A 股侧可交付部分。
+- **CN_A**：使用已挂载的 A 股侧专家（行情 / 基金 / 披露 / 新闻 / 舆情 / 知识库）。
+- **US**：使用已挂载的美股行情专家（``us_*`` 工具）。若该专家未出现在下方团队名单中，明确告知能力缺口。
+  **禁止**用 ``fin_*`` / ``news_*`` / 巨潮 PDF / ``fund_*`` 去查美股 ticker 或英文公司名。
+- **MIXED**：拆成 A 股子问题与美股子问题，分别路由到对应市场专家；某一侧未挂载时如实说明缺口。
 - 若上下文无 MarketResolution，且用户提到「苹果 / 特斯拉 / AAPL / 标普500」等美股名，
-  仍按 US 处理（同上限制）；提到「宁德时代 / 茅台 / 六位代码」按 CN_A。
+  仍按 US 处理；提到「宁德时代 / 茅台 / 六位代码」按 CN_A。
 
 重要：用户提问可能涉及大盘走势、指数行情、板块资金流向、涨跌排行、热门股票等宏观话题，不要把所有问题都缩小到"查某只个股"。
 先判断用户意图：
-  - 大盘/指数/整体走势 → 优先用指数行情和板块工具（仅 CN_A）
-  - 哪些股票/板块涨得好 → 用涨跌排行和板块资金流工具（仅 CN_A）
-  - 特定个股分析 → 用个股行情和财务工具（仅对应市场）
+  - 大盘/指数/整体走势 → 优先用对应市场的指数行情工具
+  - 哪些股票/板块涨得好 → A 股可用涨跌排行和板块资金流；美股优先指数 + 个股/ETF 报价
+  - 特定个股分析 → 用对应市场的个股行情和概况工具
 
 团队成员：
 """
@@ -217,6 +217,23 @@ SUPERVISOR_PROMPT_FUND = """\
     当用户明确需要基金层面的深度分析时，优先路由到 fund_expert。
 """
 
+SUPERVISOR_PROMPT_US_DATA = """\
+  - us_data_expert ：通过 yfinance MCP 获取美股股票 / 指数 / ETF 数据（与 A 股 ``fin_*`` 工具链平行隔离）。
+    工具集（前缀 us_）：
+        * us_get_market_status  — 美东交易时段状态
+        * us_search_ticker      — 名称 → ticker
+        * us_get_quote          — 最新报价
+        * us_get_price_history  — 日线 OHLCV
+        * us_get_basic_info     — 公司 / ETF 概况
+        * us_get_index_quotes   — 标普 / 道指 / 纳指等主要指数
+        * us_get_etf_overview   — ETF 概况
+    路由策略：
+      - 美股大盘 / 指数 → get_market_status + get_index_quotes
+      - 个股 / ETF 报价与走势 → search_ticker（如需）+ get_quote / get_price_history
+      - 公司概况 → get_basic_info；ETF 深度 → get_etf_overview
+    禁止把美股问句交给 A 股行情 / 新闻 / 基金专家。
+"""
+
 # 注意：这些规则在所有团队组合中不变。它们绝不能按名称提及某个特定专家，
 # 因为团队在运行时动态组装，缺席的专家否则会作为幽灵路由目标泄露进提示词 — 导致 ``transfer_to_<missing>`` 工具调用失败。
 # 针对特定专家的指导写在上面的 ``*_PROMPT_*`` 部分中。
@@ -249,7 +266,7 @@ SUPERVISOR_PROMPT_RULES = """\
      - 禁止使用：emoji 表情符号、``---`` 分隔线、代码块。
      - 语言风格：简练、客观、有洞察力。避免冗余修饰词，直接给出数据+判断。像顶级券商晨报的文风。
 5. 不要编造数据或引文。如果某专家返回的字典中包含 ``"error"`` 键，请如实说明，不要捏造替代内容。
-6. 不要自己调用专家工具。你无法直接访问 ``fin_*``、``pdf_*``、 ``code_*``、``news_*``、``knowledge_*`` 或 ``sentiment_*`` —你只能使用 ``transfer_to_*`` 移交工具。
+6. 不要自己调用专家工具。你无法直接访问 ``fin_*``、``us_*``、``pdf_*``、 ``code_*``、``news_*``、``knowledge_*``、``sentiment_*`` 或 ``fund_*`` —你只能使用 ``transfer_to_*`` 移交工具。
 
 速度与质量平衡（必须遵守）
 ---------------------------------
@@ -288,6 +305,7 @@ def _build_supervisor_prompt(
     has_news: bool,
     has_sentiment: bool,
     has_fund: bool = False,
+    has_us_data: bool = False,
 ) -> str:
     """组装 supervisor 提示词，使其与实际团队成员匹配。
 
@@ -296,6 +314,8 @@ def _build_supervisor_prompt(
     parts = [SUPERVISOR_PROMPT_BASE]
     if has_data:
         parts.append(SUPERVISOR_PROMPT_DATA)
+    if has_us_data:
+        parts.append(SUPERVISOR_PROMPT_US_DATA)
     if has_report:
         parts.append(SUPERVISOR_PROMPT_REPORT)
     if has_coder:
@@ -461,6 +481,7 @@ def build_research_supervisor(
     *,
     model_router: ModelRouter,
     data_tools: Sequence[BaseTool] | None = None,
+    us_data_tools: Sequence[BaseTool] | None = None,
     report_tools: Sequence[BaseTool] | None = None,
     coder_tools: Sequence[BaseTool] | None = None,
     knowledge_tools: Sequence[BaseTool] | None = None,
@@ -482,6 +503,7 @@ def build_research_supervisor(
     Args:
         model_router: 共享路由器（supervisor 使用 ``supervisor_tier``；specialist 通过其构建器内的 ``ANALYST`` / ``RETRIEVER`` Agent 名称映射使用 MEDIUM）。
         data_tools: ``fin_*`` 工具。省略/空 → 无 ``data_expert``。
+        us_data_tools: ``us_*`` 工具。省略/空 → 无 ``us_data_expert``。
         report_tools: ``pdf_*`` 工具。省略/空 → 无 ``report_expert``。
         coder_tools: ``code_*`` 工具。省略/空 → 无 ``coder_expert``。
         knowledge_tools: ``knowledge_*`` 工具。省略/空 → 无 ``knowledge_expert``。
@@ -504,6 +526,7 @@ def build_research_supervisor(
         ValueError: If every tool list was empty.
     """
     has_data = bool(data_tools)
+    has_us_data = bool(us_data_tools)
     has_report = bool(report_tools)
     has_coder = bool(coder_tools)
     has_knowledge = bool(knowledge_tools)
@@ -513,6 +536,7 @@ def build_research_supervisor(
 
     if not (
         has_data
+        or has_us_data
         or has_report
         or has_coder
         or has_knowledge
@@ -530,6 +554,9 @@ def build_research_supervisor(
     if has_data:
         agents.append(build_data_expert(model_router, data_tools or []))
         roster.append("data_expert")
+    if has_us_data:
+        agents.append(build_us_data_expert(model_router, us_data_tools or []))
+        roster.append("us_data_expert")
     if has_report:
         agents.append(build_report_expert(model_router, report_tools or []))
         roster.append("report_expert")
@@ -552,6 +579,7 @@ def build_research_supervisor(
     supervisor_model = model_router.get_model(supervisor_tier)
     prompt = _build_supervisor_prompt(
         has_data=has_data,
+        has_us_data=has_us_data,
         has_report=has_report,
         has_coder=has_coder,
         has_knowledge=has_knowledge,
@@ -599,6 +627,7 @@ __all__ = [
     "build_research_supervisor",
     "SUPERVISOR_PROMPT_BASE",
     "SUPERVISOR_PROMPT_DATA",
+    "SUPERVISOR_PROMPT_US_DATA",
     "SUPERVISOR_PROMPT_FUND",
     "SUPERVISOR_PROMPT_REPORT",
     "SUPERVISOR_PROMPT_CODER",

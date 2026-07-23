@@ -65,6 +65,7 @@ KNOWLEDGE_SERVER_MODULE = "research_agent.mcp_servers.knowledge_server"
 NEWS_SERVER_MODULE = "research_agent.mcp_servers.news_server"
 NEWS_SENTIMENT_SERVER_MODULE = "research_agent.mcp_servers.news_sentiment_server"
 FUND_SERVER_MODULE = "research_agent.mcp_servers.fund_server"
+US_DATA_SERVER_MODULE = "research_agent.mcp_servers.us_data_server"
 
 
 async def load_code_server_tools() -> list[BaseTool]:
@@ -101,6 +102,28 @@ async def load_fin_data_server_tools() -> list[BaseTool]:
     """
     client = MultiServerMCPClient(
         {"fin": _stdio_server_spec(FIN_DATA_SERVER_MODULE)},
+        tool_name_prefix=True,
+    )
+    return await client.get_tools()
+
+
+async def load_us_data_server_tools() -> list[BaseTool]:
+    """通过 stdio 启动 ``us_data_server`` 并返回其工具列表。
+
+    暴露美股（股票 / 指数 / ETF）工具，每个通过 ``tool_name_prefix=True`` 添加 ``us_`` 前缀：
+
+    - ``us_get_market_status``
+    - ``us_search_ticker``
+    - ``us_get_quote``
+    - ``us_get_price_history``
+    - ``us_get_basic_info``
+    - ``us_get_index_quotes``
+    - ``us_get_etf_overview``
+
+    与 ``fin_data_server`` **平行隔离**；数据源为 ``yfinance``。
+    """
+    client = MultiServerMCPClient(
+        {"us": _stdio_server_spec(US_DATA_SERVER_MODULE)},
         tool_name_prefix=True,
     )
     return await client.get_tools()
@@ -258,6 +281,7 @@ __all__ = [
     "NEWS_SENTIMENT_SERVER_MODULE",
     "NEWS_SERVER_MODULE",
     "PDF_REPORT_SERVER_MODULE",
+    "US_DATA_SERVER_MODULE",
     "extract_text_content",
     "load_code_server_tools",
     "load_echo_server_tools",
@@ -268,4 +292,5 @@ __all__ = [
     "load_news_sentiment_server_tools",
     "load_news_server_tools",
     "load_pdf_report_server_tools",
+    "load_us_data_server_tools",
 ]

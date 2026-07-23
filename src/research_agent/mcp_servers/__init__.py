@@ -25,6 +25,12 @@ Agent 通过``langchain_mcp_adapters.client.MultiServerMCPClient`` 发现并调�
     行情/报价类工具级联 东方财富 → 雪球 / 新浪 以应对上游宕机。
     接入 research supervisor 的 ``data_expert`` 专家。
 
+``us_data_server``
+    通过 ``yfinance`` 获取美股股票 / 指数 / ETF 数据（与 ``fin_data_server`` 平行隔离）。
+    工具：``get_market_status``、``search_ticker``、``get_quote``、``get_price_history``、
+    ``get_basic_info``、``get_index_quotes``、``get_etf_overview``（运行时前缀 ``us_``）。
+    接入 research supervisor 的 ``us_data_expert`` 专家。
+
 ``pdf_report_server``
     巨潮资讯的公告 / 研报 PDF。四个工具：
     ``search_announcements``、``download_pdf``（基于哈希的磁盘缓存，位于 ``./data/pdf_cache/``）、
@@ -53,6 +59,7 @@ ACTIVE_SERVERS: tuple[str, ...] = (
     "echo_server",
     "code_server",
     "fin_data_server",
+    "us_data_server",
     "pdf_report_server",
     "news_server",
     "knowledge_server",
@@ -90,6 +97,7 @@ if TYPE_CHECKING:  # pragma: no cover - 辅助类型检查器和 IDE 自动补�
         knowledge_server,
         news_server,
         pdf_report_server,
+        us_data_server,
     )
 
 
@@ -101,4 +109,5 @@ __all__ = [
     "knowledge_server",
     "news_server",
     "pdf_report_server",
+    "us_data_server",
 ]
