@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from research_agent.cache.semantic_cache import SemanticHit
+    from research_agent.market.types import MarketResolution
     from research_agent.memory.manager import MemoryManager
     from research_agent.security.token_quota import TokenQuotaManager
 
@@ -150,18 +151,36 @@ async def _build_user_context_messages(
     memory: MemoryManager,
     user_id: str,
     query: str,
-) -> list[BaseMessage]:
+    *,
+    market_override: str | None = None,
+) -> tuple[list[BaseMessage], MarketResolution]:
     """构建包含可选长期上下文的图输入消息列表。
 
     同步与 SSE 研究路由共用此函数，确保 LLM 无论传输方式如何都看到完全相同的前导内容。
 
     有上下文时返回 ``[SystemMessage, HumanMessage]``，
-    匿名 / 无上下文用户返回 ``[HumanMessage]``。
+    匿名 / 无上下文用户至少也有 MarketResolution 前导。
+
+    同时解析市场（问句信号 → 用户偏好 → 默认），写入 SystemMessage，
+    并返回 ``MarketResolution`` 供响应头 / JSON 字段使用。
     """
+    from research_agent.market import format_market_preamble, resolve_market
+
+    override = (
+        None if (not market_override or market_override.lower() == "auto") else market_override
+    )
+    resolution = await resolve_market(
+        query,
+        memory=memory if user_id != "anonymous" else None,
+        user_id=user_id,
+        override=override,
+    )
+
     messages: list[BaseMessage] = []
+    context_parts: list[str] = [format_market_preamble(resolution)]
+
     if user_id != "anonymous":
         user_ctx = await memory.get_user_context(user_id)
-        context_parts: list[str] = []
         if user_ctx.get("preferences"):
             prefs = "; ".join(p.get("content", str(p)) for p in user_ctx["preferences"])
             context_parts.append(f"User preferences: {prefs}")
@@ -171,11 +190,10 @@ async def _build_user_context_messages(
                 for r in user_ctx["recent_research"][:3]
             ]
             context_parts.append("Recent research history:\n" + "\n".join(history_lines))
-        if context_parts:
-            messages.append(SystemMessage(content="\n\n".join(context_parts)))
 
+    messages.append(SystemMessage(content="\n\n".join(context_parts)))
     messages.append(HumanMessage(content=query))
-    return messages
+    return messages, resolution
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +294,16 @@ async def supervisor_research(
     # --- 静态知识语义缓存：命中则不启动 research graph ---
     cache_hit = await _try_semantic_knowledge_cache(request.query)
     if cache_hit is not None:
+        from research_agent.market import resolve_market
+
+        resolution = await resolve_market(
+            request.query,
+            memory=memory if user_id != "anonymous" else None,
+            user_id=user_id,
+            override=(
+                None if (not request.market or request.market.lower() == "auto") else request.market
+            ),
+        )
         reply = _clean_markdown(cache_hit.answer) + FINANCIAL_DISCLAIMER
         logger.info(
             "Research short-circuited by semantic_cache: domain={}, exact={}, user={}, thread={}",
@@ -291,6 +319,8 @@ async def supervisor_research(
             message_count=0,
             cache_hit=True,
             cache_domain=cache_hit.cache_domain,
+            market=resolution.market.value,
+            market_source=resolution.source,
         )
 
     config = _graph_config(thread_id, request.recursion_limit, user_id=user_id)
@@ -298,10 +328,11 @@ async def supervisor_research(
     logger.info("Research-supervisor invoke: user={}, thread={}", user_id, thread_id)
 
     # --- 长期记忆：加载用户上下文 ---
-    messages_input = await _build_user_context_messages(
+    messages_input, market_resolution = await _build_user_context_messages(
         memory,
         user_id,
         request.query,
+        market_override=request.market,
     )
 
     result = await graph.ainvoke(
@@ -351,6 +382,8 @@ async def supervisor_research(
         message_count=len(messages),
         cache_hit=False,
         cache_domain=None,
+        market=market_resolution.market.value,
+        market_source=market_resolution.source,
     )
 
 
@@ -916,6 +949,16 @@ async def supervisor_research_stream(
     # --- 静态知识语义缓存短路（流式：直接 final + done）---
     cache_hit = await _try_semantic_knowledge_cache(request.query)
     if cache_hit is not None:
+        from research_agent.market import resolve_market
+
+        resolution = await resolve_market(
+            request.query,
+            memory=memory if user_id != "anonymous" else None,
+            user_id=user_id,
+            override=(
+                None if (not request.market or request.market.lower() == "auto") else request.market
+            ),
+        )
         reply = _clean_markdown(cache_hit.answer) + FINANCIAL_DISCLAIMER
 
         async def _cached_event_stream() -> AsyncIterator[str]:
@@ -930,6 +973,8 @@ async def supervisor_research_stream(
                         "exact": cache_hit.exact,
                         "score": cache_hit.score,
                         "matched_question": cache_hit.matched_question,
+                        "market": resolution.market.value,
+                        "market_source": resolution.source,
                     },
                 )
             )
@@ -949,6 +994,8 @@ async def supervisor_research_stream(
                 "X-User-ID": user_id,
                 "X-Cache-Hit": "1",
                 "X-Cache-Domain": cache_hit.cache_domain,
+                "X-Market": resolution.market.value,
+                "X-Market-Source": resolution.source,
             },
         )
 
@@ -965,10 +1012,11 @@ async def supervisor_research_stream(
             title_hint=title_hint,
         )
 
-    messages_input = await _build_user_context_messages(
+    messages_input, market_resolution = await _build_user_context_messages(
         memory,
         user_id,
         request.query,
+        market_override=request.market,
     )
 
     specialists: list[str] = getattr(raw_request.app.state, "available_specialists", None) or []
@@ -991,6 +1039,8 @@ async def supervisor_research_stream(
             "Cache-Control": "no-cache",
             "X-Thread-ID": thread_id,
             "X-User-ID": user_id,
+            "X-Market": market_resolution.market.value,
+            "X-Market-Source": market_resolution.source,
         },
     )
 

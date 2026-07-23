@@ -68,6 +68,13 @@ class ResearchSupervisorRequest(BaseModel):
             " 路由已足够宽裕；仅在需要 >5 次连续交接时提高。"
         ),
     )
+    market: str | None = Field(
+        None,
+        description=(
+            "可选市场覆盖：``CN_A`` / ``US`` / ``MIXED`` / ``auto``（默认）。"
+            "省略或 auto 时按问句信号 → 用户 preferred_market → 产品默认 CN_A 解析。"
+        ),
+    )
 
 
 class ResearchSupervisorResponse(BaseModel):
@@ -94,6 +101,14 @@ class ResearchSupervisorResponse(BaseModel):
     cache_domain: str | None = Field(
         default=None,
         description="命中时的缓存域：glossary / methodology / template / faq / macro / historical_event。",
+    )
+    market: str | None = Field(
+        default=None,
+        description="本次请求解析出的市场：CN_A / US / MIXED。",
+    )
+    market_source: str | None = Field(
+        default=None,
+        description="市场判定来源：query_signal / user_preference / default / request_override。",
     )
 
 
