@@ -58,6 +58,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         load_news_sentiment_server_tools,
         load_news_server_tools,
         load_pdf_report_server_tools,
+        load_us_data_server_tools,
     )
 
     # 说明：``load_knowledge_tools_inproc`` 是进程内替代方案，取代（已弃用的） MCP stdio ``load_knowledge_server_tools``。
@@ -72,6 +73,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         asyncio.wait_for(load_news_server_tools(), timeout=timeout),
         asyncio.wait_for(load_news_sentiment_server_tools(), timeout=timeout),
         asyncio.wait_for(load_fund_server_tools(), timeout=timeout),
+        asyncio.wait_for(load_us_data_server_tools(), timeout=timeout),
         return_exceptions=True,
     )
     names = (
@@ -82,6 +84,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         "news_server",
         "news_sentiment_server",
         "fund_server",
+        "us_data_server",
     )
     tools: dict[str, list] = {}
     for name, r in zip(names, results, strict=False):
@@ -106,6 +109,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         "news_server": "news_expert",
         "news_sentiment_server": "sentiment_expert",
         "fund_server": "fund_expert",
+        "us_data_server": "us_data_expert",
     }
     roster = [spec for src, spec in tool_source_to_specialist.items() if tools.get(src)]
 
@@ -119,6 +123,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         graph = build_research_supervisor(
             model_router=model_router,
             data_tools=tools["fin_data_server"] or None,
+            us_data_tools=tools["us_data_server"] or None,
             report_tools=tools["pdf_report_server"] or None,
             coder_tools=tools["code_server"] or None,
             knowledge_tools=tools["knowledge_tools_inproc"] or None,

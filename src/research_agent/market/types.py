@@ -88,7 +88,7 @@ class MarketResolution:
     """用户偏好（若有），便于日志与前端展示。"""
 
     notes: str = ""
-    """给人看的补充说明（例如「美股工具尚未上线」）。"""
+    """给人看的补充说明（例如「应路由至美股行情专家」）。"""
 
     def to_dict(self) -> dict[str, Any]:
         return {

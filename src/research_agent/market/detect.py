@@ -1,17 +1,17 @@
-"""从用户问句 + 偏好解析市场（P0）。
+"""从用户问句 + 偏好解析市场。
 
 优先级（高 → 低）
 ----------------
 1. 请求显式覆盖（API ``market`` 字段）
 2. 问句内硬信号（6 位 A 股代码 / 美股 ticker / 市场关键词 / 知名中英文名）
 3. 用户 memory 中的 ``preferred_market``
-4. 产品默认 ``CN_A``（因 US 工具尚未在 P1 上线）
+4. 产品默认 ``CN_A``（与现有 A 股工具全集对齐；无信号时不默认美股）
 
 名字判断
 --------
 用户通常会说公司/基金中英文名。本模块维护一份**可扩展**的知名映射表
 （苹果→AAPL、特斯拉→TSLA、标普500→^GSPC、沪深300 等），用于 PoC；
-完整解析仍依赖后续 ``us_data`` / ``fin_search_stock_by_name``。
+完整解析可辅以 ``us_search_ticker`` / ``fin_search_stock_by_name``。
 """
 
 from __future__ import annotations
@@ -350,7 +350,7 @@ def detect_market_from_query(query: str) -> MarketResolution:
             confidence=0.9 if us_syms else 0.75,
             symbols=tuple(symbols),
             reasons=tuple(reasons),
-            notes="美股行情专家（us_data_expert）将在 P1 上线；当前仅完成市场判定契约。",
+            notes="问句含美股信号；应路由至美股行情专家（us_* 工具）。",
         )
     if has_cn:
         return MarketResolution(
@@ -455,7 +455,7 @@ async def resolve_market(
             preferred_market=preferred,
             notes=(
                 "问句无明确市场信号，使用用户偏好。"
-                + (" 美股工具尚未上线（P1）。" if preferred == Market.US else "")
+                + (" 应路由至美股行情专家（us_*）。" if preferred == Market.US else "")
             ),
         )
 
@@ -491,8 +491,7 @@ def format_market_preamble(resolution: MarketResolution) -> str:
 
     lines.append(
         "路由约束：CN_A → 使用已挂载的 A 股侧专家；"
-        "US → 当前仅完成契约，尚无美股侧专家时须明确告知用户美股数据能力未上线，"
-        "禁止用 fin_* / news_* / 巨潮工具去查美股；"
-        "MIXED → 先拆分子问题再分别路由（美股侧能力未就绪时如实说明）。"
+        "US → 路由至已挂载的美股行情专家（us_*），禁止用 fin_* / news_* / 巨潮 / fund_* 查美股；"
+        "MIXED → 先拆分子问题再分别路由（某一侧未挂载时如实说明）。"
     )
     return "\n".join(lines)

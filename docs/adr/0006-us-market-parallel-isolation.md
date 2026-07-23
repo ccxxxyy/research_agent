@@ -41,13 +41,18 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 
 共享层仅限：supervisor 编排、HITL、reflection、RAG **引擎**、tool TTL / semantic cache **框架**、coder。
 
-### 4. P0 行为
+### 4. P0 行为（判定契约）
 
 - Supervisor 系统提示词写入市场路由约束；
 - `/api/supervisor/research` 注入 `[MarketResolution]` 前导，响应带 `market` / `market_source`；
 - SSE 响应头：`X-Market` / `X-Market-Source`；
-- `POST /api/memory/preferences` 对 `preferred_market` 做枚举校验；
-- **尚未**实现 `us_data_server`（P1）；判定为 US 时须告知能力未上线，禁止用 A 股工具查美股。
+- `POST /api/memory/preferences` 对 `preferred_market` 做枚举校验。
+
+### 5. P1 行为（已落地）
+
+- `us_data_server`（yfinance）暴露 `us_*` 工具；
+- `us_data_expert` 挂入 research supervisor roster；
+- 判定为 US 时路由至美股行情专家，**禁止**用 A 股 `fin_*` / `news_*` 查美股。
 
 ## 考虑过的替代方案
 
@@ -66,12 +71,12 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 
 **负面 / 中性**
 
-- P0 阶段 US 问句只能「诚实降级」，用户体验不完整；
-- 知名名表需持续扩充（或 P1 接 yfinance search）。
+- 美股新闻 / EDGAR 披露仍未上线（P2+）；
+- 知名名表需持续扩充（可辅以 `us_search_ticker`）。
 
 ## 后续
 
-- **P1**：`us_data_server`（yfinance）+ `us_data_expert` + 接入 supervisor roster
+- **P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` + 接入 supervisor roster
 - **P2**：EDGAR `us_filing_server`
 - **P3**：`us_news` / `us_sentiment`
 - **P4**：ETF 深化、语义缓存 US 域、eval、UI 市场徽章
