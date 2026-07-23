@@ -28,12 +28,14 @@ import inspect
 import json
 import os
 import time
-from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from functools import wraps
-from typing import Any, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
 
 P = ParamSpec("P")
 R = TypeVar("R")
