@@ -153,21 +153,42 @@ async def test_index_quotes_via_curl():
     """curl_cffi 路径可用时应优先使用。"""
     import research_agent.mcp_servers.fin_data_server as mod
 
-    mock_df = pd.DataFrame(
-        {
-            "代码": ["000001", "399001"],
-            "名称": ["上证指数", "深证成指"],
-            "最新价": [3200.0, 10500.0],
-            "涨跌幅": [0.5, -0.3],
-            "成交额": [3e11, 4e11],
+    mock_payload = {
+        "data": {
+            "diff": [
+                {
+                    "f12": "000001",
+                    "f14": "上证指数",
+                    "f2": 3200.0,
+                    "f3": 0.5,
+                    "f4": 16.0,
+                    "f6": 3e11,
+                },
+                {
+                    "f12": "399001",
+                    "f14": "深证成指",
+                    "f2": 10500.0,
+                    "f3": -0.3,
+                    "f4": -30.0,
+                    "f6": 4e11,
+                },
+            ]
         }
-    )
+    }
 
-    with patch.object(mod, "_fetch_realtime_quotes_via_curl", return_value=mock_df):
+    with (
+        patch.object(mod, "_curl_get_json", return_value=mock_payload) as curl_mock,
+        patch("akshare.stock_zh_index_spot_em", side_effect=AssertionError("不应降级到 akshare")),
+        patch.object(mod, "_HAS_CURL_CFFI", True),
+    ):
         result = await mod.get_index_quotes()
-    if "error" not in result:
-        assert result["source"] in ("eastmoney_push2_curl", "eastmoney")
-        assert "source_url" in result
+
+    assert "error" not in result
+    assert result["source"] == "eastmoney_push2_curl"
+    assert "source_url" in result
+    assert len(result["indices"]) == 2
+    assert result["indices"][0]["代码"] == "000001"
+    curl_mock.assert_called_once()
 
 
 # ── 工具 8: get_stock_rank（A股涨跌幅排行）────────────────────────────
