@@ -18,14 +18,17 @@ import pytest
 def _reset_caches():
     """每次测试之间清除模块级缓存。"""
     import research_agent.mcp_servers.fin_data_server as mod
+    from research_agent.cache import reset_tool_cache_for_tests
 
     mod._ALL_STOCKS_CACHE = None
     mod._PUSH2_AVAILABLE = None
     mod._PROBE_TS = 0.0
+    reset_tool_cache_for_tests()
     yield
     mod._ALL_STOCKS_CACHE = None
     mod._PUSH2_AVAILABLE = None
     mod._PROBE_TS = 0.0
+    reset_tool_cache_for_tests()
 
 
 def _force_push2_available(mod, available: bool) -> None:

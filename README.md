@@ -3,11 +3,9 @@
 > **基于 LangGraph + MCP + Agentic RAG 的多智能体深度研究系统**
 > 面向 A 股二级市场研究：行情、基金、披露公告、新闻舆情、研究报告知识库 —— 一个 supervisor + 七个 specialist 协作完成。
 
-[![CI](https://github.com/your-org/research-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/research-agent/actions/workflows/ci.yml)
-[![Nightly](https://github.com/your-org/research-agent/actions/workflows/nightly.yml/badge.svg)](https://github.com/your-org/research-agent/actions/workflows/nightly.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen.svg)](#评估体系)
 [![Eval Dataset](https://img.shields.io/badge/eval-110%20examples-blueviolet.svg)](#评估体系)
 
 ---
@@ -144,7 +142,7 @@ REFLECTION_ENABLED=true
 SSE_RESEARCH_HEARTBEAT_SECONDS=5
 ```
 
-### 4.2 跑测试（确认绿）
+### 4.2 测试
 
 ```bash
 .venv/Scripts/python.exe -m pytest -m "not network and not slow" -q
@@ -176,7 +174,7 @@ uv run uvicorn research_agent.main:app --host 0.0.0.0 --port 8080
 
 MCP 工具服务器（`fin_data_server`、`fund_server`、`code_server` 等）不是 HTTP 服务，而是 FastAPI 启动时拉起的 stdio 子进程，通过标准输入/输出与主进程通信，不占用额外端口。
 
-### 4.4 跑一个端到端 demo（含真实业务数据）
+### 4.4 含真实业务数据demo
 
 > **本地知识库**：FAISS 索引文件存在 `./data/knowledge_db/<collection>/` 下，首次部署是空的。`knowledge_expert` 检索空索引会返回零结果。跑前先 seed（或经 `POST /api/knowledge/ingest` 自己灌 PDF），否则 supervisor 路由到 `knowledge_expert` 会拿到空 hit。
 >
@@ -191,7 +189,7 @@ uv run python scripts/seed_real_research_reports.py
 uv run python scripts/demo_full_research.py
 ```
 
-### 4.5 docker 一键起
+### 4.5 docker
 
 ```bash
 docker compose up -d
@@ -215,22 +213,6 @@ docker compose logs -f app
 | 模型路由 | 实测路由到 `deepseek-v4-pro`（HEAVY+MEDIUM 共 34 calls / $0.089）+ `qwen3.6-plus`（LIGHT 6 calls / $0.0007） |
 
 > **如何复现**：起服务 → `python scripts/seed_real_research_reports.py`（首次 ~5 min）→ Chat UI 或 `POST /api/supervisor/research` 提同样的复合问题。
-
-### 4.7 Windows 客户端常见坑
-
-**PowerShell 默认是 GBK 编码**，发 JSON 中文请求 / 打印中文 SSE 会乱码。两个解决方法：
-
-```powershell
-# 方法 A：临时把 PowerShell 当次会话切到 UTF-8（推荐）
-chcp 65001 | Out-Null
-$env:PYTHONIOENCODING = "utf-8"
-
-# 方法 B：用 Python 客户端直接发，绕过 shell 编码（演示脚本推荐）
-$body = '{"message":"中文请求"}'
-.venv\Scripts\python.exe -c "import urllib.request,json,sys; sys.stdout.reconfigure(encoding='utf-8'); ..."
-```
-
-服务端始终按 UTF-8 解析，问题只在客户端 → 服务端的请求体编码上。
 
 ---
 
@@ -436,7 +418,7 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 ---
 
-## 六点五、架构决策记录（ADR）
+## 七、架构决策记录（ADR）
 
 载入项目的非显然决策都写成了 ADR，存放于 [`docs/adr/`](docs/adr/)。
 
@@ -448,7 +430,7 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 ---
 
-## 七、评估体系
+## 八、评估体系
 
 本项目具备完整的量化评估流水线，覆盖路由准确率、回复质量、关键词命中、记忆持久化和工具选择精确度五个维度。
 
@@ -511,7 +493,7 @@ Metric                       Mean      Min      Max      Std     N
 
 ---
 
-## 七点五、CI/CD
+### 8.1 CI/CD
 
 三层 GitHub Actions 流水线：
 
@@ -533,7 +515,7 @@ pre-commit run --all-files
 
 ---
 
-## 七点六、可观测性 Dashboard
+### 8.2 可观测性 Dashboard
 
 `docker compose up` 现在同时启动 **Prometheus + Grafana** 监控栈：
 
@@ -560,7 +542,7 @@ docker compose up -d
 
 ---
 
-## 八、已知限制 / 未来扩展
+## 九、已知限制 / 未来扩展
 
 | 项 | 现状 | 计划 |
 |---|---|---|
@@ -568,12 +550,13 @@ docker compose up -d
 | **fund_server 仅覆盖公募基金** | 🟡 当前覆盖开放式基金、ETF、LOF 的净值/行情/持仓/评级/排名，尚未接入私募基金和 QDII 专项数据 | 按需扩展 akshare 私募/QDII 接口 |
 | **LangSmith 评估集已上 CI** | ✅ `evals/` 下有 100 条标注样本 + 5 个评估器 + 离线评估 runner + regression 对比工具；Nightly CI 自动跑路由评估 | 持续扩充样本 + 增加 RAG 召回率评估 |
 | **pgvector 引擎装了但未用作向量搜索后端** | 🟡 设计取舍：docker-compose 用 `pgvector/pgvector:pg16` 是为给 Postgres checkpointer + KV-style 长期记忆提供后端；RAG 走本地 FAISS 因为 demo 不依赖外部服务 | 当用户研究量 >100 条时，把"语义相似历史研究召回"切到 pgvector + ANN |
-| **LLM 响应缓存** | ❌ 未实现 | 金融场景幻觉缓存有风险（同一问题不同时间答案应不同），上线前需做"按问题类型条件缓存"，工作量中等 |
+| **LLM 响应缓存** | ❌ 不做 | 金融场景核心诉求是实时数据（行情/新闻/资金流），同一问题不同时间答案天然不同，缓存旧回答会误导决策。仅对纯知识解释类问题（如"什么是 ROE"）有微弱缓存价值，收益有限不纳入 Roadmap |
+| **工具原始数据缓存** | ✅ 已落地 | `cache/tool_cache.py` 按 TTL 分层缓存 MCP 工具成功返回值（realtime 20s / short 2min / medium 5min / daily 1h / long 6h）；错误不入缓存；默认进程内内存，可选 Redis |
 | **Reflection 评估 delta** | ✅ 子图已落地（`REFLECTION_ENABLED=true`），但尚未量化 ON/OFF 答案质量差异 | 需 LLM 预算跑 30 examples × 2 组对照 |
 
 ---
 
-## 八、项目布局
+## 十、项目布局
 
 ```
 src/research_agent/
@@ -665,7 +648,7 @@ tests/                    # unit（346 passing）+ integration
 
 ---
 
-## 九、安全 Guardrails
+## 十一、安全 Guardrails
 
 多层安全防御体系（详见 [ADR-0004](docs/adr/0004-guardrails-security-layers.md)）：
 
@@ -680,7 +663,7 @@ tests/                    # unit（346 passing）+ integration
 | **请求超时** | 可配置 ASGI 层超时，SSE 流豁免 | `api/middleware.py` |
 | **Multi-tenant 知识库隔离** | `{user_id}__{collection}` 命名空间前缀；搜索/列表/删除全路径自动 scope，anonymous 用户透明共享 | `tools/knowledge_tools.py` |
 
-## 十、性能 Benchmark
+## 十二、性能 Benchmark
 
 ```bash
 # 快速冒烟测试（仅无 LLM 端点）
@@ -692,7 +675,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 # 报告输出到 benchmark_results/（JSON 格式，含 P50/P95/P99 延迟 + 吞吐量）
 ```
 
-## 十一、架构文档
+## 十三、架构文档
 
 | 文档 | 内容 |
 |---|---|
@@ -703,9 +686,8 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 | [ADR-0003: Reflection Loop](docs/adr/0003-reflection-loop.md) | 反思循环设计 |
 | [ADR-0004: Guardrails](docs/adr/0004-guardrails-security-layers.md) | 多层安全防御体系 |
 
-## 十二、Roadmap（待做）
+## 十四、Roadmap（待做）
 
-- LLM 响应缓存（条件缓存，避开金融场景的"过期数据"陷阱）
 - 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）
