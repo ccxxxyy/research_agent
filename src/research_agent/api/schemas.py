@@ -76,6 +76,8 @@ class ResearchSupervisorResponse(BaseModel):
     ``specialists_reached`` 来源于外层状态的 ``transfer_to_*`` 交接轨迹。
     由于图编译时使用 ``output_mode="last_message"``，specialist 内部的``fin_*``/``pdf_*``/``code_*`` 工具调用停留在其子图中，不会暴露于此；
     回复内容本身就是 specialist 完成工作的权威证据。
+
+    若 ``cache_hit=True``，表示请求被静态知识语义缓存短路，未调用 supervisor / LLM。
     """
 
     reply: str = Field(..., description="Supervisor 的最终回答。")
@@ -85,6 +87,14 @@ class ResearchSupervisorResponse(BaseModel):
         description="Supervisor 路由到的不同 specialist 列表。",
     )
     message_count: int = 0
+    cache_hit: bool = Field(
+        default=False,
+        description="是否命中静态知识语义缓存（glossary/FAQ 等，未调用 LLM）。",
+    )
+    cache_domain: str | None = Field(
+        default=None,
+        description="命中时的缓存域：glossary / methodology / template / faq / macro / historical_event。",
+    )
 
 
 class ResearchSupervisorSSEPhase(StrEnum):

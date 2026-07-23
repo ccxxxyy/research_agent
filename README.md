@@ -1,4 +1,4 @@
-# research-agent
+# 金融多智能体研究系统
 
 > **基于 LangGraph + MCP + Agentic RAG 的多智能体深度研究系统**
 > 面向 A 股二级市场研究：行情、基金、披露公告、新闻舆情、研究报告知识库 —— 一个 supervisor + 七个 specialist 协作完成。
@@ -15,8 +15,7 @@
 「**给我做一份宁德时代 2023 年的业绩简评，对比一下行业平均，再看下最近一周市场对它的舆情情况，并参考我之前上传过的 ESG 报告里讲的碳中和承诺。**」
 
 回答这种**混合数据源、混合粒度的研究问题**，传统做法是：
-1. 一个 Agent 拿着一堆工具，靠 prompt 自己分配先调谁——容易乱套；
-2. 或者一个写死流程的 pipeline——不灵活，加新工具就要重写编排逻辑。
+1. 一个 Agent 拿着一堆工具，靠 prompt 自己分配先调谁——容易乱套，或者一个写死流程的 pipeline——不灵活，加新工具就要重写编排逻辑。
 
 本项目用 **LangGraph Supervisor 模式 + 7 个能力解耦的 specialist** 的方式，让 supervisor 只做"读用户需求 → 拆任务 → 选 specialist → 串联结果"，而 specialist 只做"我擅长这一种事，给我参数我就跑"。
 
@@ -550,7 +549,7 @@ docker compose up -d
 | **fund_server 仅覆盖公募基金** | 🟡 当前覆盖开放式基金、ETF、LOF 的净值/行情/持仓/评级/排名，尚未接入私募基金和 QDII 专项数据 | 按需扩展 akshare 私募/QDII 接口 |
 | **LangSmith 评估集已上 CI** | ✅ `evals/` 下有 100 条标注样本 + 5 个评估器 + 离线评估 runner + regression 对比工具；Nightly CI 自动跑路由评估 | 持续扩充样本 + 增加 RAG 召回率评估 |
 | **pgvector 引擎装了但未用作向量搜索后端** | 🟡 设计取舍：docker-compose 用 `pgvector/pgvector:pg16` 是为给 Postgres checkpointer + KV-style 长期记忆提供后端；RAG 走本地 FAISS 因为 demo 不依赖外部服务 | 当用户研究量 >100 条时，把"语义相似历史研究召回"切到 pgvector + ANN |
-| **LLM 响应缓存** | ❌ 不做 | 金融场景核心诉求是实时数据（行情/新闻/资金流），同一问题不同时间答案天然不同，缓存旧回答会误导决策。仅对纯知识解释类问题（如"什么是 ROE"）有微弱缓存价值，收益有限不纳入 Roadmap |
+| **静态知识语义缓存** | ✅ 已落地 | `cache/semantic_cache.py`：glossary/methodology/template/faq/macro/historical_event；L0 精确键 + L1 FAISS 语义；维度过滤 version/locale/prompt_version；research 入口命中则短路 LLM |
 | **工具原始数据缓存** | ✅ 已落地 | `cache/tool_cache.py` 按 TTL 分层缓存 MCP 工具成功返回值（realtime 20s / short 2min / medium 5min / daily 1h / long 6h）；错误不入缓存；默认进程内内存，可选 Redis |
 | **Reflection 评估 delta** | ✅ 子图已落地（`REFLECTION_ENABLED=true`），但尚未量化 ON/OFF 答案质量差异 | 需 LLM 预算跑 30 examples × 2 组对照 |
 

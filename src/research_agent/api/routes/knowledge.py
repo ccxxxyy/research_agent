@@ -6,6 +6,7 @@
 - ``POST /api/knowledge/search`` —— 在集合上执行混合检索。
 - ``GET  /api/knowledge/collections`` —— 枚举集合及其统计信息。
 - ``DELETE /api/knowledge/collections/{name}`` —— 删除集合。
+- ``POST /api/knowledge/semantic-lookup`` —— 静态知识语义缓存查询（术语/FAQ等）。
 
 全部四个端点均委托给 ``research_agent.mcp_servers.knowledge_server`` 中定义的协程（规范实现）。
 FastAPI 层仅处理 HTTP 关注点（文件上传、JSON序列化、状态码），不复制任何业务逻辑。
@@ -17,6 +18,7 @@ FastAPI 层仅处理 HTTP 关注点（文件上传、JSON序列化、状态码�
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import re
 import tempfile
@@ -360,4 +362,65 @@ async def view_document(
         path=str(target),
         media_type="application/pdf",
         filename=source,
+    )
+
+
+# =====================================================================
+# 静态知识语义缓存（术语 / FAQ / 口径等）
+# =====================================================================
+
+
+class SemanticLookupRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=500)
+
+
+class SemanticLookupResponse(BaseModel):
+    hit: bool
+    answer: str | None = None
+    cache_domain: str | None = None
+    score: float | None = None
+    matched_question: str | None = None
+    exact: bool | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
+
+
+@router.post("/semantic-lookup", response_model=SemanticLookupResponse)
+async def semantic_lookup(body: SemanticLookupRequest) -> SemanticLookupResponse:
+    """查询静态知识语义缓存（不调用 LLM、不走 research graph）。
+
+    用于前端调试或「百科/FAQ」入口。
+    含股票代码或时效动态语义的问题会返回 ``hit=false, skipped=true``。
+    """
+    from research_agent.cache.semantic_cache import (
+        get_semantic_cache,
+        is_cacheable_query,
+    )
+
+    if not is_cacheable_query(body.query):
+        return SemanticLookupResponse(
+            hit=False,
+            skipped=True,
+            skip_reason="query_not_cacheable",
+        )
+
+    cache = get_semantic_cache()
+    if not cache.enabled:
+        return SemanticLookupResponse(
+            hit=False,
+            skipped=True,
+            skip_reason="semantic_cache_disabled",
+        )
+
+    result = await asyncio.to_thread(cache.lookup, body.query)
+    if result is None:
+        return SemanticLookupResponse(hit=False)
+
+    return SemanticLookupResponse(
+        hit=True,
+        answer=result.answer,
+        cache_domain=result.cache_domain,
+        score=result.score,
+        matched_question=result.matched_question,
+        exact=result.exact,
     )
