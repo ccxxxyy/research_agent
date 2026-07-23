@@ -49,6 +49,15 @@ from typing import Any
 import pandas as pd
 from fastmcp import FastMCP
 
+from research_agent.cache import (
+    TTL_DAILY,
+    TTL_LONG,
+    TTL_MEDIUM,
+    TTL_REALTIME,
+    TTL_SHORT,
+    cached_tool,
+)
+
 logger = logging.getLogger("fin_data_server")
 if not logger.handlers:
     _handler = logging.StreamHandler()
@@ -354,6 +363,7 @@ def _basic_info_from_xueqiu(symbol: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fin")
 async def get_stock_basic_info(symbol: str) -> dict:
     """返回 A 股代码的公司概况。
 
@@ -473,6 +483,7 @@ def _price_history_from_sina(symbol: str, days: int, adjust: str) -> dict[str, A
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fin")
 async def get_stock_price_history(
     symbol: str,
     days: int = 30,
@@ -538,6 +549,7 @@ _ABSTRACT_KEY_METRICS: tuple[str, ...] = (
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fin")
 async def get_financial_abstract(symbol: str, last_n_periods: int = 4) -> dict:
     """返回最近报告期的核心财务报表项目。
 
@@ -621,6 +633,7 @@ _RATIO_KEY_METRICS: tuple[str, ...] = (
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fin")
 async def get_financial_indicators(symbol: str, start_year: str = "2023") -> dict:
     """返回核心财务比率（ROE、ROA、利润率、杠杆）。
 
@@ -682,6 +695,7 @@ async def get_financial_indicators(symbol: str, start_year: str = "2023") -> dic
 # 工具 5: 按公司名称模糊搜索股票
 # ---------------------------------------------------------------------
 @mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fin")
 async def search_stock_by_name(keyword: str, limit: int = 10) -> dict:
     """模糊匹配公司名称到 A 股代码。
 
@@ -742,6 +756,7 @@ _INDEX_MAP: dict[str, str] = {
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="fin")
 async def get_index_quotes() -> dict:
     """返回 A 股主要指数（上证指数、沪深300、创业板指、科创50 等）的最新行情。
 
@@ -876,6 +891,7 @@ async def get_index_quotes() -> dict:
 # 工具 7: 板块资金流向（行业板块 / 概念板块）
 # ---------------------------------------------------------------------
 @mcp.tool()
+@cached_tool(ttl=TTL_MEDIUM, namespace="fin")
 async def get_sector_fund_flow(sector_type: str = "行业", limit: int = 15) -> dict:
     """返回 A 股板块资金流向排行。
 
@@ -916,6 +932,7 @@ async def get_sector_fund_flow(sector_type: str = "行业", limit: int = 15) -> 
 # 工具 8: A 股涨跌幅排行（今日涨幅/跌幅前 N）
 # ---------------------------------------------------------------------
 @mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="fin")
 async def get_stock_rank(direction: str = "涨幅榜", limit: int = 20) -> dict:
     """返回今日 A 股涨跌幅排行榜。
 
@@ -1004,6 +1021,7 @@ async def get_stock_rank(direction: str = "涨幅榜", limit: int = 20) -> dict:
 # 工具 9: 分时数据（日内 1/5/15/30/60 分钟 K 线）
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="fin")
 async def get_intraday(
     symbol: str,
     period: str = "5",
@@ -1049,6 +1067,7 @@ async def get_intraday(
 # 工具 10: 龙虎榜详情（当日/指定日期）
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_MEDIUM, namespace="fin")
 async def get_lhb_detail(date: str = "", limit: int = 20) -> dict:
     """返回龙虎榜（大单异动）详情。
 
@@ -1087,6 +1106,7 @@ async def get_lhb_detail(date: str = "", limit: int = 20) -> dict:
 # 工具 11: 融资融券（个股明细）
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fin")
 async def get_margin_detail(symbol: str, limit: int = 20) -> dict:
     """返回个股融资融券数据明细。
 
@@ -1162,6 +1182,7 @@ async def get_margin_detail(symbol: str, limit: int = 20) -> dict:
 # 工具 12: 十大流通股东
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fin")
 async def get_top_holders(symbol: str) -> dict:
     """返回个股最新一期的十大流通股东。
 
@@ -1201,6 +1222,7 @@ async def get_top_holders(symbol: str) -> dict:
 # 工具 13: ETF 实时行情
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="fin")
 async def get_etf_spot(limit: int = 30) -> dict:
     """返回 A 股 ETF 基金实时行情排行。
 
@@ -1236,6 +1258,7 @@ async def get_etf_spot(limit: int = 30) -> dict:
 # 工具 14: 宏观经济数据（GDP/CPI/PMI/社融等）
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fin")
 async def get_macro_china(indicator: str = "gdp", limit: int = 12) -> dict:
     """返回中国宏观经济数据。
 
@@ -1281,6 +1304,7 @@ async def get_macro_china(indicator: str = "gdp", limit: int = 12) -> dict:
 # 工具 15: 概念板块列表 + 成分股
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_SHORT, namespace="fin")
 async def get_concept_board(board_name: str = "", limit: int = 20) -> dict:
     """返回 A 股概念板块行情或指定板块的成分股。
 
@@ -1330,6 +1354,7 @@ async def get_concept_board(board_name: str = "", limit: int = 20) -> dict:
 # 工具 16: 行业板块列表 + 成分股
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_SHORT, namespace="fin")
 async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
     """返回 A 股行业板块行情或指定行业的成分股。
 
@@ -1379,6 +1404,7 @@ async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
 # 工具 17: 个股资金流向
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_MEDIUM, namespace="fin")
 async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
     """返回个股的资金流向数据（主力、超大单、大单、中单、小单）。
 
@@ -1413,6 +1439,7 @@ async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
 # 工具 18: 港股通（北向/南向资金流）
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_MEDIUM, namespace="fin")
 async def get_hsgt_flow(direction: str = "north", limit: int = 20) -> dict:
     """返回沪深港通资金流向数据。
 
@@ -1473,6 +1500,7 @@ def _load_trade_dates() -> set[str]:
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="fin")
 async def get_market_status() -> dict:
     """返回 A 股市场当前交易状态（开盘中 / 已收盘 / 未开盘 / 非交易日）。
 

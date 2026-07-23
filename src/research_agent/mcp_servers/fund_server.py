@@ -38,6 +38,13 @@ from typing import Any
 import pandas as pd
 from fastmcp import FastMCP
 
+from research_agent.cache import (
+    TTL_DAILY,
+    TTL_LONG,
+    TTL_REALTIME,
+    cached_tool,
+)
+
 logger = logging.getLogger("fund_server")
 if not logger.handlers:
     _handler = logging.StreamHandler()
@@ -352,6 +359,7 @@ def _ensure_fund_cache() -> pd.DataFrame:
 # 工具 1: 基金搜索
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fund")
 async def search_fund(keyword: str, limit: int = 10) -> dict:
     """按名称或代码搜索基金，返回匹配的基金代码和名称。
 
@@ -391,6 +399,7 @@ async def search_fund(keyword: str, limit: int = 10) -> dict:
 # 工具 2: 基金概况
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fund")
 async def get_fund_info(symbol: str) -> dict:
     """返回单只基金的概况信息。
 
@@ -430,6 +439,7 @@ async def get_fund_info(symbol: str) -> dict:
 # 工具 3: 开放式基金历史净值
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fund")
 async def get_fund_nav(symbol: str, limit: int = 30) -> dict:
     """返回开放式基金的历史净值数据。
 
@@ -468,6 +478,7 @@ async def get_fund_nav(symbol: str, limit: int = 30) -> dict:
 # 工具 4: ETF 实时行情排行
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="fund")
 async def get_fund_etf_spot(sort_by: str = "成交额", limit: int = 30) -> dict:
     """返回全市场 ETF 基金实时行情排行（盘中实时价格、涨跌幅、成交额）。
 
@@ -545,6 +556,7 @@ async def get_fund_etf_spot(sort_by: str = "成交额", limit: int = 30) -> dict
 # 工具 5: LOF 实时行情排行
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="fund")
 async def get_fund_lof_spot(sort_by: str = "成交额", limit: int = 20) -> dict:
     """返回全市场 LOF 基金实时行情排行（盘中实时价格、涨跌幅、成交额）。
 
@@ -640,6 +652,7 @@ async def get_fund_lof_spot(sort_by: str = "成交额", limit: int = 20) -> dict
 # 工具 6: 单只 ETF 历史 K 线
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fund")
 async def get_fund_etf_hist(
     symbol: str,
     period: str = "daily",
@@ -743,6 +756,7 @@ async def get_fund_etf_hist(
 # 工具 7: 基金持仓（重仓股）
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fund")
 async def get_fund_holdings(symbol: str, year: str = "2024") -> dict:
     """返回单只基金的重仓股持仓明细。
 
@@ -785,6 +799,7 @@ async def get_fund_holdings(symbol: str, year: str = "2024") -> dict:
 # 工具 8: 基金评级
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fund")
 async def get_fund_rating(limit: int = 30) -> dict:
     """返回公募基金综合评级排行（上海证券/招商/济安/晨星四家机构）。
 
@@ -833,6 +848,7 @@ async def get_fund_rating(limit: int = 30) -> dict:
 # 工具 9: 基金业绩排行
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fund")
 async def get_fund_rank(
     fund_type: str = "全部",
     sort_by: str = "近1年",
@@ -893,6 +909,7 @@ async def get_fund_rank(
 # 工具 10: 当日开放式基金净值列表
 # =====================================================================
 @mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fund")
 async def get_fund_daily(fund_type: str = "股票型", limit: int = 30) -> dict:
     """返回当日开放式基金净值列表。
 

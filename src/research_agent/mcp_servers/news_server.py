@@ -26,7 +26,7 @@ akshare（Python 第三方库，统一封装） 和各数据源的关系
 为什么单独成服务器（而不扩展 ``fin_data_server``）？
 ----------------------------------------------------
 ``fin_data_server`` 的工具全部返回数值 / 表格数据。
-此处的新闻工具返回约 10 倍大小的自由文本负载，具有不同的延迟特征（不需要缓存 — 新闻天然是新鲜的）和不同的失败模式（空新闻流在无事发生时是正常的，而空 K 线是个 bug）。
+此处的新闻工具返回约 10 倍大小的自由文本负载，具有不同的延迟特征（短 TTL 缓存：同一研究回合内重复问「今天快讯」不必连打两次源站）和不同的失败模式（空新闻流在无事发生时是正常的，而空 K 线是个 bug）。
 LLM 对新闻与行情数据也需要不同的提示规则 — 见``agents/specialists.py`` 中的 ``NEWS_EXPERT_PROMPT``。
 
 多源 / 回退策略
@@ -56,6 +56,8 @@ from typing import Any
 
 import pandas as pd
 from fastmcp import FastMCP
+
+from research_agent.cache import TTL_MEDIUM, TTL_SHORT, cached_tool
 
 # akshare 通过 requests 发起 HTTP 请求，requests 会自动读取系统代理。
 # 国内数据源（东方财富/财联社/百度/雪球）走代理反而不通，在子进程启动时清除。
@@ -162,6 +164,7 @@ def _xueqiu_discussion_hot_rank(ranking: str, limit: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_SHORT, namespace="news")
 async def get_xueqiu_discussion_hot_rank(ranking: str = "最热门", limit: int = 30) -> dict:
     """雪球沪深「讨论」热度排行榜 — 个股按讨论活跃度排序。
 
@@ -223,6 +226,7 @@ def _stock_news_em(symbol: str, limit: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_SHORT, namespace="news")
 async def get_stock_news(symbol: str, limit: int = 20) -> dict:
     """获取特定 A 股代码的近期新闻文章。
 
@@ -281,6 +285,7 @@ def _telegraph_cls(symbol: str, limit: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_SHORT, namespace="news")
 async def get_market_telegraph(category: str = "全部", limit: int = 30) -> dict:
     """从财联社获取实时市场新闻快讯。
 
@@ -339,6 +344,7 @@ def _hot_keywords_em(symbol: str, limit: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_SHORT, namespace="news")
 async def get_hot_keywords(symbol: str, limit: int = 10) -> dict:
     """获取某个 A 股代码周围的热搜关键词 / 话题。
 
@@ -400,6 +406,7 @@ def _economic_news_baidu(date: str, limit: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+@cached_tool(ttl=TTL_MEDIUM, namespace="news")
 async def get_economic_news(date: str = "", limit: int = 30) -> dict:
     """获取每日宏观 / 经济新闻摘要（百度财经早晚报）。
 
