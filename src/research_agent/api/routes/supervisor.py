@@ -933,9 +933,7 @@ async def supervisor_research_stream(
                     },
                 )
             )
-            yield _format_sse(
-                ResearchSupervisorSSEEvent(phase=ResearchSupervisorSSEPhase.DONE)
-            )
+            yield _format_sse(ResearchSupervisorSSEEvent(phase=ResearchSupervisorSSEPhase.DONE))
 
         logger.info(
             "Research stream short-circuited by semantic_cache: domain={}, thread={}",
