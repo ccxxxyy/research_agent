@@ -28,6 +28,9 @@
 | 0001 | [使用 FAISS（文件存储）代替 ChromaDB 作为知识库](0001-faiss-over-chroma.md) | Accepted | 4.6   |
 | 0002 | [以进程内方式交付 `knowledge_expert` 工具，而非通过 MCP stdio](0002-knowledge-server-inprocess.md) | Accepted | 4.6   |
 | 0003 | [添加 Writer / Reasoner 反思循环作为 supervisor 后置子图](0003-reflection-loop.md) | Accepted | 5.2   |
+| 0004 | [多层安全防御体系（Guardrails）](0004-guardrails-security-layers.md) | Accepted | — |
+| 0005 | [pgvector 迁移路径](0005-pgvector-migration-path.md) | Accepted | — |
+| 0006 | [A 股 / 美股平行隔离与市场判定契约（P0）](0006-us-market-parallel-isolation.md) | Accepted | US-P0 |
 
 ## 何时编写新的 ADR
 

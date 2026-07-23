@@ -103,7 +103,20 @@ async def save_preference(
     """保存或更新用户偏好。
 
     偏好会注入主管提示词中，以便个性化回答（如首选语言、分析深度、关注行业等）。
+    若 ``key=preferred_market``，``content`` 须为 ``CN_A`` 或 ``US``（见 ADR-0006）。
     """
+    if body.key == "preferred_market":
+        from research_agent.market import set_user_preferred_market
+
+        try:
+            await set_user_preferred_market(memory, x_user_id, body.content)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        return SavePreferenceResponse(user_id=x_user_id, key=body.key)
+
     await memory.save_memory(
         user_id=x_user_id,
         namespace=MemoryNamespace.USER_PREFERENCES,
