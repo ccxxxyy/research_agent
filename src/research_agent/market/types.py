@@ -97,9 +97,7 @@ class MarketResolution:
             "confidence": self.confidence,
             "symbols": [s.to_dict() for s in self.symbols],
             "reasons": list(self.reasons),
-            "preferred_market": (
-                self.preferred_market.value if self.preferred_market else None
-            ),
+            "preferred_market": (self.preferred_market.value if self.preferred_market else None),
             "notes": self.notes,
         }
 

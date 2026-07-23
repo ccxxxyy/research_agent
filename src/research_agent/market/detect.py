@@ -482,8 +482,7 @@ def format_market_preamble(resolution: MarketResolution) -> str:
         lines.append("reasons=" + ", ".join(resolution.reasons))
     if resolution.symbols:
         sym_parts = [
-            f"{s.display_name or s.raw}"
-            f"({s.market.value}:{s.ticker or '?'}/{s.asset_class.value})"
+            f"{s.display_name or s.raw}({s.market.value}:{s.ticker or '?'}/{s.asset_class.value})"
             for s in resolution.symbols[:5]
         ]
         lines.append("symbols=" + "; ".join(sym_parts))

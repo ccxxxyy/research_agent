@@ -128,7 +128,5 @@ async def test_set_preferred_market_rejects_mixed() -> None:
     with pytest.raises(ValueError):
         await set_user_preferred_market(memory, "u1", "MIXED")
 
-    item = await memory.get_memory(
-        "u1", MemoryNamespace.USER_PREFERENCES, PREFERRED_MARKET_KEY
-    )
+    item = await memory.get_memory("u1", MemoryNamespace.USER_PREFERENCES, PREFERRED_MARKET_KEY)
     assert item is None

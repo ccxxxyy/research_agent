@@ -166,7 +166,9 @@ async def _build_user_context_messages(
     """
     from research_agent.market import format_market_preamble, resolve_market
 
-    override = None if (not market_override or market_override.lower() == "auto") else market_override
+    override = (
+        None if (not market_override or market_override.lower() == "auto") else market_override
+    )
     resolution = await resolve_market(
         query,
         memory=memory if user_id != "anonymous" else None,
@@ -299,9 +301,7 @@ async def supervisor_research(
             memory=memory if user_id != "anonymous" else None,
             user_id=user_id,
             override=(
-                None
-                if (not request.market or request.market.lower() == "auto")
-                else request.market
+                None if (not request.market or request.market.lower() == "auto") else request.market
             ),
         )
         reply = _clean_markdown(cache_hit.answer) + FINANCIAL_DISCLAIMER
@@ -956,9 +956,7 @@ async def supervisor_research_stream(
             memory=memory if user_id != "anonymous" else None,
             user_id=user_id,
             override=(
-                None
-                if (not request.market or request.market.lower() == "auto")
-                else request.market
+                None if (not request.market or request.market.lower() == "auto") else request.market
             ),
         )
         reply = _clean_markdown(cache_hit.answer) + FINANCIAL_DISCLAIMER
