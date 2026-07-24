@@ -214,7 +214,7 @@ def _print_summary(
         )
 
     header = (
-        f"\n{'Category':<20} {'routing_acc':>12} {'keyword_cov':>12} " 
+        f"\n{'Category':<20} {'routing_acc':>12} {'keyword_cov':>12} "
         f"{'tool_prec':>10} {'mkt_acc':>8} {'isolate':>8}"
     )
     print(header)
