@@ -1,0 +1,226 @@
+[
+  {
+    "query": "查询苹果公司 AAPL 的最新股价",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["AAPL", "股价"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "特斯拉 TSLA 最近一周的日线走势怎么样",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["TSLA"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "美股现在是开盘还是收盘？纳指怎么样",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["美东", "纳"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "SPY 这只 ETF 的规模和费用率概况",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["SPY", "ETF"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "QQQ 的重仓股有哪些，权重大概多少",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["QQQ", "持仓"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "VOO 的行业权重分布是怎样的",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["行业", "VOO"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "查找微软 MSFT 最近的 10-K 年报",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_filing_expert"],
+    "expected_reply_keywords": ["10-K", "MSFT"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "英伟达 NVDA 最新的 10-Q 季报有哪些关键信息",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_filing_expert"],
+    "expected_reply_keywords": ["10-Q", "NVDA"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "亚马逊 AMZN 最近有没有提交 8-K",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_filing_expert"],
+    "expected_reply_keywords": ["8-K"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "帮我从 EDGAR 查一下 Apple 的 DEF 14A 委托书",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_filing_expert"],
+    "expected_reply_keywords": ["DEF", "14A"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "苹果公司最近有什么美股新闻",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_news_expert"],
+    "expected_reply_keywords": ["新闻", "AAPL"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "美股大盘最近有什么重要快讯",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_news_expert"],
+    "expected_reply_keywords": ["新闻"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "QQQ 相关的 ETF 新闻有哪些",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_news_expert"],
+    "expected_reply_keywords": ["QQQ"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "分析一下特斯拉近期英文新闻的舆情倾向",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_sentiment_expert"],
+    "expected_reply_keywords": ["舆情", "TSLA"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "NVIDIA 最近新闻情绪偏多还是偏空",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_sentiment_expert"],
+    "expected_reply_keywords": ["情绪", "NVDA"],
+    "expected_market": "US",
+    "category": "us_single_route"
+  },
+  {
+    "query": "查一下微软股价，并看看它最近的 10-K",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_data_expert", "us_filing_expert"],
+    "expected_reply_keywords": ["MSFT", "10-K"],
+    "expected_market": "US",
+    "category": "us_multi_route"
+  },
+  {
+    "query": "苹果最新报价，以及最近有什么相关新闻",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_data_expert", "us_news_expert"],
+    "expected_reply_keywords": ["AAPL", "新闻"],
+    "expected_market": "US",
+    "category": "us_multi_route"
+  },
+  {
+    "query": "特斯拉近期新闻舆情，并结合股价走势看一下",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_sentiment_expert", "us_data_expert"],
+    "expected_reply_keywords": ["TSLA"],
+    "expected_market": "US",
+    "category": "us_multi_route"
+  },
+  {
+    "query": "SPY 持仓前十大，再看看有没有相关 ETF 新闻",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_data_expert", "us_news_expert"],
+    "expected_reply_keywords": ["SPY"],
+    "expected_market": "US",
+    "category": "us_multi_route"
+  },
+  {
+    "query": "不要用 A 股工具：请用美股数据查 AAPL 报价",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["AAPL"],
+    "expected_market": "US",
+    "category": "us_isolation"
+  },
+  {
+    "query": "Tesla 的 10-K 请走 SEC EDGAR，不要用 A 股年报工具",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_filing_expert"],
+    "expected_reply_keywords": ["10-K"],
+    "expected_market": "US",
+    "category": "us_isolation"
+  },
+  {
+    "query": "美股英伟达新闻请用 Yahoo / 英文源，不要用 A 股新闻专家",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_news_expert"],
+    "expected_reply_keywords": ["新闻"],
+    "expected_market": "US",
+    "category": "us_isolation"
+  },
+  {
+    "query": "What is the latest stock price of Apple?",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["AAPL", "Apple"],
+    "expected_market": "US",
+    "category": "us_robustness"
+  },
+  {
+    "query": "Find NVIDIA's most recent 10-K filing on EDGAR",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["us_filing_expert"],
+    "expected_reply_keywords": ["10-K", "NVDA"],
+    "expected_market": "US",
+    "category": "us_robustness"
+  },
+  {
+    "query": "标普500 ETF SPY 概况",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["us_data_expert"],
+    "expected_reply_keywords": ["SPY"],
+    "expected_market": "US",
+    "category": "us_robustness"
+  },
+  {
+    "query": "查询宁德时代的最新股价",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["data_expert"],
+    "expected_reply_keywords": ["宁德时代", "股价"],
+    "expected_market": "CN_A",
+    "category": "cn_control"
+  },
+  {
+    "query": "下载贵州茅台最近的年度报告",
+    "user_id": "eval_user_us_02",
+    "expected_specialists": ["report_expert"],
+    "expected_reply_keywords": ["年报", "茅台"],
+    "expected_market": "CN_A",
+    "category": "cn_control"
+  },
+  {
+    "query": "东方财富上宁德时代最近有什么新闻",
+    "user_id": "eval_user_us_01",
+    "expected_specialists": ["news_expert"],
+    "expected_reply_keywords": ["新闻", "宁德时代"],
+    "expected_market": "CN_A",
+    "category": "cn_control"
+  }
+]

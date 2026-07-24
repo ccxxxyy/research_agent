@@ -1,12 +1,14 @@
 """研究 supervisor 的评估器集合。
 
-五个评估器为每次实验运行评分：
+评估器为每次实验运行评分：
 
 1. routing_accuracy — 预期与实际专家集合之间的确定性 Jaccard 相似度。
 2. reply_quality — LLM 作为评判（LIGHT 层），对相关性、完整性和事实性进行 1-5 分评分。
 3. memory_persistence — 确定性检查：长期记忆是否已写入（或对匿名用户正确跳过）。
 4. keyword_coverage — 确定性检查：回复是否包含预期关键词。
 5. tool_selection_precision — 确定性检查：是否路由了不必要的专家（惩罚过度路由）。
+6. market_routing_accuracy — 预期市场 vs 实际 ``MarketResolution.market``。
+7. market_isolation — 美股问句不得命中 A 股专家；A 股问句不得命中美股专家。
 """
 
 from __future__ import annotations
@@ -227,5 +229,104 @@ def tool_selection_precision(run: Run, example: Example) -> dict:
     return {
         "key": "tool_selection_precision",
         "score": round(score, 3),
+        "comment": comment,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 6. 市场判定准确率（确定性）
+# ---------------------------------------------------------------------------
+
+
+def _normalize_market_label(raw: str) -> str:
+    text = raw.strip().upper().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "US": "US",
+        "USA": "US",
+        "US_STOCK": "US",
+        "CN": "CN_A",
+        "CN_A": "CN_A",
+        "A": "CN_A",
+        "ASHARE": "CN_A",
+        "A_SHARE": "CN_A",
+        "MIXED": "MIXED",
+        "UNKNOWN": "UNKNOWN",
+    }
+    return aliases.get(text, text)
+
+
+def market_routing_accuracy(run: Run, example: Example) -> dict:
+    """预期 ``expected_market`` 与实际 ``outputs.market`` 是否一致。
+
+    未标注 ``expected_market`` 的样本记 1.0（不影响历史 A 股集均值）。
+    """
+    expected_raw = (example.inputs.get("expected_market") or "").strip()
+    if not expected_raw:
+        return {
+            "key": "market_routing_accuracy",
+            "score": 1.0,
+            "comment": "无 expected_market 标注",
+        }
+
+    expected = _normalize_market_label(expected_raw)
+    outputs = run.outputs or {}
+    actual = _normalize_market_label(str(outputs.get("market") or ""))
+    score = 1.0 if actual == expected else 0.0
+    return {
+        "key": "market_routing_accuracy",
+        "score": score,
+        "comment": f"expected={expected}, actual={actual or '(missing)'}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 7. 跨市场隔离（确定性）
+# ---------------------------------------------------------------------------
+
+_CN_ONLY_SPECIALISTS = frozenset(
+    {
+        "data_expert",
+        "news_expert",
+        "report_expert",
+        "fund_expert",
+        "sentiment_expert",
+    }
+)
+_US_ONLY_SPECIALISTS = frozenset(
+    {
+        "us_data_expert",
+        "us_filing_expert",
+        "us_news_expert",
+        "us_sentiment_expert",
+    }
+)
+
+
+def market_isolation(run: Run, example: Example) -> dict:
+    """惩罚跨市场误路由（ADR-0006 平行隔离）。
+
+    * ``expected_market=US`` → 不得出现 A 股专用专家
+    * ``expected_market=CN_A`` → 不得出现美股专用专家
+    * 未标注 / MIXED / UNKNOWN → 记 1.0（不做隔离判定）
+    """
+    expected = (example.inputs.get("expected_market") or "").strip().upper().replace("-", "_")
+    outputs = run.outputs or {}
+    actual = set(outputs.get("specialists_reached") or [])
+
+    if expected in {"US", "USA"}:
+        bad = sorted(actual & _CN_ONLY_SPECIALISTS)
+        score = 0.0 if bad else 1.0
+        comment = "隔离通过" if not bad else f"美股问句误路由到 A 股专家: {bad}"
+    elif expected in {"CN_A", "CN", "A"}:
+        bad = sorted(actual & _US_ONLY_SPECIALISTS)
+        score = 0.0 if bad else 1.0
+        comment = "隔离通过" if not bad else f"A 股问句误路由到美股专家: {bad}"
+    else:
+        score = 1.0
+        comment = "无单市场隔离约束"
+
+    return {
+        "key": "market_isolation",
+        "score": score,
         "comment": comment,
     }

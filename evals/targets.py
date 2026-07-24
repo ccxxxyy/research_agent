@@ -2,6 +2,9 @@
 
 目标完全绕过 FastAPI — 直接调用 ``graph.ainvoke``，因此评估运行不受认证、速率限制或 HTTP 开销影响。
 
+与生产路径对齐：先 ``resolve_market``，再注入 ``[MarketResolution]`` 前导，
+以便美股问句能按 ADR-0006 正确路由到 ``us_*`` 专家。
+
 单次 ``build_eval_environment`` 调用在每个评估会话中初始化图 + 记忆一次；``supervisor_target`` 是 ``langsmith.evaluate`` 逐样本调用的可调用对象。
 """
 
@@ -10,7 +13,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.store.memory import InMemoryStore
 
 from research_agent.api.routes.supervisor import (
@@ -62,24 +65,39 @@ async def supervisor_target(inputs: dict[str, Any]) -> dict[str, Any]:
 
     Returns:
         ``{"reply": str, "specialists_reached": list[str],
-          "memory_saved": bool, "thread_id": str}``
+          "memory_saved": bool, "thread_id": str,
+          "market": str, "market_source": str}``
     """
     if _GRAPH is None or _MEMORY is None:
         raise RuntimeError("Call build_eval_environment() before running targets.")
+
+    from research_agent.market import format_market_preamble, resolve_market
 
     query = inputs["query"]
     user_id = inputs.get("user_id", "anonymous")
     thread_id = str(uuid.uuid4())
 
+    resolution = await resolve_market(
+        query,
+        memory=_MEMORY if user_id != "anonymous" else None,
+        user_id=user_id,
+        override=None,
+    )
+    preamble = format_market_preamble(resolution)
+    messages = [
+        SystemMessage(content=preamble),
+        HumanMessage(content=query),
+    ]
+
     config: dict = {"configurable": {"thread_id": thread_id}}
 
     result = await _GRAPH.ainvoke(
-        {"messages": [HumanMessage(content=query)]},
+        {"messages": messages},
         config=config,
     )
-    messages = result.get("messages", [])
-    reply = _final_assistant_text(messages)
-    specialists = _specialists_reached(messages)
+    messages_out = result.get("messages", [])
+    reply = _final_assistant_text(messages_out)
+    specialists = _specialists_reached(messages_out)
 
     memory_saved = False
     if user_id != "anonymous" and reply.strip():
@@ -104,4 +122,6 @@ async def supervisor_target(inputs: dict[str, Any]) -> dict[str, Any]:
         "specialists_reached": specialists,
         "memory_saved": memory_saved,
         "thread_id": thread_id,
+        "market": resolution.market.value,
+        "market_source": resolution.source,
     }
