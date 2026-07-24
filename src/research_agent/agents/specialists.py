@@ -19,6 +19,7 @@
        coder_expert     — 拥有 ``code_execute_python``
        data_expert      — 拥有 ``fin_*`` A 股数据工具
        us_data_expert   — 拥有 ``us_*`` 美股（股票/指数/ETF）数据工具（yfinance）
+       us_filing_expert — 拥有 ``us_filing_*`` SEC EDGAR 披露工具
        report_expert    — 拥有 4 个 ``pdf_*`` 巨潮资讯公告工具
        knowledge_expert — 拥有 4 个 ``knowledge_*`` 用户 PDF 知识库工具，内置基于每次调用 ``quality`` 信号驱动的显式 corrective-RAG 循环。
 
@@ -287,6 +288,33 @@ REPORT_EXPERT_PROMPT = """\
 4. 如果请求不涉及 A 股公告/研报，说明情况并返回 — supervisor 会路由到其他专家。
 """
 
+US_FILING_EXPERT_PROMPT = """\
+你是美股 SEC EDGAR 披露专家。你的工具集是 ``us_filing_*`` 系列（实际前缀可能不同，以运行时传入的工具名为准）：
+
+  - ``us_filing_resolve_cik``              — ticker / CIK → 10 位 CIK
+  - ``us_filing_search_filings``           — 按 ticker/CIK + 表单类型列出近期披露（含 ``document_url``）
+  - ``us_filing_download_filing``          — 下载并缓存主文档（HTML/TXT/PDF）
+  - ``us_filing_extract_filing_metadata``  — 文件类型 / 大小 / PDF 页数
+  - ``us_filing_parse_filing_text``        — 有界正文提取（PDF 按页≤20；HTML/TXT 按字符窗口）
+
+一期表单：``10-K`` / ``10-Q`` / ``8-K`` / ``DEF 14A``（修订件如 ``10-K/A`` 也会匹配）。
+
+"提取 Apple 最新 10-K 风险因素"标准工作流：
+  1. ``search_filings(identifier="AAPL", forms="10-K", limit=5)``（必要时先 ``resolve_cik``）
+  2. 选最新一条且 ``document_url`` 非空的行
+  3. ``download_filing`` → ``local_path``
+  4. ``extract_filing_metadata`` → 确认 kind / num_pages / char_count
+  5. ``parse_filing_text`` → 提取 1-3 个窗口（Item 1A Risk Factors、MD&A、Item 8 等）。不要整篇读完。
+
+规则
+----
+1. 绝不用巨潮 ``pdf_*`` 工具；本专家只处理美股 EDGAR。
+2. 工具返回 ``error`` 时简要报告并停止；不要盲目重试（SEC 有速率限制）。
+3. 引用使用短摘录（每段 <200 字符），附带页码或字符偏移，并给出 ``document_url`` / accession。
+4. 若请求明显是 A 股披露（六位代码 / 巨潮 / 年报 PDF），说明并退回 supervisor。
+5. 每次被调度最多调用 **6 次**工具。
+"""
+
 
 def build_coder_expert(
     model_router: ModelRouter,
@@ -485,6 +513,35 @@ def build_report_expert(
     )
 
 
+def build_us_filing_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """美股 EDGAR 披露专家（``us_filing_server``）。
+
+    与 ``report_expert``（巨潮）平行隔离：只消费 ``us_filing_*`` 工具。
+
+    Args:
+        model_router: 共享路由器。
+        mcp_tools: 由 ``load_us_filing_server_tools()`` 返回的工具列表。必须非空。
+
+    Raises:
+        ValueError: 如果 ``mcp_tools`` 为空。
+    """
+    if not mcp_tools:
+        raise ValueError(
+            "us_filing_expert 需要 us_filing_server 的 MCP 工具；"
+            "收到了空序列。是否忘记调用 "
+            "``await load_us_filing_server_tools()``？"
+        )
+    return create_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        system_prompt=US_FILING_EXPERT_PROMPT,
+        name="us_filing_expert",
+    )
+
+
 def build_news_expert(
     model_router: ModelRouter,
     mcp_tools: Sequence[BaseTool],
@@ -617,6 +674,7 @@ SPECIALIST_BUILDERS = {
     "coder_expert": build_coder_expert,
     "data_expert": build_data_expert,
     "us_data_expert": build_us_data_expert,
+    "us_filing_expert": build_us_filing_expert,
     "fund_expert": build_fund_expert,
     "report_expert": build_report_expert,
     "news_expert": build_news_expert,
