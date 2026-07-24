@@ -182,7 +182,7 @@ async def _build_user_context_messages(
     )
 
     messages: list[BaseMessage] = []
-    context_parts: list[str] = [format_market_preamble(resolution)]
+    context_parts: list[str] = [format_market_preamble(resolution, query=query)]
 
     if user_id != "anonymous":
         user_ctx = await memory.get_user_context(user_id)

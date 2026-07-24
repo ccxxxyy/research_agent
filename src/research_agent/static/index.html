@@ -406,6 +406,7 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
             <option value="auto">自动</option>
             <option value="CN_A">A股</option>
             <option value="US">美股</option>
+            <option value="MIXED">跨市场</option>
           </select>
         </label>
         <label>知识库集合: <input id="collectionInput" value="default" title="上传 PDF 时写入的集合名称" /></label>
@@ -609,7 +610,8 @@ function getMarketOverride() {
 async function onMarketSelectChange() {
   const v = getMarketOverride();
   const userId = getUserId();
-  if (v === 'auto' || userId === 'anonymous') return;
+  // preferred_market 仅支持 CN_A / US；MIXED / auto 不写入偏好
+  if (v === 'auto' || v === 'MIXED' || userId === 'anonymous') return;
   try {
     await fetch('/api/memory/preferences', {
       method: 'POST',

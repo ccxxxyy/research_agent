@@ -190,7 +190,10 @@ _US_TICKER_STOPWORDS = frozenset(
 
 
 def parse_preferred_market(raw: str | None) -> Market | None:
-    """解析用户偏好字符串为 Market；非法值返回 None。"""
+    """解析用户偏好字符串为 Market；非法值返回 None。
+
+    偏好仅允许 ``CN_A`` / ``US``（不含 MIXED）。
+    """
     if not raw:
         return None
     text = raw.strip().upper().replace("-", "_").replace(" ", "_")
@@ -210,6 +213,27 @@ def parse_preferred_market(raw: str | None) -> Market | None:
     try:
         m = Market(text)
         if m in (Market.CN_A, Market.US):
+            return m
+    except ValueError:
+        pass
+    return None
+
+
+def parse_market_override(raw: str | None) -> Market | None:
+    """解析请求级市场覆盖（允许 ``CN_A`` / ``US`` / ``MIXED``）。"""
+    if not raw:
+        return None
+    text = raw.strip().upper().replace("-", "_").replace(" ", "_")
+    if text in {"AUTO", ""}:
+        return None
+    preferred = parse_preferred_market(text)
+    if preferred is not None:
+        return preferred
+    if text in {"MIXED", "BOTH", "CROSS", "CN_US"}:
+        return Market.MIXED
+    try:
+        m = Market(text)
+        if m in (Market.CN_A, Market.US, Market.MIXED):
             return m
     except ValueError:
         pass
@@ -342,6 +366,7 @@ def detect_market_from_query(query: str) -> MarketResolution:
             confidence=0.8,
             symbols=tuple(symbols),
             reasons=tuple(reasons) or ("both_cn_us_signals",),
+            notes="双边信号；按 MixedOrchestration 分侧路由后综合。",
         )
     if has_us:
         return MarketResolution(
@@ -416,17 +441,20 @@ async def resolve_market(
 ) -> MarketResolution:
     """完整市场解析：覆盖 → 问句 → 偏好 → 产品默认。"""
     if override is not None:
-        ov = override if isinstance(override, Market) else parse_preferred_market(str(override))
+        ov = override if isinstance(override, Market) else parse_market_override(str(override))
         if ov is not None and ov in (Market.CN_A, Market.US, Market.MIXED):
-            base = detect_market_from_query(query)
+            detected = detect_market_from_query(query)
+            notes = ""
+            if ov == Market.MIXED:
+                notes = "请求强制 MIXED；按双边子任务分别路由（见 MixedOrchestration）。"
             return MarketResolution(
                 market=ov,
                 source="request_override",
                 confidence=1.0,
-                symbols=base.symbols,
-                reasons=("explicit_override", *base.reasons),
+                symbols=detected.symbols,
+                reasons=("request_override", *detected.reasons),
                 preferred_market=None,
-                notes=base.notes if ov == Market.US else "",
+                notes=notes or detected.notes,
             )
 
     preferred: Market | None = None
@@ -470,8 +498,13 @@ async def resolve_market(
     )
 
 
-def format_market_preamble(resolution: MarketResolution) -> str:
-    """写入 supervisor 的 SystemMessage 片段。"""
+def format_market_preamble(resolution: MarketResolution, *, query: str = "") -> str:
+    """写入 supervisor 的 SystemMessage 片段。
+
+    ``query`` 可选：当 ``market=MIXED`` 时用于生成 ``[MixedOrchestration]`` 子任务清单。
+    """
+    from research_agent.market.orchestrate import build_mixed_orchestration_plan
+
     lines = [
         f"[MarketResolution] market={resolution.market.value} "
         f"source={resolution.source} confidence={resolution.confidence:.2f}",
@@ -493,6 +526,11 @@ def format_market_preamble(resolution: MarketResolution) -> str:
         "路由约束：CN_A → 使用已挂载的 A 股侧专家；"
         "US → 行情 us_* / 披露 us_filing_* / 新闻 us_news_* / 舆情 us_sentiment_*；"
         "禁止用 fin_* / news_* / sentiment_* / 巨潮 / fund_* 查美股；"
-        "MIXED → 先拆分子问题再分别路由（某一侧未挂载时如实说明）。"
+        "MIXED → 必须按下方 MixedOrchestration 分侧移交，最终分侧陈述再综合。"
     )
+
+    plan = build_mixed_orchestration_plan(resolution, query)
+    if plan is not None:
+        lines.append(plan.format_for_prompt())
+
     return "\n".join(lines)

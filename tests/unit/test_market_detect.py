@@ -9,9 +9,11 @@ from research_agent.market import (
     PREFERRED_MARKET_KEY,
     AssetClass,
     Market,
+    build_mixed_orchestration_plan,
     detect_market_from_query,
     extract_symbols_from_query,
     format_market_preamble,
+    parse_market_override,
     parse_preferred_market,
     resolve_market,
     set_user_preferred_market,
@@ -119,6 +121,39 @@ def test_format_preamble_contains_routing_constraint() -> None:
     assert "MarketResolution" in text
     assert "禁止" in text
     assert "US" in text
+
+
+def test_parse_market_override_accepts_mixed() -> None:
+    assert parse_market_override("MIXED") is Market.MIXED
+    assert parse_market_override("auto") is None
+    assert parse_preferred_market("MIXED") is None
+
+
+def test_build_mixed_plan_sides() -> None:
+    q = "对比宁德时代和特斯拉最近的股价表现"
+    r = detect_market_from_query(q)
+    plan = build_mixed_orchestration_plan(r, q)
+    assert plan is not None
+    assert plan.is_comparison is True
+    assert {t.side for t in plan.subtasks} >= {Market.CN_A, Market.US}
+
+
+def test_format_preamble_mixed_includes_orchestration() -> None:
+    q = "对比宁德时代和特斯拉最近的股价表现"
+    r = detect_market_from_query(q)
+    text = format_market_preamble(r, query=q)
+    assert r.market == Market.MIXED
+    assert "[MixedOrchestration]" in text
+    assert "data_expert" in text
+    assert "us_data_expert" in text
+    assert "mode=comparison" in text
+
+
+@pytest.mark.asyncio
+async def test_resolve_override_mixed_string() -> None:
+    r = await resolve_market("随便问问", override="MIXED")
+    assert r.market == Market.MIXED
+    assert r.source == "request_override"
 
 
 @pytest.mark.asyncio

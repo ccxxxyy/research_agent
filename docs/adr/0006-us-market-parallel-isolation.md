@@ -89,8 +89,16 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 ### 10. P4-UI 市场徽章（已落地）
 
 - 研究页 topbar 展示解析市场（`CN_A` / `US` / `MIXED`），来自 SSE `X-Market` / `X-Market-Source` 与 final metadata；
-- 输入区提供市场覆盖选择（`auto` / `CN_A` / `US`），强制选择时写入 `preferred_market`；
+- 输入区提供市场覆盖选择（`auto` / `CN_A` / `US` / `MIXED`），强制 `CN_A`/`US` 时写入 `preferred_market`；
 - 侧栏专家列表包含 `us_*` 专家。
+
+### 11. P5-MIXED 深度编排（已落地）
+
+- `build_mixed_orchestration_plan`：按双边标的 / 意图生成分侧子任务（experts + instruction）；
+- `format_market_preamble` 在 `market=MIXED` 时注入 `[MixedOrchestration]`；
+- supervisor 强制按清单分侧移交、禁止跨市场工具、最终分侧再综合；
+- `parse_market_override` 支持请求级强制 `MIXED`；
+- 评估集：`evals/datasets/mixed_market_routing.json`。
 
 ## 考虑过的替代方案
 
@@ -109,7 +117,7 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 
 **负面 / 中性**
 
-- 跨市场 MIXED 深度编排仍属后续；
+- 跨市场 MIXED 深度编排已落地（P5：``[MixedOrchestration]`` 分侧子任务）；
 - 英文舆情为关键词词典 PoC（可换 VADER / 专用模型）。
 
 ## 后续
@@ -122,3 +130,4 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
   - 语义缓存 US 域 — **已完成**
   - Eval（美股路由 / 隔离评估）— **已完成**
   - UI 市场徽章 — **已完成**
+- **P5（已完成）**：跨市场 MIXED 深度编排（`[MixedOrchestration]` 分侧子任务 + 评估集）
