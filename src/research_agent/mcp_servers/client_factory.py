@@ -66,6 +66,7 @@ NEWS_SERVER_MODULE = "research_agent.mcp_servers.news_server"
 NEWS_SENTIMENT_SERVER_MODULE = "research_agent.mcp_servers.news_sentiment_server"
 FUND_SERVER_MODULE = "research_agent.mcp_servers.fund_server"
 US_DATA_SERVER_MODULE = "research_agent.mcp_servers.us_data_server"
+US_FILING_SERVER_MODULE = "research_agent.mcp_servers.us_filing_server"
 
 
 async def load_code_server_tools() -> list[BaseTool]:
@@ -124,6 +125,26 @@ async def load_us_data_server_tools() -> list[BaseTool]:
     """
     client = MultiServerMCPClient(
         {"us": _stdio_server_spec(US_DATA_SERVER_MODULE)},
+        tool_name_prefix=True,
+    )
+    return await client.get_tools()
+
+
+async def load_us_filing_server_tools() -> list[BaseTool]:
+    """通过 stdio 启动 ``us_filing_server`` 并返回其工具列表。
+
+    暴露 SEC EDGAR 披露工具，每个通过 ``tool_name_prefix=True`` 添加 ``us_filing_`` 前缀：
+
+    - ``us_filing_resolve_cik``
+    - ``us_filing_search_filings``
+    - ``us_filing_download_filing``
+    - ``us_filing_extract_filing_metadata``
+    - ``us_filing_parse_filing_text``
+
+    与 ``pdf_report_server``（巨潮）**平行隔离**。
+    """
+    client = MultiServerMCPClient(
+        {"us_filing": _stdio_server_spec(US_FILING_SERVER_MODULE)},
         tool_name_prefix=True,
     )
     return await client.get_tools()
@@ -282,6 +303,7 @@ __all__ = [
     "NEWS_SERVER_MODULE",
     "PDF_REPORT_SERVER_MODULE",
     "US_DATA_SERVER_MODULE",
+    "US_FILING_SERVER_MODULE",
     "extract_text_content",
     "load_code_server_tools",
     "load_echo_server_tools",
@@ -293,4 +315,5 @@ __all__ = [
     "load_news_server_tools",
     "load_pdf_report_server_tools",
     "load_us_data_server_tools",
+    "load_us_filing_server_tools",
 ]

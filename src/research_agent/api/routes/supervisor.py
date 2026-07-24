@@ -444,6 +444,9 @@ _SYNTH_NODES_FOR_HISTORY = frozenset({"supervisor", "reflection"})
 _KNOWN_SPECIALISTS = frozenset(
     {
         "data_expert",
+        "us_data_expert",
+        "us_filing_expert",
+        "fund_expert",
         "report_expert",
         "coder_expert",
         "knowledge_expert",

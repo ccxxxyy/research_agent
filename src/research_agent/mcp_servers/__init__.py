@@ -31,6 +31,12 @@ Agent 通过``langchain_mcp_adapters.client.MultiServerMCPClient`` 发现并调�
     ``get_basic_info``、``get_index_quotes``、``get_etf_overview``（运行时前缀 ``us_``）。
     接入 research supervisor 的 ``us_data_expert`` 专家。
 
+``us_filing_server``
+    通过 SEC EDGAR 获取美股披露（与 ``pdf_report_server`` 平行隔离）。
+    工具：``resolve_cik``、``search_filings``、``download_filing``、
+    ``extract_filing_metadata``、``parse_filing_text``（运行时前缀 ``us_filing_``）。
+    接入 research supervisor 的 ``us_filing_expert`` 专家。
+
 ``pdf_report_server``
     巨潮资讯的公告 / 研报 PDF。四个工具：
     ``search_announcements``、``download_pdf``（基于哈希的磁盘缓存，位于 ``./data/pdf_cache/``）、
@@ -60,6 +66,7 @@ ACTIVE_SERVERS: tuple[str, ...] = (
     "code_server",
     "fin_data_server",
     "us_data_server",
+    "us_filing_server",
     "pdf_report_server",
     "news_server",
     "knowledge_server",
@@ -98,6 +105,7 @@ if TYPE_CHECKING:  # pragma: no cover - 辅助类型检查器和 IDE 自动补�
         news_server,
         pdf_report_server,
         us_data_server,
+        us_filing_server,
     )
 
 
@@ -110,4 +118,5 @@ __all__ = [
     "news_server",
     "pdf_report_server",
     "us_data_server",
+    "us_filing_server",
 ]

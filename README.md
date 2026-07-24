@@ -688,7 +688,8 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 ## 十四、Roadmap（待做）
 
 - **美股 P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` 已挂载（股票/指数/ETF）— 见 [ADR-0006](docs/adr/0006-us-market-parallel-isolation.md)
-- **美股 P2+**：EDGAR 披露 / 美股新闻舆情；跨市场 MIXED 编排
+- **美股 P2（已完成）**：`us_filing_server`（EDGAR）+ `us_filing_expert`（10-K/10-Q/8-K/DEF 14A）
+- **美股 P3+**：美股新闻舆情；跨市场 MIXED 编排
 - 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）
