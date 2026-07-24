@@ -12,12 +12,15 @@
 5. ``get_basic_info`` — 公司 / ETF 概况
 6. ``get_index_quotes`` — 主要美股指数快照
 7. ``get_etf_overview`` — ETF 概况（持仓规模、类别等可得字段）
+8. ``get_etf_holdings`` — ETF 重仓股（Yahoo top holdings）
+9. ``get_etf_sector_weights`` — ETF 行业权重与大类资产占比
 
 设计说明
 --------
 - ``yfinance`` 为同步 I/O，一律 ``asyncio.to_thread``。
 - 错误返回 ``{"error": "...", "context": "..."}``，不抛异常以免弄死 stdio。
 - 工具结果走 ``cached_tool`` TTL 分层（与 A 股工具缓存同框架，namespace=``us``）。
+- ETF 深化走 ``Ticker.funds_data``（与 A 股 ``fund_get_fund_holdings`` 平行，不混用）。
 """
 
 from __future__ import annotations
@@ -89,6 +92,87 @@ def _normalize_ticker(symbol: str) -> str:
         "COMP": "^IXIC",
     }
     return aliases.get(s, s)
+
+
+def _pct_display(weight: Any) -> float | None:
+    """将 Yahoo 持仓权重规范为百分比数值（如 0.048 → 4.8）。"""
+    if weight is None:
+        return None
+    try:
+        w = float(weight)
+    except (TypeError, ValueError):
+        return None
+    # Yahoo Holding Percent / sector weight 多为 0–1 小数
+    if 0.0 <= w <= 1.0:
+        return round(w * 100.0, 4)
+    return round(w, 4)
+
+
+def _serialize_top_holdings(df: Any, *, top_n: int) -> list[dict[str, Any]]:
+    """把 ``funds_data.top_holdings`` DataFrame 转成 JSON 友好列表。"""
+    if df is None:
+        return []
+    try:
+        empty = getattr(df, "empty", True)
+    except Exception:  # noqa: BLE001
+        return []
+    if empty:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    # 索引为 Symbol；列通常含 Name / Holding Percent
+    try:
+        limited = df.head(top_n)
+    except Exception:  # noqa: BLE001
+        limited = df
+
+    for symbol, row in limited.iterrows():
+        name = None
+        weight_raw = None
+        try:
+            name = row.get("Name") if hasattr(row, "get") else row["Name"]
+        except Exception:  # noqa: BLE001
+            name = None
+        try:
+            weight_raw = (
+                row.get("Holding Percent") if hasattr(row, "get") else row["Holding Percent"]
+            )
+        except Exception:  # noqa: BLE001
+            # 兼容列名变体
+            for key in ("HoldingPercent", "holdingPercent", "% Assets", "Weight"):
+                try:
+                    weight_raw = row.get(key) if hasattr(row, "get") else row[key]
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+        weight_pct = _pct_display(weight_raw)
+        rows.append(
+            {
+                "symbol": str(symbol),
+                "name": None if name is None else str(name),
+                "weight_pct": weight_pct,
+                "weight_raw": _json_safe(weight_raw),
+            }
+        )
+    return rows
+
+
+def _serialize_weight_map(raw: Any) -> list[dict[str, Any]]:
+    """把 sector_weightings / asset_classes 的 dict 转成排序后的列表。"""
+    if not isinstance(raw, dict) or not raw:
+        return []
+    items: list[dict[str, Any]] = []
+    for key, val in raw.items():
+        pct = _pct_display(val)
+        items.append(
+            {
+                "name": str(key),
+                "weight_pct": pct,
+                "weight_raw": _json_safe(val),
+            }
+        )
+    items.sort(key=lambda x: (x["weight_pct"] is None, -(x["weight_pct"] or 0.0)))
+    return items
 
 
 def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
@@ -507,6 +591,100 @@ async def get_etf_overview(symbol: str) -> dict:
         return await asyncio.to_thread(_call)
     except Exception as e:  # noqa: BLE001
         return _fmt_error(e, context=f"get_etf_overview({symbol!r})")
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="us")
+async def get_etf_holdings(symbol: str, top_n: int = 10) -> dict:
+    """获取美股 ETF 重仓股（Yahoo Finance top holdings）。
+
+    Args:
+        symbol: ETF ticker，如 ``SPY``、``QQQ``、``IWM``、``VOO``。
+        top_n: 返回前 N 大持仓，默认 10，范围 1–25。
+    """
+    n = max(1, min(int(top_n), 25))
+
+    def _call() -> dict[str, Any]:
+        import yfinance as yf
+
+        ticker = _normalize_ticker(symbol)
+        t = yf.Ticker(ticker)
+        funds = getattr(t, "funds_data", None)
+        if funds is None:
+            return {
+                "error": "funds_data unavailable (not an ETF/fund or yfinance too old)",
+                "context": f"get_etf_holdings({ticker!r})",
+                "symbol": ticker,
+            }
+        try:
+            top = funds.top_holdings
+        except Exception as exc:  # noqa: BLE001
+            return _fmt_error(exc, context=f"get_etf_holdings({ticker!r}).top_holdings")
+
+        holdings = _serialize_top_holdings(top, top_n=n)
+        return {
+            "symbol": ticker,
+            "holdings": holdings,
+            "count": len(holdings),
+            "top_n": n,
+            "note": "Yahoo 通常仅披露前十大持仓；权重为可得快照，非实时全持仓。",
+            "source": "yfinance.funds_data",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker}/holdings",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=f"get_etf_holdings({symbol!r})")
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="us")
+async def get_etf_sector_weights(symbol: str) -> dict:
+    """获取美股 ETF 行业权重与大类资产占比（Yahoo funds_data）。
+
+    Args:
+        symbol: ETF ticker，如 ``SPY``、``QQQ``、``IWM``、``VOO``。
+    """
+
+    def _call() -> dict[str, Any]:
+        import yfinance as yf
+
+        ticker = _normalize_ticker(symbol)
+        t = yf.Ticker(ticker)
+        funds = getattr(t, "funds_data", None)
+        if funds is None:
+            return {
+                "error": "funds_data unavailable (not an ETF/fund or yfinance too old)",
+                "context": f"get_etf_sector_weights({ticker!r})",
+                "symbol": ticker,
+            }
+        sectors_raw: Any = None
+        assets_raw: Any = None
+        try:
+            sectors_raw = funds.sector_weightings
+        except Exception as exc:  # noqa: BLE001
+            return _fmt_error(exc, context=f"get_etf_sector_weights({ticker!r}).sector")
+        try:
+            assets_raw = funds.asset_classes
+        except Exception:  # noqa: BLE001
+            assets_raw = None
+
+        sectors = _serialize_weight_map(sectors_raw)
+        asset_classes = _serialize_weight_map(assets_raw)
+        return {
+            "symbol": ticker,
+            "sectors": sectors,
+            "asset_classes": asset_classes,
+            "sector_count": len(sectors),
+            "source": "yfinance.funds_data",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker}/holdings",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=f"get_etf_sector_weights({symbol!r})")
 
 
 if __name__ == "__main__":

@@ -233,10 +233,13 @@ SUPERVISOR_PROMPT_US_DATA = """\
         * us_get_basic_info     — 公司 / ETF 概况
         * us_get_index_quotes   — 标普 / 道指 / 纳指等主要指数
         * us_get_etf_overview   — ETF 概况
+        * us_get_etf_holdings   — ETF 重仓股
+        * us_get_etf_sector_weights — ETF 行业权重 / 资产大类
     路由策略：
       - 美股大盘 / 指数 → get_market_status + get_index_quotes
       - 个股 / ETF 报价与走势 → search_ticker（如需）+ get_quote / get_price_history
-      - 公司概况 → get_basic_info；ETF 深度 → get_etf_overview
+      - 公司概况 → get_basic_info；ETF 概况 → get_etf_overview
+      - ETF 持仓 / 行业分布 → get_etf_holdings / get_etf_sector_weights
     禁止把美股问句交给 A 股行情 / 新闻 / 基金专家。
 """
 

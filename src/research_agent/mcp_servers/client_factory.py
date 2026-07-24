@@ -122,6 +122,8 @@ async def load_us_data_server_tools() -> list[BaseTool]:
     - ``us_get_basic_info``
     - ``us_get_index_quotes``
     - ``us_get_etf_overview``
+    - ``us_get_etf_holdings``
+    - ``us_get_etf_sector_weights``
 
     与 ``fin_data_server`` **平行隔离**；数据源为 ``yfinance``。
     """

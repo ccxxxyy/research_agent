@@ -54,6 +54,12 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - `us_data_expert` 挂入 research supervisor roster；
 - 判定为 US 时路由至美股行情专家，**禁止**用 A 股 `fin_*` / `news_*` 查美股。
 
+### 5b. P4-ETF 行为（已落地，P4 子集）
+
+- `us_get_etf_holdings`：Yahoo top holdings（重仓股 + 权重）；
+- `us_get_etf_sector_weights`：行业权重 + 大类资产占比（`funds_data`）；
+- 仍并入 `us_data_expert`，不另开 `us_etf_expert`；**禁止**用 A 股 `fund_*` 查美股 ETF 持仓。
+
 ### 6. P2 行为（已落地）
 
 - `us_filing_server`（SEC EDGAR）暴露 `us_filing_*` 工具；
@@ -91,4 +97,4 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - **P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` + 接入 supervisor roster
 - **P2（已完成）**：EDGAR `us_filing_server` + `us_filing_expert`
 - **P3（已完成）**：`us_news` / `us_sentiment`
-- **P4**：ETF 深化、语义缓存 US 域、eval、UI 市场徽章
+- **P4**：ETF 深化（**已完成子集**：持仓 / 行业权重）、语义缓存 US 域、eval、UI 市场徽章

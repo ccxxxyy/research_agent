@@ -28,7 +28,7 @@ Agent 通过``langchain_mcp_adapters.client.MultiServerMCPClient`` 发现并调�
 ``us_data_server``
     通过 ``yfinance`` 获取美股股票 / 指数 / ETF 数据（与 ``fin_data_server`` 平行隔离）。
     工具：``get_market_status``、``search_ticker``、``get_quote``、``get_price_history``、
-    ``get_basic_info``、``get_index_quotes``、``get_etf_overview``（运行时前缀 ``us_``）。
+    ``get_basic_info``、``get_index_quotes``、``get_etf_overview``、``get_etf_holdings``、``get_etf_sector_weights``（运行时前缀 ``us_``）。
     接入 research supervisor 的 ``us_data_expert`` 专家。
 
 ``us_filing_server``

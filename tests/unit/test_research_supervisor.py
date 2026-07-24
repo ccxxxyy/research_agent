@@ -122,6 +122,8 @@ def fake_us_data_tools() -> list[BaseTool]:
         _fake_tool("us_get_basic_info"),
         _fake_tool("us_get_index_quotes"),
         _fake_tool("us_get_etf_overview"),
+        _fake_tool("us_get_etf_holdings"),
+        _fake_tool("us_get_etf_sector_weights"),
     ]
 
 

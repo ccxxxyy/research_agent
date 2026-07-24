@@ -161,3 +161,89 @@ async def test_get_etf_overview_mocked():
     assert "error" not in result
     assert result["etf"]["symbol"] == "SPY"
     assert result["etf"]["quote_type"] == "ETF"
+
+
+def test_pct_display_and_serialize_helpers():
+    from research_agent.mcp_servers.us_data_server import (
+        _pct_display,
+        _serialize_top_holdings,
+        _serialize_weight_map,
+    )
+
+    assert _pct_display(0.048) == pytest.approx(4.8)
+    assert _pct_display(4.8) == pytest.approx(4.8)
+    assert _pct_display(None) is None
+
+    df = pd.DataFrame(
+        {"Name": ["Apple Inc", "Microsoft Corp"], "Holding Percent": [0.07, 0.06]},
+        index=pd.Index(["AAPL", "MSFT"], name="Symbol"),
+    )
+    rows = _serialize_top_holdings(df, top_n=1)
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "AAPL"
+    assert rows[0]["weight_pct"] == pytest.approx(7.0)
+
+    sectors = _serialize_weight_map({"technology": 0.35, "healthcare": 0.12})
+    assert sectors[0]["name"] == "technology"
+    assert sectors[0]["weight_pct"] == pytest.approx(35.0)
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    holdings_df = pd.DataFrame(
+        {
+            "Name": ["Apple Inc", "Microsoft Corp", "NVIDIA Corp"],
+            "Holding Percent": [0.07, 0.065, 0.06],
+        },
+        index=pd.Index(["AAPL", "MSFT", "NVDA"], name="Symbol"),
+    )
+    mock_funds = MagicMock()
+    mock_funds.top_holdings = holdings_df
+    mock_ticker = MagicMock()
+    mock_ticker.funds_data = mock_funds
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = await mod.get_etf_holdings("spy", top_n=2)
+
+    assert "error" not in result
+    assert result["symbol"] == "SPY"
+    assert result["count"] == 2
+    assert result["holdings"][0]["symbol"] == "AAPL"
+    assert result["holdings"][0]["weight_pct"] == pytest.approx(7.0)
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_unavailable_funds_data():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    mock_ticker = MagicMock()
+    mock_ticker.funds_data = None
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = await mod.get_etf_holdings("AAPL")
+
+    assert "error" in result
+    assert result["symbol"] == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_get_etf_sector_weights_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    mock_funds = MagicMock()
+    mock_funds.sector_weightings = {"technology": 0.4, "financial_services": 0.15}
+    mock_funds.asset_classes = {"stockPosition": 0.99, "cashPosition": 0.01}
+    mock_ticker = MagicMock()
+    mock_ticker.funds_data = mock_funds
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = await mod.get_etf_sector_weights("QQQ")
+
+    assert "error" not in result
+    assert result["symbol"] == "QQQ"
+    assert result["sector_count"] == 2
+    assert result["sectors"][0]["name"] == "technology"
+    assert result["sectors"][0]["weight_pct"] == pytest.approx(40.0)
+    assert any(a["name"] == "stockPosition" for a in result["asset_classes"])

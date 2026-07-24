@@ -412,6 +412,8 @@ US_DATA_EXPERT_PROMPT = """\
   - ``us_get_basic_info``     — 公司 / ETF 概况。
   - ``us_get_index_quotes``   — 主要美股指数快照（标普 / 道指 / 纳指 / NDX / 罗素2000 / VIX）。
   - ``us_get_etf_overview``   — ETF 概况（规模、类别、收益等可得字段）。
+  - ``us_get_etf_holdings``   — ETF 重仓股（Yahoo top holdings，含权重）。
+  - ``us_get_etf_sector_weights`` — ETF 行业权重与大类资产占比。
 
 一期范围：美股普通股、主要指数、ETF。不含共同基金、期权。
 
@@ -423,7 +425,9 @@ US_DATA_EXPERT_PROMPT = """\
    - 大盘 / 指数 / 美股整体走势 → get_market_status + get_index_quotes
    - 个股报价 / 走势 → search_ticker（如需要）+ get_quote / get_price_history
    - 公司概况 → get_basic_info
-   - ETF → get_etf_overview（可辅以 get_quote / get_price_history）
+   - ETF 概况 → get_etf_overview（可辅以 get_quote / get_price_history）
+   - ETF 持仓 / 重仓股 → get_etf_holdings
+   - ETF 行业分布 / 资产大类 → get_etf_sector_weights
 2. 用户给中文/英文名而无 ticker 时，先 ``search_ticker``；绝不猜测 ticker。
 3. 工具返回 ``error`` 时简要报告并停止；不要循环重试。
 4. 总结要有深度：引用具体数字与涨跌幅，说明对比与含义。
