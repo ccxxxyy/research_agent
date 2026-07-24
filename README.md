@@ -1,4 +1,4 @@
-# 金融多智能体研究系统
+# 金融多智能体研究助手
 
 > **基于 LangGraph + MCP + Agentic RAG 的多智能体深度研究系统**
 > 面向 A 股二级市场研究：行情、基金、披露公告、新闻舆情、研究报告知识库 —— 一个 supervisor + 七个 specialist 协作完成。
@@ -707,7 +707,8 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 - **美股 P4-ETF（已完成）**：`us_get_etf_holdings` / `us_get_etf_sector_weights`（并入 `us_data_expert`）
 - **美股 P4-语义缓存（已完成）**：种子 `market=CN_A|US|SHARED` + 按解析市场过滤
 - **美股 P4-Eval（已完成）**：`us_market_routing` 样本 + `market_routing_accuracy` / `market_isolation`
-- **美股 P4+**：跨市场 MIXED 编排、UI 市场徽章
+- **美股 P4-UI（已完成）**：研究页市场徽章 + 市场覆盖选择 + `us_*` 专家列表
+- **美股后续**：跨市场 MIXED 深度编排
 - 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）

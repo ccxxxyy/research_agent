@@ -45,7 +45,7 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 @keyframes convPulse{0%,100%{opacity:1}50%{opacity:.2}}
 .conv-empty{font-size:12px;color:var(--text2);padding:8px 20px;opacity:0.6}
 
-.specialist-list{padding:0 12px;overflow-y:auto;max-height:260px;scrollbar-width:none}
+.specialist-list{padding:0 12px;overflow-y:auto;max-height:320px;scrollbar-width:none}
 .specialist-list:hover{scrollbar-width:thin;scrollbar-color:rgba(46,47,69,0.5) transparent}
 .specialist-list::-webkit-scrollbar{width:0;transition:width .2s}
 .specialist-list:hover::-webkit-scrollbar{width:3px}
@@ -78,6 +78,16 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .topbar .status-label{font-size:12px;color:var(--text2)}
 .topbar .thread-id{margin-left:auto;font-size:11px;color:var(--text2);font-family:monospace;background:var(--surface2);padding:4px 10px;border-radius:6px}
 .topbar .req-id{font-size:11px;color:var(--text2);font-family:monospace}
+.topbar .resolved-mkt{font-size:11px;font-weight:700;letter-spacing:.4px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);color:var(--text2);background:var(--surface2);white-space:nowrap}
+.topbar .resolved-mkt.cn-a{color:#38bdf8;border-color:rgba(56,189,248,.35);background:rgba(56,189,248,.12)}
+.topbar .resolved-mkt.us{color:#fbbf24;border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.12)}
+.topbar .resolved-mkt.mixed{color:#c084fc;border-color:rgba(192,132,252,.35);background:rgba(192,132,252,.12)}
+.topbar .resolved-mkt.unknown{color:var(--text2)}
+.msg .mkt-chip{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.3px;padding:2px 8px;border-radius:999px;margin-left:8px;vertical-align:middle;border:1px solid var(--border);color:var(--text2)}
+.msg .mkt-chip.cn-a{color:#38bdf8;border-color:rgba(56,189,248,.35);background:rgba(56,189,248,.1)}
+.msg .mkt-chip.us{color:#fbbf24;border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.1)}
+.msg .mkt-chip.mixed{color:#c084fc;border-color:rgba(192,132,252,.35);background:rgba(192,132,252,.1)}
+.input-meta select{background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text);font-size:11px;outline:none}
 
 /* Messages area */
 .messages{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:16px}
@@ -340,14 +350,15 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
     <div class="topbar">
       <div class="status-dot" id="statusDot"></div>
       <span class="status-label" id="statusLabel">连接中...</span>
+      <span class="resolved-mkt unknown" id="resolvedMarketBadge" title="本次问句解析出的市场（CN_A / US / MIXED）">市场 —</span>
       <span class="thread-id" id="threadDisplay">-</span>
     </div>
 
     <div class="messages" id="messages">
       <div class="dashboard" id="dashboard">
         <div class="dash-header">
-          <span class="dash-title">A 股金融研究助手</span>
-          <span class="dash-desc">基于 LangGraph 多智能体协作的金融深度研究系统 · 输入问题自动路由专家调研</span>
+          <span class="dash-title">金融研究助手</span>
+          <span class="dash-desc">基于 LangGraph 多智能体协作的金融深度研究系统</span>
         </div>
         <div class="dash-status" id="dashStatus">
           <span class="market-badge closed" id="dashBadge">加载中</span>
@@ -390,6 +401,13 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
       </div>
       <div class="input-meta">
         <label>用户 ID: <input id="userIdInput" value="demo_user" onchange="refreshKnowledgeCollections();loadConversations()" /></label>
+        <label>市场:
+          <select id="marketSelect" title="auto=按问句信号与用户偏好判定；也可强制 A 股或美股" onchange="onMarketSelectChange()">
+            <option value="auto">自动</option>
+            <option value="CN_A">A股</option>
+            <option value="US">美股</option>
+          </select>
+        </label>
         <label>知识库集合: <input id="collectionInput" value="default" title="上传 PDF 时写入的集合名称" /></label>
       </div>
     </div>
@@ -400,13 +418,17 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 
 <script>
 const ALL_SPECIALISTS = [
-  {id:'data_expert',    label:'数据专家',    desc:'财务数据 / 行情'},
-  {id:'fund_expert',    label:'基金专家',    desc:'基金分析 / ETF'},
-  {id:'report_expert',  label:'公告专家',    desc:'公告 / 年报 PDF'},
-  {id:'coder_expert',   label:'代码专家',    desc:'Python 计算'},
-  {id:'news_expert',    label:'新闻专家',    desc:'新闻 / 快讯'},
-  {id:'knowledge_expert',label:'知识库专家', desc:'用户知识库'},
-  {id:'sentiment_expert',label:'舆情专家',   desc:'舆情量化'},
+  {id:'data_expert',         label:'数据专家',     desc:'A股财务 / 行情'},
+  {id:'fund_expert',         label:'基金专家',     desc:'基金分析 / ETF'},
+  {id:'report_expert',       label:'公告专家',     desc:'巨潮公告 / 年报'},
+  {id:'coder_expert',        label:'代码专家',     desc:'Python 计算'},
+  {id:'news_expert',         label:'新闻专家',     desc:'A股新闻 / 快讯'},
+  {id:'knowledge_expert',    label:'知识库专家',   desc:'用户知识库'},
+  {id:'sentiment_expert',    label:'舆情专家',     desc:'A股舆情量化'},
+  {id:'us_data_expert',      label:'美股数据专家',     desc:'美股行情 / ETF'},
+  {id:'us_filing_expert',    label:'美股披露专家',     desc:'SEC EDGAR'},
+  {id:'us_news_expert',      label:'美股新闻专家',     desc:'Yahoo 新闻'},
+  {id:'us_sentiment_expert', label:'美股舆情专家',     desc:'英文舆情'},
 ];
 
 // =====================================================================
@@ -544,6 +566,65 @@ function getUserId() {
   return document.getElementById('userIdInput').value.trim() || 'anonymous';
 }
 
+const MARKET_LABELS = {CN_A:'A股', US:'美股', MIXED:'跨市场', UNKNOWN:'未判定'};
+
+function _marketCssClass(market) {
+  const m = String(market || 'UNKNOWN').toUpperCase().replace('-', '_');
+  if (m === 'CN_A') return 'cn-a';
+  if (m === 'US') return 'us';
+  if (m === 'MIXED') return 'mixed';
+  return 'unknown';
+}
+
+function setResolvedMarketBadge(market, source, msgEl) {
+  const m = String(market || '').toUpperCase().replace('-', '_') || 'UNKNOWN';
+  const label = MARKET_LABELS[m] || m;
+  const css = _marketCssClass(m);
+  const top = document.getElementById('resolvedMarketBadge');
+  if (top) {
+    top.textContent = '市场 ' + label;
+    top.className = 'resolved-mkt ' + css;
+    top.title = `解析市场: ${m}` + (source ? ` · 来源: ${source}` : '');
+  }
+  if (msgEl) {
+    let chip = msgEl.querySelector('.mkt-chip');
+    if (!chip) {
+      chip = document.createElement('span');
+      chip.className = 'mkt-chip';
+      const phase = msgEl.querySelector('.phase-tag');
+      if (phase) phase.appendChild(chip);
+      else msgEl.prepend(chip);
+    }
+    chip.className = 'mkt-chip ' + css;
+    chip.textContent = label;
+    chip.title = source ? `来源: ${source}` : m;
+  }
+}
+
+function getMarketOverride() {
+  const el = document.getElementById('marketSelect');
+  return el ? el.value : 'auto';
+}
+
+async function onMarketSelectChange() {
+  const v = getMarketOverride();
+  const userId = getUserId();
+  if (v === 'auto' || userId === 'anonymous') return;
+  try {
+    await fetch('/api/memory/preferences', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-ID': userId,
+      },
+      body: JSON.stringify({ key: 'preferred_market', content: v }),
+    });
+    showToast(`已保存市场偏好: ${MARKET_LABELS[v] || v}`);
+  } catch {
+    /* 偏好写入失败不影响本次请求覆盖 */
+  }
+}
+
 // =====================================================================
 // 会话列表（侧边栏）
 // =====================================================================
@@ -609,10 +690,12 @@ async function switchConversation(threadId) {
   // 如果该 thread 的 DOM 容器已经在内存中（正在流式或刚完成），直接显示
   if (threadData.has(threadId)) {
     msgArea.innerHTML = '';
-    msgArea.appendChild(threadData.get(threadId).el);
+    const td = threadData.get(threadId);
+    msgArea.appendChild(td.el);
+    if (td.market) setResolvedMarketBadge(td.market, td.market_source);
+    else setResolvedMarketBadge('UNKNOWN', '');
     // 恢复该会话的专家高亮
     if (streamingThreads.has(threadId)) {
-      const td = threadData.get(threadId);
       if (td._activeSpecialist) highlightSpecialist(td._activeSpecialist);
     } else {
       clearHighlights();
@@ -646,6 +729,8 @@ async function switchConversation(threadId) {
     });
     msgArea.innerHTML = '';
     msgArea.appendChild(container);
+    setResolvedMarketBadge('UNKNOWN', '');
+    scrollToBottom();
     scrollToBottom();
   } catch {
     msgArea.innerHTML = '<div style="text-align:center;color:var(--red);padding:40px">加载失败</div>';
@@ -678,8 +763,8 @@ function showDashboard() {
   const m = document.getElementById('messages');
   m.innerHTML = `<div class="dashboard" id="dashboard">
     <div class="dash-header">
-      <span class="dash-title">A 股金融研究助手</span>
-      <span class="dash-desc">基于 LangGraph 多智能体协作的深度研究系统 · 输入问题自动路由专家调研</span>
+      <span class="dash-title">金融研究助手</span>
+      <span class="dash-desc">基于 LangGraph 多智能体协作的金融深度研究系统</span>
     </div>
     <div class="dash-status" id="dashStatus">
       <span class="market-badge closed" id="dashBadge">加载中</span>
@@ -1013,6 +1098,7 @@ function escHtmlAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').
 function newThread() {
   currentThread = null;
   document.getElementById('threadDisplay').textContent = '-';
+  setResolvedMarketBadge('UNKNOWN', '');
   showDashboard();
   clearHighlights();
   _updateSendBtn();
@@ -1084,7 +1170,12 @@ async function _runStream(query, sendThreadId, userId) {
     const resp = await fetch('/api/supervisor/research/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ query, user_id: userId, thread_id: threadId }),
+      body: JSON.stringify({
+        query,
+        user_id: userId,
+        thread_id: threadId,
+        market: getMarketOverride(),
+      }),
       signal: abortCtrl.signal,
     });
 
@@ -1095,6 +1186,9 @@ async function _runStream(query, sendThreadId, userId) {
 
     const resolvedId = resp.headers.get('X-Thread-ID');
     if (resolvedId) threadId = resolvedId;
+
+    const hdrMarket = resp.headers.get('X-Market');
+    const hdrMarketSource = resp.headers.get('X-Market-Source');
 
     // 注册流状态
     const container = _getOrCreateThreadEl(threadId);
@@ -1112,6 +1206,15 @@ async function _runStream(query, sendThreadId, userId) {
     const handoffsEl = msgEl.querySelector('.handoffs');
     const contentEl = msgEl.querySelector('.content');
     const typingEl = msgEl.querySelector('.typing');
+
+    if (hdrMarket) {
+      setResolvedMarketBadge(hdrMarket, hdrMarketSource, msgEl);
+      const td0 = threadData.get(threadId);
+      if (td0) {
+        td0.market = hdrMarket;
+        td0.market_source = hdrMarketSource;
+      }
+    }
 
     // 如果发送时还在看这个线程（或是新会话），切换到它
     if (!sendThreadId || sendThreadId === threadId || currentThread === null || currentThread === sendThreadId) {
@@ -1213,6 +1316,11 @@ async function _runStream(query, sendThreadId, userId) {
             contentEl.innerHTML = renderMarkdown(finalText);
             typingEl.style.display = 'none';
             td._activeSpecialist = null;
+            if (evt.metadata?.market) {
+              setResolvedMarketBadge(evt.metadata.market, evt.metadata.market_source, msgEl);
+              td.market = evt.metadata.market;
+              td.market_source = evt.metadata.market_source;
+            }
             if (viewing) clearHighlights();
             _scrollIfViewing(threadId);
             break;

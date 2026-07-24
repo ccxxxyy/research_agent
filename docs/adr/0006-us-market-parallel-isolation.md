@@ -86,6 +86,12 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - `supervisor_target` 注入 `[MarketResolution]` 前导，与生产对齐；
 - 默认本地/LangSmith 评估合并 CN + US 样本集。
 
+### 10. P4-UI 市场徽章（已落地）
+
+- 研究页 topbar 展示解析市场（`CN_A` / `US` / `MIXED`），来自 SSE `X-Market` / `X-Market-Source` 与 final metadata；
+- 输入区提供市场覆盖选择（`auto` / `CN_A` / `US`），强制选择时写入 `preferred_market`；
+- 侧栏专家列表包含 `us_*` 专家。
+
 ## 考虑过的替代方案
 
 | 方案 | 否决理由 |
@@ -103,7 +109,7 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 
 **负面 / 中性**
 
-- 跨市场 MIXED 深度编排与 UI 市场徽章仍属后续；
+- 跨市场 MIXED 深度编排仍属后续；
 - 英文舆情为关键词词典 PoC（可换 VADER / 专用模型）。
 
 ## 后续
@@ -115,4 +121,4 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
   - ETF 深化 — **已完成**
   - 语义缓存 US 域 — **已完成**
   - Eval（美股路由 / 隔离评估）— **已完成**
-  - UI 市场徽章 — **待做**
+  - UI 市场徽章 — **已完成**
