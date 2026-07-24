@@ -24,6 +24,7 @@ from research_agent.agents.specialists import (
     build_news_expert,
     build_report_expert,
     build_us_data_expert,
+    build_us_filing_expert,
 )
 from research_agent.config import LLMConfig
 from research_agent.graph.research_supervisor import (
@@ -34,6 +35,7 @@ from research_agent.graph.research_supervisor import (
     SUPERVISOR_PROMPT_NEWS,
     SUPERVISOR_PROMPT_REPORT,
     SUPERVISOR_PROMPT_US_DATA,
+    SUPERVISOR_PROMPT_US_FILING,
     _build_supervisor_prompt,
     build_research_supervisor,
 )
@@ -120,6 +122,17 @@ def fake_us_data_tools() -> list[BaseTool]:
 
 
 @pytest.fixture
+def fake_us_filing_tools() -> list[BaseTool]:
+    return [
+        _fake_tool("us_filing_resolve_cik"),
+        _fake_tool("us_filing_search_filings"),
+        _fake_tool("us_filing_download_filing"),
+        _fake_tool("us_filing_extract_filing_metadata"),
+        _fake_tool("us_filing_parse_filing_text"),
+    ]
+
+
+@pytest.fixture
 def router() -> ModelRouter:
     # 假凭据 — 仅用于编译阶段，此处不会发生网络调用。
     cfg = LLMConfig(
@@ -138,11 +151,13 @@ class TestSpecialistBuilders:
     def test_registry_contains_new_specialists(self) -> None:
         assert "data_expert" in SPECIALIST_BUILDERS
         assert "us_data_expert" in SPECIALIST_BUILDERS
+        assert "us_filing_expert" in SPECIALIST_BUILDERS
         assert "report_expert" in SPECIALIST_BUILDERS
         assert "knowledge_expert" in SPECIALIST_BUILDERS
         assert "news_expert" in SPECIALIST_BUILDERS
         assert SPECIALIST_BUILDERS["data_expert"] is build_data_expert
         assert SPECIALIST_BUILDERS["us_data_expert"] is build_us_data_expert
+        assert SPECIALIST_BUILDERS["us_filing_expert"] is build_us_filing_expert
         assert SPECIALIST_BUILDERS["report_expert"] is build_report_expert
         assert SPECIALIST_BUILDERS["knowledge_expert"] is build_knowledge_expert
         assert SPECIALIST_BUILDERS["news_expert"] is build_news_expert
@@ -154,6 +169,10 @@ class TestSpecialistBuilders:
     def test_us_data_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="us_data_server"):
             build_us_data_expert(router, [])
+
+    def test_us_filing_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
+        with pytest.raises(ValueError, match="us_filing_server"):
+            build_us_filing_expert(router, [])
 
     def test_report_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="pdf_report_server"):
@@ -182,6 +201,13 @@ class TestSpecialistBuilders:
         agent = build_us_data_expert(router, fake_us_data_tools)
         assert hasattr(agent, "ainvoke")
         assert getattr(agent, "name", None) == "us_data_expert"
+
+    def test_us_filing_expert_compiles_with_tools(
+        self, router: ModelRouter, fake_us_filing_tools: list[BaseTool]
+    ) -> None:
+        agent = build_us_filing_expert(router, fake_us_filing_tools)
+        assert hasattr(agent, "ainvoke")
+        assert getattr(agent, "name", None) == "us_filing_expert"
 
     def test_report_expert_compiles_with_tools(
         self, router: ModelRouter, fake_report_tools: list[BaseTool]
@@ -215,6 +241,7 @@ class TestSupervisorPrompt:
         prompt = _build_supervisor_prompt(
             has_data=True,
             has_us_data=True,
+            has_us_filing=True,
             has_report=True,
             has_coder=True,
             has_knowledge=True,
@@ -225,6 +252,7 @@ class TestSupervisorPrompt:
         # 使用 "  - <name>" 避免 us_data_expert 子串命中 data_expert。
         assert "  - data_expert" in prompt
         assert "us_data_expert" in prompt
+        assert "us_filing_expert" in prompt
         assert "report_expert" in prompt
         assert "coder_expert" in prompt
         assert "knowledge_expert" in prompt
@@ -234,6 +262,7 @@ class TestSupervisorPrompt:
         # 各节文本确实被追加。
         assert SUPERVISOR_PROMPT_DATA in prompt
         assert SUPERVISOR_PROMPT_US_DATA in prompt
+        assert SUPERVISOR_PROMPT_US_FILING in prompt
         assert SUPERVISOR_PROMPT_REPORT in prompt
         assert SUPERVISOR_PROMPT_CODER in prompt
         assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
@@ -246,6 +275,7 @@ class TestSupervisorPrompt:
         prompt = _build_supervisor_prompt(
             has_data=True,
             has_us_data=False,
+            has_us_filing=False,
             has_report=False,
             has_coder=False,
             has_knowledge=False,
@@ -255,6 +285,7 @@ class TestSupervisorPrompt:
         )
         assert "  - data_expert" in prompt
         assert "us_data_expert" not in prompt
+        assert "us_filing_expert" not in prompt
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
         assert "knowledge_expert" not in prompt
@@ -266,6 +297,7 @@ class TestSupervisorPrompt:
         prompt = _build_supervisor_prompt(
             has_data=False,
             has_us_data=True,
+            has_us_filing=False,
             has_report=False,
             has_coder=False,
             has_knowledge=False,
@@ -278,11 +310,29 @@ class TestSupervisorPrompt:
         assert "  - data_expert" not in prompt
         assert SUPERVISOR_PROMPT_DATA not in prompt
 
+    def test_us_filing_only_prompt_omits_cn_report_expert(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=False,
+            has_us_data=False,
+            has_us_filing=True,
+            has_report=False,
+            has_coder=False,
+            has_knowledge=False,
+            has_news=False,
+            has_sentiment=False,
+            has_fund=False,
+        )
+        assert "us_filing_expert" in prompt
+        assert SUPERVISOR_PROMPT_US_FILING in prompt
+        assert "report_expert" not in prompt
+        assert SUPERVISOR_PROMPT_REPORT not in prompt
+
     def test_knowledge_only_prompt_omits_other_experts(self) -> None:
         """针对仅含 knowledge_expert 团队的对称守护测试。"""
         prompt = _build_supervisor_prompt(
             has_data=False,
             has_us_data=False,
+            has_us_filing=False,
             has_report=False,
             has_coder=False,
             has_knowledge=True,
@@ -294,6 +344,7 @@ class TestSupervisorPrompt:
         assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
         assert "  - data_expert" not in prompt
         assert "us_data_expert" not in prompt
+        assert "us_filing_expert" not in prompt
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
         assert "news_expert" not in prompt
@@ -305,6 +356,7 @@ class TestSupervisorPrompt:
         prompt = _build_supervisor_prompt(
             has_data=False,
             has_us_data=False,
+            has_us_filing=False,
             has_report=False,
             has_coder=False,
             has_knowledge=False,
@@ -316,6 +368,7 @@ class TestSupervisorPrompt:
         assert SUPERVISOR_PROMPT_NEWS in prompt
         assert "  - data_expert" not in prompt
         assert "us_data_expert" not in prompt
+        assert "us_filing_expert" not in prompt
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
         assert "knowledge_expert" not in prompt
@@ -325,27 +378,29 @@ class TestSupervisorPrompt:
     def test_rules_always_included(self) -> None:
         """路由规则（"每次只移交一个子任务"、"不可捏造数字"等）是不可协商的 —
         无论团队组成如何，它们都必须出现。"""
-        # 每个元组是 (has_data, has_us_data, has_report, has_coder, has_knowledge, has_news, has_sentiment, has_fund)。
+        # 元组: (has_data, has_us_data, has_us_filing, has_report, has_coder, has_knowledge, has_news, has_sentiment, has_fund)
         for flags in [
-            (True, False, False, False, False, False, False, False),
-            (False, True, False, False, False, False, False, False),
-            (False, False, True, False, False, False, False, False),
-            (False, False, False, True, False, False, False, False),
-            (False, False, False, False, True, False, False, False),
-            (False, False, False, False, False, True, False, False),
-            (False, False, False, False, False, False, True, False),
-            (False, False, False, False, False, False, False, True),
-            (True, True, True, True, True, True, True, True),
+            (True, False, False, False, False, False, False, False, False),
+            (False, True, False, False, False, False, False, False, False),
+            (False, False, True, False, False, False, False, False, False),
+            (False, False, False, True, False, False, False, False, False),
+            (False, False, False, False, True, False, False, False, False),
+            (False, False, False, False, False, True, False, False, False),
+            (False, False, False, False, False, False, True, False, False),
+            (False, False, False, False, False, False, False, True, False),
+            (False, False, False, False, False, False, False, False, True),
+            (True, True, True, True, True, True, True, True, True),
         ]:
             prompt = _build_supervisor_prompt(
                 has_data=flags[0],
                 has_us_data=flags[1],
-                has_report=flags[2],
-                has_coder=flags[3],
-                has_knowledge=flags[4],
-                has_news=flags[5],
-                has_sentiment=flags[6],
-                has_fund=flags[7],
+                has_us_filing=flags[2],
+                has_report=flags[3],
+                has_coder=flags[4],
+                has_knowledge=flags[5],
+                has_news=flags[6],
+                has_sentiment=flags[7],
+                has_fund=flags[8],
             )
             assert "移交" in prompt
             assert "不要编造" in prompt
@@ -484,6 +539,15 @@ class TestBuildResearchSupervisor:
         assert "us_data_expert" in node_names
         assert "data_expert" not in node_names
         assert "news_expert" not in node_names
+
+    def test_us_filing_only_compiles(
+        self, router: ModelRouter, fake_us_filing_tools: list[BaseTool]
+    ) -> None:
+        graph = build_research_supervisor(model_router=router, us_filing_tools=fake_us_filing_tools)
+        node_names = set(graph.get_graph().nodes.keys())
+        assert "us_filing_expert" in node_names
+        assert "report_expert" not in node_names
+        assert "data_expert" not in node_names
 
     def test_empty_inputs_raise(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="至少需要一个专家的工具列表非空"):

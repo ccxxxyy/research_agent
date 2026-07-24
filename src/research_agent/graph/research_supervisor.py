@@ -51,6 +51,7 @@ from research_agent.agents.specialists import (
     build_report_expert,
     build_sentiment_expert,
     build_us_data_expert,
+    build_us_filing_expert,
 )
 from research_agent.graph.reflection import build_reflection_subgraph
 from research_agent.llm.tier import ModelTier
@@ -66,7 +67,7 @@ if TYPE_CHECKING:
 
 SUPERVISOR_PROMPT_BASE = """\
 你是金融研究 Supervisor（主管）。你协调一个小型专家团队，为用户提供简明、有引用来源的回答。
-当前工具按市场**平行隔离**：A 股（CN_A）走 ``fin_*`` / 巨潮 / 东财新闻等；美股（US）走 ``us_*``（股票/指数/ETF）。
+当前工具按市场**平行隔离**：A 股（CN_A）走 ``fin_*`` / 巨潮 / 东财新闻等；美股（US）走 ``us_*`` 行情与 ``us_filing_*`` 披露。
 你的默认语言跟随用户 — 如果用户使用中文，则用中文回答。
 
 ## 市场路由（必须遵守）
@@ -74,8 +75,9 @@ SUPERVISOR_PROMPT_BASE = """\
 你必须按其中的 ``market`` 字段路由：
 
 - **CN_A**：使用已挂载的 A 股侧专家（行情 / 基金 / 披露 / 新闻 / 舆情 / 知识库）。
-- **US**：使用已挂载的美股行情专家（``us_*`` 工具）。若该专家未出现在下方团队名单中，明确告知能力缺口。
-  **禁止**用 ``fin_*`` / ``news_*`` / 巨潮 PDF / ``fund_*`` 去查美股 ticker 或英文公司名。
+- **US**：使用已挂载的美股行情（``us_*``）与美股披露（``us_filing_*``）专家。
+  若某专家未出现在下方团队名单中，明确告知该能力缺口。
+  **禁止**用 ``fin_*`` / ``news_*`` / 巨潮 PDF / ``fund_*`` 去查美股 ticker、英文公司名或 10-K/10-Q/8-K。
 - **MIXED**：拆成 A 股子问题与美股子问题，分别路由到对应市场专家；某一侧未挂载时如实说明缺口。
 - 若上下文无 MarketResolution，且用户提到「苹果 / 特斯拉 / AAPL / 标普500」等美股名，
   仍按 US 处理；提到「宁德时代 / 茅台 / 六位代码」按 CN_A。
@@ -85,6 +87,7 @@ SUPERVISOR_PROMPT_BASE = """\
   - 大盘/指数/整体走势 → 优先用对应市场的指数行情工具
   - 哪些股票/板块涨得好 → A 股可用涨跌排行和板块资金流；美股优先指数 + 个股/ETF 报价
   - 特定个股分析 → 用对应市场的个股行情和概况工具
+  - 美股年报/季报/8-K/代理声明 → 美股披露专家（勿走巨潮）
 
 团队成员：
 """
@@ -234,6 +237,18 @@ SUPERVISOR_PROMPT_US_DATA = """\
     禁止把美股问句交给 A 股行情 / 新闻 / 基金专家。
 """
 
+SUPERVISOR_PROMPT_US_FILING = """\
+  - us_filing_expert ：通过 SEC EDGAR 获取美股披露（与巨潮 ``pdf_*`` 平行隔离）。
+    工具集（前缀 us_filing_）：
+        * us_filing_resolve_cik
+        * us_filing_search_filings      — 10-K / 10-Q / 8-K / DEF 14A 等
+        * us_filing_download_filing
+        * us_filing_extract_filing_metadata
+        * us_filing_parse_filing_text
+    当用户询问美股年报/季报/临时公告/代理声明、Item 1A、MD&A、10-K 风险因素等时委派。
+    禁止把美股披露交给巨潮 ``pdf_*`` 专家。
+"""
+
 # 注意：这些规则在所有团队组合中不变。它们绝不能按名称提及某个特定专家，
 # 因为团队在运行时动态组装，缺席的专家否则会作为幽灵路由目标泄露进提示词 — 导致 ``transfer_to_<missing>`` 工具调用失败。
 # 针对特定专家的指导写在上面的 ``*_PROMPT_*`` 部分中。
@@ -266,7 +281,7 @@ SUPERVISOR_PROMPT_RULES = """\
      - 禁止使用：emoji 表情符号、``---`` 分隔线、代码块。
      - 语言风格：简练、客观、有洞察力。避免冗余修饰词，直接给出数据+判断。像顶级券商晨报的文风。
 5. 不要编造数据或引文。如果某专家返回的字典中包含 ``"error"`` 键，请如实说明，不要捏造替代内容。
-6. 不要自己调用专家工具。你无法直接访问 ``fin_*``、``us_*``、``pdf_*``、 ``code_*``、``news_*``、``knowledge_*``、``sentiment_*`` 或 ``fund_*`` —你只能使用 ``transfer_to_*`` 移交工具。
+6. 不要自己调用专家工具。你无法直接访问 ``fin_*``、``us_*``、``us_filing_*``、``pdf_*``、 ``code_*``、``news_*``、``knowledge_*``、``sentiment_*`` 或 ``fund_*`` —你只能使用 ``transfer_to_*`` 移交工具。
 
 速度与质量平衡（必须遵守）
 ---------------------------------
@@ -306,6 +321,7 @@ def _build_supervisor_prompt(
     has_sentiment: bool,
     has_fund: bool = False,
     has_us_data: bool = False,
+    has_us_filing: bool = False,
 ) -> str:
     """组装 supervisor 提示词，使其与实际团队成员匹配。
 
@@ -316,6 +332,8 @@ def _build_supervisor_prompt(
         parts.append(SUPERVISOR_PROMPT_DATA)
     if has_us_data:
         parts.append(SUPERVISOR_PROMPT_US_DATA)
+    if has_us_filing:
+        parts.append(SUPERVISOR_PROMPT_US_FILING)
     if has_report:
         parts.append(SUPERVISOR_PROMPT_REPORT)
     if has_coder:
@@ -482,6 +500,7 @@ def build_research_supervisor(
     model_router: ModelRouter,
     data_tools: Sequence[BaseTool] | None = None,
     us_data_tools: Sequence[BaseTool] | None = None,
+    us_filing_tools: Sequence[BaseTool] | None = None,
     report_tools: Sequence[BaseTool] | None = None,
     coder_tools: Sequence[BaseTool] | None = None,
     knowledge_tools: Sequence[BaseTool] | None = None,
@@ -504,6 +523,7 @@ def build_research_supervisor(
         model_router: 共享路由器（supervisor 使用 ``supervisor_tier``；specialist 通过其构建器内的 ``ANALYST`` / ``RETRIEVER`` Agent 名称映射使用 MEDIUM）。
         data_tools: ``fin_*`` 工具。省略/空 → 无 ``data_expert``。
         us_data_tools: ``us_*`` 工具。省略/空 → 无 ``us_data_expert``。
+        us_filing_tools: ``us_filing_*`` 工具。省略/空 → 无 ``us_filing_expert``。
         report_tools: ``pdf_*`` 工具。省略/空 → 无 ``report_expert``。
         coder_tools: ``code_*`` 工具。省略/空 → 无 ``coder_expert``。
         knowledge_tools: ``knowledge_*`` 工具。省略/空 → 无 ``knowledge_expert``。
@@ -527,6 +547,7 @@ def build_research_supervisor(
     """
     has_data = bool(data_tools)
     has_us_data = bool(us_data_tools)
+    has_us_filing = bool(us_filing_tools)
     has_report = bool(report_tools)
     has_coder = bool(coder_tools)
     has_knowledge = bool(knowledge_tools)
@@ -537,6 +558,7 @@ def build_research_supervisor(
     if not (
         has_data
         or has_us_data
+        or has_us_filing
         or has_report
         or has_coder
         or has_knowledge
@@ -557,6 +579,9 @@ def build_research_supervisor(
     if has_us_data:
         agents.append(build_us_data_expert(model_router, us_data_tools or []))
         roster.append("us_data_expert")
+    if has_us_filing:
+        agents.append(build_us_filing_expert(model_router, us_filing_tools or []))
+        roster.append("us_filing_expert")
     if has_report:
         agents.append(build_report_expert(model_router, report_tools or []))
         roster.append("report_expert")
@@ -580,6 +605,7 @@ def build_research_supervisor(
     prompt = _build_supervisor_prompt(
         has_data=has_data,
         has_us_data=has_us_data,
+        has_us_filing=has_us_filing,
         has_report=has_report,
         has_coder=has_coder,
         has_knowledge=has_knowledge,
@@ -628,6 +654,7 @@ __all__ = [
     "SUPERVISOR_PROMPT_BASE",
     "SUPERVISOR_PROMPT_DATA",
     "SUPERVISOR_PROMPT_US_DATA",
+    "SUPERVISOR_PROMPT_US_FILING",
     "SUPERVISOR_PROMPT_FUND",
     "SUPERVISOR_PROMPT_REPORT",
     "SUPERVISOR_PROMPT_CODER",

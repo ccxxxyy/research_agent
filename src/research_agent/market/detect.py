@@ -350,7 +350,7 @@ def detect_market_from_query(query: str) -> MarketResolution:
             confidence=0.9 if us_syms else 0.75,
             symbols=tuple(symbols),
             reasons=tuple(reasons),
-            notes="问句含美股信号；应路由至美股行情专家（us_* 工具）。",
+            notes="问句含美股信号；行情走 us_*，披露走 us_filing_*。",
         )
     if has_cn:
         return MarketResolution(
@@ -491,7 +491,8 @@ def format_market_preamble(resolution: MarketResolution) -> str:
 
     lines.append(
         "路由约束：CN_A → 使用已挂载的 A 股侧专家；"
-        "US → 路由至已挂载的美股行情专家（us_*），禁止用 fin_* / news_* / 巨潮 / fund_* 查美股；"
+        "US → 行情走 us_*，披露（10-K/10-Q/8-K 等）走 us_filing_*；"
+        "禁止用 fin_* / news_* / 巨潮 / fund_* 查美股；"
         "MIXED → 先拆分子问题再分别路由（某一侧未挂载时如实说明）。"
     )
     return "\n".join(lines)
