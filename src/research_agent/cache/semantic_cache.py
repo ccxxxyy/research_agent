@@ -11,14 +11,22 @@
 * ``macro`` — 宏观指标「是什么、怎么读」
 * ``historical_event`` — 历史事件定义（不回答「对今天行情的影响」）
 
+市场域（``market``）
+--------------------
+* ``CN_A`` — 仅 A 股语境（涨跌停、北向、沪深交易时间…）
+* ``US`` — 仅美股语境（NYSE 时段、10-K/10-Q、EDGAR…）
+* ``SHARED`` — 跨市场通用（ROE / PE / 杜邦 / CPI…）
+
+查找时按问句解析出的市场过滤：``US`` → US+SHARED；``CN_A`` → CN_A+SHARED；``MIXED`` / ``UNKNOWN`` / 未指定 → 全部域。
+
 不缓存什么
 ----------
-含 A 股代码、或带时效词 + 行情/新闻语义的问题（走工具 TTL 缓存 +supervisor 实时研究）。终答默认不入本缓存。
+含 A 股代码、已知美股 ticker、或带时效词 + 行情/新闻语义的问题（走工具 TTL 缓存 + supervisor 实时研究）。终答默认不入本缓存。
 
 分层
 ----
 * **L0 精确键** — 规范化问题哈希，完全一致才命中。
-* **L1 语义** — FAISS 向量相似 + 元数据维度过滤（``cache_domain`` / ``version`` / ``locale`` / ``prompt_version``）。
+* **L1 语义** — FAISS 向量相似 + 元数据维度过滤（``cache_domain`` / ``market`` / ``version`` / ``prompt_version``）。
 
 持久化
 ------
@@ -54,6 +62,8 @@ CACHE_DOMAINS = frozenset(
     }
 )
 
+CACHE_MARKETS = frozenset({"CN_A", "US", "SHARED"})
+
 DEFAULT_DB_DIR = Path("./data/semantic_cache").resolve()
 COLLECTION_NAME = "static_knowledge"
 SEED_PATH = Path(__file__).resolve().parent / "seed" / "static_knowledge.json"
@@ -66,7 +76,33 @@ DEFAULT_TOP_K = 4
 # A 股 6 位代码 → 一律视为实时/标的研究，跳过语义缓存
 _A_SHARE_CODE = re.compile(r"(?<!\d)\d{6}(?!\d)")
 
-# 时效词 + 动态数据语义 → 跳过
+# 美股 ticker 候选（与 market.detect 同形；仅命中白名单才跳过）
+_US_TICKER_TOKEN = re.compile(r"(?<![A-Za-z])([A-Z]{1,5})(?![A-Za-z])")
+
+# 知名美股 equity/ETF ticker（不含指数符号）；出现则走实时研究
+_US_LISTED_TICKERS = frozenset(
+    {
+        "AAPL",
+        "TSLA",
+        "MSFT",
+        "NVDA",
+        "AMZN",
+        "GOOGL",
+        "GOOG",
+        "META",
+        "NFLX",
+        "AMD",
+        "AVGO",
+        "COST",
+        "KO",
+        "SPY",
+        "QQQ",
+        "IWM",
+        "VOO",
+    }
+)
+
+# 时效词 + 动态数据语义 → 跳过（中文）
 _DYNAMIC_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"(最新|今天|今日|现在|此刻|实时|盘中|刚才|刚刚|本周|本月|昨天|上周)"
@@ -75,6 +111,22 @@ _DYNAMIC_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(帮我|给我|请|麻烦).{0,6}(分析|看看|研究|点评)(?!框架|模板|提纲)"),
     re.compile(r"(值不值得|能不能买|该不该买|要不要买)"),
     re.compile(r"(近\s*\d+\s*[日天周月年]|过去\s*\d+\s*[日天周月年]).{0,4}(涨|跌|行情|表现|收益)"),
+)
+
+# 英文时效 / 研究意图 → 跳过
+_DYNAMIC_PATTERNS_EN: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"(?i)\b(latest|today'?s?|now|realtime|real-time|intraday|this\s+week|this\s+month)"
+        r".{0,20}\b(price|quote|chart|news|sentiment|volume|nav|performance)\b"
+    ),
+    re.compile(
+        r"(?i)\b(analyze|analyse|look\s+into)\b.{0,40}\b(stock|etf|ticker|shares?|company)\b"
+    ),
+    re.compile(r"(?i)\b(should\s+i\s+buy|is\s+it\s+worth\s+buying|buy\s+or\s+sell)\b"),
+    re.compile(
+        r"(?i)\b(last|past|recent)\s+\d+\s*(day|days|week|weeks|month|months|year|years)"
+        r".{0,16}\b(return|performance|gain|loss|rally|selloff)\b"
+    ),
 )
 
 
@@ -103,6 +155,11 @@ def normalize_query(text: str) -> str:
     return q
 
 
+def _has_us_listed_ticker(query: str) -> bool:
+    """问句是否含白名单内的美股股票/ETF ticker（应跳过静态缓存）。"""
+    return any(m.group(1) in _US_LISTED_TICKERS for m in _US_TICKER_TOKEN.finditer(query.upper()))
+
+
 def is_cacheable_query(query: str) -> bool:
     """是否允许进入语义缓存（不含标的 / 时效动态语义）。"""
     q = query.strip()
@@ -110,7 +167,24 @@ def is_cacheable_query(query: str) -> bool:
         return False
     if _A_SHARE_CODE.search(q):
         return False
-    return all(not pat.search(q) for pat in _DYNAMIC_PATTERNS)
+    if _has_us_listed_ticker(q):
+        return False
+    if any(pat.search(q) for pat in _DYNAMIC_PATTERNS):
+        return False
+    return not any(pat.search(q) for pat in _DYNAMIC_PATTERNS_EN)
+
+
+def allowed_markets_for(market: str | None) -> frozenset[str]:
+    """根据解析市场返回允许命中的种子 ``market`` 集合。"""
+    if not market:
+        return CACHE_MARKETS
+    text = market.strip().upper().replace("-", "_").replace(" ", "_")
+    if text in {"US", "USA", "US_STOCK", "AMERICA"}:
+        return frozenset({"US", "SHARED"})
+    if text in {"CN", "CN_A", "A", "ASHARE", "A_SHARE"}:
+        return frozenset({"CN_A", "SHARED"})
+    # MIXED / UNKNOWN / 其他 → 不收紧
+    return CACHE_MARKETS
 
 
 @dataclass(frozen=True)
@@ -125,6 +199,7 @@ class SemanticHit:
     locale: str
     exact: bool
     prompt_version: str = "v1"
+    market: str = "SHARED"
 
 
 @dataclass
@@ -136,6 +211,7 @@ class _SeedEntry:
     version: str = "1"
     locale: str = "zh-CN"
     prompt_version: str = "v1"
+    market: str = "SHARED"
 
 
 class SemanticKnowledgeCache:
@@ -181,8 +257,14 @@ class SemanticKnowledgeCache:
             self._load_or_rebuild()
             self._ready = True
 
-    def lookup(self, query: str) -> SemanticHit | None:
-        """对用户问题做 L0→L1 查找；不可缓存或未命中返回 ``None``。"""
+    def lookup(self, query: str, *, market: str | None = None) -> SemanticHit | None:
+        """对用户问题做 L0→L1 查找；不可缓存或未命中返回 ``None``。
+
+        Args:
+            query: 用户问句。
+            market: 可选市场过滤（``CN_A`` / ``US`` / ``MIXED`` / ``UNKNOWN``）。
+                ``US`` 仅命中 US+SHARED；``CN_A`` 仅命中 CN_A+SHARED。
+        """
         if not self.enabled:
             self.skips += 1
             return None
@@ -191,26 +273,29 @@ class SemanticKnowledgeCache:
             return None
 
         self.ensure_ready()
+        allowed = allowed_markets_for(market)
 
         # L0 精确
         key = normalize_query(query)
         hit = self._exact_index.get(key)
-        if hit is not None:
+        if hit is not None and hit.market in allowed:
             self.hits += 1
             logger.info(
-                "semantic_cache L0 命中 domain={} q={!r}",
+                "semantic_cache L0 命中 domain={} market={} q={!r}",
                 hit.cache_domain,
+                hit.market,
                 hit.matched_question,
             )
             return hit
 
         # L1 语义
-        hit = self._semantic_search(query)
+        hit = self._semantic_search(query, allowed_markets=allowed)
         if hit is not None:
             self.hits += 1
             logger.info(
-                "semantic_cache L1 命中 domain={} score={:.3f} matched={!r}",
+                "semantic_cache L1 命中 domain={} market={} score={:.3f} matched={!r}",
                 hit.cache_domain,
+                hit.market,
                 hit.score,
                 hit.matched_question,
             )
@@ -258,6 +343,10 @@ class SemanticKnowledgeCache:
             if domain not in CACHE_DOMAINS:
                 logger.warning("semantic_cache 跳过未知 domain={}", domain)
                 continue
+            mkt = str(item.get("market", "SHARED")).strip().upper().replace("-", "_")
+            if mkt not in CACHE_MARKETS:
+                logger.warning("semantic_cache 跳过未知 market={}", mkt)
+                continue
             entries.append(
                 _SeedEntry(
                     cache_domain=domain,
@@ -269,6 +358,7 @@ class SemanticKnowledgeCache:
                     prompt_version=str(
                         item.get("prompt_version", self._seed_meta["prompt_version"])
                     ),
+                    market=mkt,
                 )
             )
         return entries
@@ -285,6 +375,7 @@ class SemanticKnowledgeCache:
                     "v": e.version,
                     "loc": e.locale,
                     "pv": e.prompt_version,
+                    "m": e.market,
                 }
                 for e in entries
             ],
@@ -318,6 +409,7 @@ class SemanticKnowledgeCache:
                 locale=e.locale,
                 exact=True,
                 prompt_version=e.prompt_version,
+                market=e.market,
             )
             for text in [e.question, *e.aliases]:
                 key = normalize_query(text)
@@ -341,6 +433,7 @@ class SemanticKnowledgeCache:
                         "version": e.version,
                         "locale": e.locale,
                         "prompt_version": e.prompt_version,
+                        "market": e.market,
                     }
                 )
 
@@ -398,12 +491,16 @@ class SemanticKnowledgeCache:
                 self.similarity_threshold,
             )
 
-    def _semantic_search(self, query: str) -> SemanticHit | None:
+    def _semantic_search(
+        self,
+        query: str,
+        *,
+        allowed_markets: frozenset[str],
+    ) -> SemanticHit | None:
         if self._store is None:
             return None
 
         expected_version = self._seed_meta.get("version", "1")
-        expected_locale = self._seed_meta.get("locale", "zh-CN")
         expected_pv = self._seed_meta.get("prompt_version", "v1")
 
         try:
@@ -423,9 +520,10 @@ class SemanticKnowledgeCache:
             domain = str(meta.get("cache_domain", ""))
             if domain not in CACHE_DOMAINS:
                 continue
-            if str(meta.get("version", "")) != expected_version:
+            mkt = str(meta.get("market", "SHARED")).strip().upper().replace("-", "_")
+            if mkt not in allowed_markets:
                 continue
-            if str(meta.get("locale", "")) != expected_locale:
+            if str(meta.get("version", "")) != expected_version:
                 continue
             if str(meta.get("prompt_version", "")) != expected_pv:
                 continue
@@ -437,9 +535,10 @@ class SemanticKnowledgeCache:
                 score=float(score),
                 matched_question=str(meta.get("canonical_question", doc.page_content)),
                 version=str(meta.get("version", expected_version)),
-                locale=str(meta.get("locale", expected_locale)),
+                locale=str(meta.get("locale", "zh-CN")),
                 exact=False,
                 prompt_version=str(meta.get("prompt_version", expected_pv)),
+                market=mkt if mkt in CACHE_MARKETS else "SHARED",
             )
             if not candidate.answer:
                 continue

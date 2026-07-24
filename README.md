@@ -691,7 +691,8 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 - **美股 P2（已完成）**：`us_filing_server`（EDGAR）+ `us_filing_expert`（10-K/10-Q/8-K/DEF 14A）
 - **美股 P3（已完成）**：`us_news_server` + `us_sentiment_server`（Yahoo 新闻 / 英文舆情）
 - **美股 P4-ETF（已完成）**：`us_get_etf_holdings` / `us_get_etf_sector_weights`（并入 `us_data_expert`）
-- **美股 P4+**：语义缓存 US 域、跨市场 MIXED 编排、UI 市场徽章、eval
+- **美股 P4-语义缓存（已完成）**：种子 `market=CN_A|US|SHARED` + 按解析市场过滤
+- **美股 P4+**：跨市场 MIXED 编排、UI 市场徽章、eval
 - 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）

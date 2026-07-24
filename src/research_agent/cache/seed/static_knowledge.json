@@ -1,127 +1,238 @@
 {
-  "version": "1",
+  "version": "2",
   "locale": "zh-CN",
   "prompt_version": "v1",
   "entries": [
     {
       "cache_domain": "glossary",
+      "market": "SHARED",
       "question": "什么是ROE",
-      "aliases": ["ROE是什么", "ROE是什么意思", "净资产收益率是什么", "什么是净资产收益率"],
-      "answer": "ROE（Return on Equity，净资产收益率）衡量公司用股东权益创造净利润的能力。\n\n常用口径：ROE = 净利润 / 平均净资产（或期末净资产，需在报告中注明）。\n\n解读要点：更高通常表示资本回报更好，但需结合杠杆、一次性损益与行业中枢；不同公司会计口径（归母/扣非）不可直接横比。"
+      "aliases": ["ROE是什么", "ROE是什么意思", "净资产收益率是什么", "什么是净资产收益率", "What is ROE"],
+      "answer": "ROE（Return on Equity，净资产收益率）衡量公司用股东权益创造净利润的能力。\n\n常用口径：ROE = 净利润 / 平均净资产（或期末净资产，需在报告中注明）。\n\n解读要点：更高通常表示资本回报更好，但需结合杠杆、一次性损益与行业中枢；不同公司会计口径（归母/扣非，或 GAAP / non-GAAP）不可直接横比。"
     },
     {
       "cache_domain": "glossary",
+      "market": "SHARED",
       "question": "什么是市盈率PE",
-      "aliases": ["PE是什么", "市盈率是什么意思", "什么是PE", "市盈率PE怎么理解"],
+      "aliases": ["PE是什么", "市盈率是什么意思", "什么是PE", "市盈率PE怎么理解", "What is PE ratio"],
       "answer": "市盈率 PE = 股价 / 每股收益（或 总市值 / 净利润）。\n\n常见变体：\n- PE-TTM：滚动近12个月净利润\n- PE-静态：上一完整财年\n- PE-动态：基于一致预期未来一年盈利\n\n高PE可能反映高增长预期或泡沫；亏损公司PE无意义，应改看PS/EV-EBITDA等。"
     },
     {
       "cache_domain": "glossary",
+      "market": "SHARED",
       "question": "什么是市净率PB",
-      "aliases": ["PB是什么", "市净率是什么意思", "什么是PB"],
+      "aliases": ["PB是什么", "市净率是什么意思", "什么是PB", "What is PB ratio"],
       "answer": "市净率 PB = 股价 / 每股净资产（或 总市值 / 净资产）。\n\n常用于银行、保险、强周期重资产行业的相对估值。PB<1 不一定便宜，可能反映资产质量担忧或盈利能力偏弱。需结合 ROE 与资产真实性。"
     },
     {
       "cache_domain": "glossary",
+      "market": "CN_A",
       "question": "什么是北向资金",
       "aliases": ["北向资金是什么意思", "沪股通深股通是什么", "什么是沪深港通北向"],
       "answer": "北向资金指通过沪股通、深股通从香港流入A股的资金（外资买A股方向）。南向则相反（内地资金买港股）。\n\n它是情绪与配置的参考指标之一，单日大幅流入/流出不能单独作为买卖依据，需结合标的、板块与成交结构。"
     },
     {
       "cache_domain": "glossary",
+      "market": "SHARED",
       "question": "什么是换手率",
-      "aliases": ["换手率是什么意思", "换手率怎么看"],
+      "aliases": ["换手率是什么意思", "换手率怎么看", "What is turnover rate"],
       "answer": "换手率 = 成交量 / 流通股本（口径以数据源为准）。反映交易活跃度。\n\n偏高可能意味着分歧加大或情绪升温；持续极低换手常见于冷清或高度控盘。需结合涨跌幅与量价形态，不能单看换手高低做结论。"
     },
     {
       "cache_domain": "methodology",
+      "market": "SHARED",
       "question": "ROE怎么计算",
-      "aliases": ["如何计算ROE", "净资产收益率计算公式", "ROE的计算口径"],
-      "answer": "基础公式：ROE = 净利润 / 净资产。\n\n实务口径差异：\n1) 分母用期末净资产或期初/期末平均净资产；\n2) 分子用归母净利润或扣非净利润；\n3) 杜邦拆解：ROE = 净利率 × 资产周转率 × 权益乘数。\n\n写研报时必须写明所用口径，避免把不同口径的 ROE 直接对比。"
+      "aliases": ["如何计算ROE", "净资产收益率计算公式", "ROE的计算口径", "How to calculate ROE"],
+      "answer": "基础公式：ROE = 净利润 / 净资产。\n\n实务口径差异：\n1) 分母用期末净资产或期初/期末平均净资产；\n2) 分子用归母净利润或扣非净利润（美股常区分 GAAP / non-GAAP）；\n3) 杜邦拆解：ROE = 净利率 × 资产周转率 × 权益乘数。\n\n写研报时必须写明所用口径，避免把不同口径的 ROE 直接对比。"
     },
     {
       "cache_domain": "methodology",
+      "market": "SHARED",
       "question": "市盈率怎么算",
-      "aliases": ["PE怎么计算", "如何计算市盈率", "PE计算公式"],
+      "aliases": ["PE怎么计算", "如何计算市盈率", "PE计算公式", "How to calculate PE"],
       "answer": "PE = 总市值 / 净利润 = 股价 / EPS。\n\n注意：\n- 用 TTM、静态还是一致预期，结果差很大；\n- 净利润为负时 PE 无意义；\n- 比较同业时应统一口径（TTM vs 动态）并排除一次性损益干扰。"
     },
     {
       "cache_domain": "methodology",
+      "market": "SHARED",
       "question": "什么是杜邦分析",
-      "aliases": ["杜邦分析法是什么", "杜邦拆解怎么做"],
+      "aliases": ["杜邦分析法是什么", "杜邦拆解怎么做", "What is DuPont analysis"],
       "answer": "杜邦分析把 ROE 拆成：净利率 × 总资产周转率 × 权益乘数，用来定位盈利能力、运营效率与杠杆贡献。\n\n使用时要看趋势与同业：杠杆抬升带来的 ROE 上升质量通常弱于净利率改善。"
     },
     {
       "cache_domain": "faq",
+      "market": "CN_A",
       "question": "A股交易时间是什么时候",
       "aliases": ["股市几点开盘", "A股开盘收盘时间", "股票交易时间"],
       "answer": "沪深A股常规交易时间（北京时间）：\n- 上午 09:30–11:30\n- 下午 13:00–15:00\n\n集合竞价：开盘前 09:15–09:25（其中 09:20–09:25 不可撤单）；收盘集合竞价 14:57–15:00（主板等规则以交易所最新规定为准）。\n\n周末与法定节假日休市。"
     },
     {
       "cache_domain": "faq",
+      "market": "CN_A",
       "question": "什么是涨跌停",
       "aliases": ["涨停是什么意思", "跌停板是什么", "A股涨跌幅限制"],
       "answer": "A股对多数股票设有单日涨跌幅限制（常见：主板 ±10%，创业板/科创板 ±20%，ST 更严等；具体以所属板块与是否注册制/特殊标识为准）。\n\n触及上限称为涨停，触及下限称为跌停。涨跌停不等于不能成交，但买卖盘往往极度不平衡。"
     },
     {
       "cache_domain": "faq",
+      "market": "SHARED",
       "question": "ETF和普通基金有什么区别",
-      "aliases": ["ETF是什么", "场内基金和场外基金区别", "什么是场内基金"],
-      "answer": "ETF 是场内交易型开放式基金：交易时段可像股票一样在交易所买卖，价格随供需波动，通常跟踪指数。\n\n普通场外开放式基金多按净值申购赎回（确认有 T+N 规则），不在二级市场连续竞价。\n\nLOF 则兼具场内交易与场外申赎通道。选择时关注跟踪误差、流动性与费率。"
+      "aliases": ["ETF是什么", "场内基金和场外基金区别", "什么是场内基金", "What is an ETF"],
+      "answer": "ETF 是场内交易型开放式基金：交易时段可像股票一样在交易所买卖，价格随供需波动，通常跟踪指数。\n\n普通场外开放式基金多按净值申购赎回（确认有 T+N 规则），不在二级市场连续竞价。\n\n选择时关注跟踪误差、流动性与费率（美股常看 expense ratio）。"
     },
     {
       "cache_domain": "macro",
+      "market": "SHARED",
       "question": "CPI是什么怎么读",
-      "aliases": ["什么是CPI", "CPI指标怎么解读", "居民消费价格指数是什么"],
+      "aliases": ["什么是CPI", "CPI指标怎么解读", "居民消费价格指数是什么", "What is CPI"],
       "answer": "CPI（居民消费价格指数）衡量一篮子消费品和服务价格相对基期的变化，是通胀的核心观察指标之一。\n\n解读：同比看趋势，环比看短期动能；需拆分食品/能源等波动项。CPI 上行未必利空股市，取决于是否引发货币政策收紧预期。"
     },
     {
       "cache_domain": "macro",
+      "market": "SHARED",
       "question": "PMI是什么怎么读",
-      "aliases": ["什么是PMI", "采购经理人指数怎么看", "PMI怎么解读"],
+      "aliases": ["什么是PMI", "采购经理人指数怎么看", "PMI怎么解读", "What is PMI"],
       "answer": "PMI（采购经理人指数）是基于企业采购经理问卷的景气扩散指数，通常以 50 为荣枯线：\n- 高于 50：扩张\n- 低于 50：收缩\n\n关注制造业/非制造业、新订单、原材料价格等分项。单月波动需结合趋势，不宜过度解读。"
     },
     {
       "cache_domain": "macro",
+      "market": "CN_A",
       "question": "什么是降准",
       "aliases": ["降准是什么意思", "存款准备金率下调意味着什么"],
       "answer": "降准指央行下调存款准备金率，释放银行可贷资金，属于流动性宽松工具之一。\n\n一般被解读为呵护流动性或稳增长信号，但对股市的传导取决于风险偏好、社融与企业信贷需求，不是「降准必涨」。"
     },
     {
       "cache_domain": "historical_event",
+      "market": "CN_A",
       "question": "2015年股灾是什么",
       "aliases": ["2015股灾指什么", "什么是2015年A股异常波动"],
       "answer": "「2015年股灾」通常指 2015 年中A股快速上涨后剧烈回调的一轮异常波动，伴随杠杆资金去化、流动性紧张与政策干预等特征。\n\n它常被用作讨论杠杆牛市尾声、流动性螺旋与监管应对的历史参照。本条仅作事件定义，不构成对当前市场的判断。"
     },
     {
       "cache_domain": "historical_event",
+      "market": "CN_A",
       "question": "什么是熔断机制",
       "aliases": ["A股熔断是什么", "2016熔断指什么"],
       "answer": "熔断机制是当股指涨跌幅触发阈值时暂停交易的制度安排，旨在冷却极端波动。A股曾在 2016 年初短暂实施指数熔断，后因加剧踩踏等因素很快暂停。\n\n当前讨论「熔断」多作制度史与微观结构案例，不代表现行日常交易规则。"
     },
     {
       "cache_domain": "template",
+      "market": "SHARED",
       "question": "个股业绩简评框架怎么写",
-      "aliases": ["业绩点评模板", "如何写业绩简评", "财报点评框架"],
+      "aliases": ["业绩点评模板", "如何写业绩简评", "财报点评框架", "earnings review template"],
       "answer": "个股业绩简评可用固定五段框架（不含买卖建议）：\n1. 结论一句话（增长/下滑与超/低于预期）\n2. 量价或收入/利润拆解（同比、环比、结构）\n3. 利润率与费用（毛利率、费用率、减值）\n4. 资产负债表与现金流关注点\n5. 后续观察指标（订单、产能、价格、政策）\n\n每段尽量引用具体数字与报告期，并注明数据来源。"
     },
     {
       "cache_domain": "template",
+      "market": "SHARED",
       "question": "个股研究报告提纲",
-      "aliases": ["研报结构模板", "如何写个股研究报告框架", "股权研究框架"],
+      "aliases": ["研报结构模板", "如何写个股研究报告框架", "股权研究框架", "equity research outline"],
       "answer": "标准化个股研究提纲（模板）：\n1. 投资逻辑摘要（非荐股，仅逻辑陈述）\n2. 公司与行业定位\n3. 商业模式与竞争格局\n4. 历史财务与关键驱动因子\n5. 估值方法与同业比较口径\n6. 风险因素清单\n7. 资料来源与数据时点\n\n写作时区分事实、推断与不确定项，避免绝对化表述。"
     },
     {
       "cache_domain": "faq",
+      "market": "CN_A",
       "question": "什么是ST股票",
       "aliases": ["ST是什么意思", "星ST和ST区别"],
       "answer": "ST 是对出现财务或其他异常状况的上市公司股票的特别处理标识，意在提示风险。相关公司往往面临更严格的披露与交易限制（如涨跌幅更窄等，以交易所现行规则为准）。\n\nST 不自动等于退市，但风险显著高于普通标的，研究时需优先阅读风险提示与审计意见。"
     },
     {
       "cache_domain": "glossary",
+      "market": "SHARED",
       "question": "什么是股息率",
-      "aliases": ["股息率是什么意思", "红利率怎么理解"],
+      "aliases": ["股息率是什么意思", "红利率怎么理解", "What is dividend yield"],
       "answer": "股息率 ≈ 每股分红 / 股价（或 分红总额 / 总市值）。衡量以当前价格买入能获得的现金分红收益率。\n\n高股息策略关注分红可持续性（自由现金流、资产负债），不能只看单一年度的高分红。"
+    },
+    {
+      "cache_domain": "faq",
+      "market": "US",
+      "question": "美股交易时间是什么时候",
+      "aliases": [
+        "美股几点开盘",
+        "纽交所交易时间",
+        "纳斯达克交易时间",
+        "美股开盘收盘时间",
+        "US stock market hours",
+        "NYSE trading hours"
+      ],
+      "answer": "美国主要交易所（NYSE / Nasdaq）常规交易时段为美东时间（ET）：\n- 常规盘：09:30–16:00\n- 盘前（pre-market）与盘后（after-hours）另有延长时段，流动性通常弱于常规盘\n\n周末与美国联邦假日休市。跨时区提问时请注明 ET / 北京时间换算，且夏令时会偏移 1 小时。"
+    },
+    {
+      "cache_domain": "faq",
+      "market": "US",
+      "question": "什么是盘前盘后交易",
+      "aliases": ["美股盘前是什么", "after hours是什么", "pre-market是什么意思", "What is pre-market"],
+      "answer": "美股盘前（pre-market）与盘后（after-hours）指常规 09:30–16:00 ET 之外的延长交易时段。\n\n特点：成交量通常更低、价差更大、波动可能更剧烈；部分券商对参与资格与订单类型有限制。\n\n解读行情时应标明是盘前/盘后价还是常规收盘价，避免混用。"
+    },
+    {
+      "cache_domain": "glossary",
+      "market": "US",
+      "question": "什么是10-K",
+      "aliases": ["10K是什么", "美国年报10-K", "What is a 10-K", "10-K filing"],
+      "answer": "10-K 是在美上市公公司向 SEC 提交的年度报告（Annual Report on Form 10-K），包含业务描述、风险因素、经审计财务报表与管理层讨论（MD&A）等。\n\n它比业绩新闻稿更完整，是基本面研究的核心披露之一。查找入口通常为 SEC EDGAR。"
+    },
+    {
+      "cache_domain": "glossary",
+      "market": "US",
+      "question": "什么是10-Q",
+      "aliases": ["10Q是什么", "美国季报10-Q", "What is a 10-Q", "10-Q filing"],
+      "answer": "10-Q 是美股上市公司的季度报告（Quarterly Report on Form 10-Q），披露未审计（通常）的中期财务与经营更新。\n\n一年中通常提交三份 10-Q，第四季度信息并入年度 10-K。研读时注意与上年同期及指引的对比口径。"
+    },
+    {
+      "cache_domain": "glossary",
+      "market": "US",
+      "question": "什么是8-K",
+      "aliases": ["8K是什么", "美国临时公告8-K", "What is an 8-K", "8-K filing"],
+      "answer": "8-K 用于报告对股东有重大影响的未定期事件（Current Report），例如并购、高管变更、财报发布、破产进展等。\n\n它强调时效：重大事件发生后需在规定时限内披露。8-K 是事件驱动研究的重要线索，但需结合正文附件与后续定期报告。"
+    },
+    {
+      "cache_domain": "glossary",
+      "market": "US",
+      "question": "什么是DEF 14A",
+      "aliases": ["委托书14A是什么", "proxy statement是什么", "What is DEF 14A"],
+      "answer": "DEF 14A（Definitive Proxy Statement）是公司向股东发送的最终代理投票说明书，通常涵盖董事会选举、高管薪酬、股权激励与股东提案等。\n\n公司治理与薪酬研究常从 DEF 14A 入手，注意与年报/10-K 交叉验证。"
+    },
+    {
+      "cache_domain": "faq",
+      "market": "US",
+      "question": "什么是EDGAR",
+      "aliases": ["SEC EDGAR是什么", "如何查美国公司披露", "What is EDGAR"],
+      "answer": "EDGAR 是美国证交会（SEC）的电子化披露系统，收录 10-K、10-Q、8-K、DEF 14A 等公开文件。\n\n研究美股披露应以 EDGAR 原文为准；第三方摘要可能滞后或不完整。本系统的美股披露工具即对接 EDGAR。"
+    },
+    {
+      "cache_domain": "glossary",
+      "market": "US",
+      "question": "什么是ADR",
+      "aliases": ["美国存托凭证是什么", "What is an ADR", "ADR是什么意思"],
+      "answer": "ADR（American Depositary Receipt，美国存托凭证）使投资者能以美元在美国市场交易非美公司股票权益。\n\n注意：ADR 与本地股可能存在汇率、托管费、投票权与流动性差异；同一公司的本地股与 ADR 价格不必时刻套利收敛。"
+    },
+    {
+      "cache_domain": "glossary",
+      "market": "US",
+      "question": "什么是ETF费用率",
+      "aliases": ["expense ratio是什么", "ETF管理费率", "What is expense ratio"],
+      "answer": "Expense ratio（费用率）是基金/ETF 年化运营费用占净资产的比例，直接影响净收益。\n\n被动宽基 ETF 费用率通常很低；行业/主动策略产品往往更高。比较同类产品时应同时看跟踪误差与流动性，不能只看费率。"
+    },
+    {
+      "cache_domain": "glossary",
+      "market": "US",
+      "question": "什么是NAV",
+      "aliases": ["净值NAV是什么", "ETF净值", "What is NAV"],
+      "answer": "NAV（Net Asset Value）是基金净资产除以份额得到的单位净值。ETF 二级市场价格可能相对 NAV 出现溢价或折价。\n\n大幅折溢价可能与流动性、套利机制或盘中估值滞后有关；解读时应区分市价与 NAV。"
+    },
+    {
+      "cache_domain": "macro",
+      "market": "US",
+      "question": "什么是联邦基金利率",
+      "aliases": ["美联储利率是什么", "fed funds rate是什么", "What is the federal funds rate"],
+      "answer": "联邦基金利率（federal funds rate）是美国银行间隔夜拆借利率的政策目标区间，由美联储 FOMC 设定，是美元流动性与风险资产定价的核心锚之一。\n\n升降息预期会通过折现率、美元流动性与风险偏好影响股债汇；具体传导取决于增长与通胀组合，不是「降息必涨」。"
+    },
+    {
+      "cache_domain": "historical_event",
+      "market": "US",
+      "question": "什么是2008金融危机",
+      "aliases": ["次贷危机是什么", "Global Financial Crisis是什么", "What was the 2008 financial crisis"],
+      "answer": "2008 年全球金融危机通常指由美国次贷与结构化信贷风险扩散引发的系统性金融动荡，伴随雷曼破产、信贷冻结与大规模政策干预。\n\n它常被用作杠杆、流动性螺旋与监管改革（如多德-弗兰克）的历史参照。本条仅作事件定义，不构成对当前市场的判断。"
     }
   ]
 }

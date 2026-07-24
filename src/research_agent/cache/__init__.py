@@ -2,8 +2,10 @@
 
 from research_agent.cache.semantic_cache import (
     CACHE_DOMAINS,
+    CACHE_MARKETS,
     SemanticHit,
     SemanticKnowledgeCache,
+    allowed_markets_for,
     get_semantic_cache,
     is_cacheable_query,
     normalize_query,
@@ -23,6 +25,7 @@ from research_agent.cache.tool_cache import (
 
 __all__ = [
     "CACHE_DOMAINS",
+    "CACHE_MARKETS",
     "TTL_DAILY",
     "TTL_LONG",
     "TTL_MEDIUM",
@@ -31,6 +34,7 @@ __all__ = [
     "SemanticHit",
     "SemanticKnowledgeCache",
     "ToolResultCache",
+    "allowed_markets_for",
     "cached_tool",
     "get_semantic_cache",
     "get_tool_cache",
