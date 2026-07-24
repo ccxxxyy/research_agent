@@ -72,6 +72,13 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - `us_sentiment_server`（英文金融关键词词典）暴露 `us_sentiment_*`；
 - **禁止**用 A 股 `news_*` / `sentiment_*`（SnowNLP）处理美股新闻舆情。
 
+### 8. P4-语义缓存 US 域（已落地，P4 子集）
+
+- 种子条目增加 ``market``：`CN_A` / `US` / `SHARED`；
+- `lookup(..., market=)`：`US` → 仅 US+SHARED，`CN_A` → 仅 CN_A+SHARED；
+- 跳过规则扩展：白名单美股 ticker + 英文时效/研究意图模式；
+- research 路由先 `resolve_market` 再查缓存，避免美股问句命中 A 股 FAQ。
+
 ## 考虑过的替代方案
 
 | 方案 | 否决理由 |
@@ -97,4 +104,4 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - **P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` + 接入 supervisor roster
 - **P2（已完成）**：EDGAR `us_filing_server` + `us_filing_expert`
 - **P3（已完成）**：`us_news` / `us_sentiment`
-- **P4**：ETF 深化（**已完成子集**：持仓 / 行业权重）、语义缓存 US 域、eval、UI 市场徽章
+- **P4**：ETF 深化（**已完成子集**）、语义缓存 US 域（**已完成子集**）、eval、UI 市场徽章

@@ -372,12 +372,17 @@ async def view_document(
 
 class SemanticLookupRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
+    market: str | None = Field(
+        default=None,
+        description="可选市场过滤：CN_A / US / MIXED / UNKNOWN；省略则不过滤域。",
+    )
 
 
 class SemanticLookupResponse(BaseModel):
     hit: bool
     answer: str | None = None
     cache_domain: str | None = None
+    cache_market: str | None = None
     score: float | None = None
     matched_question: str | None = None
     exact: bool | None = None
@@ -412,7 +417,7 @@ async def semantic_lookup(body: SemanticLookupRequest) -> SemanticLookupResponse
             skip_reason="semantic_cache_disabled",
         )
 
-    result = await asyncio.to_thread(cache.lookup, body.query)
+    result = await asyncio.to_thread(cache.lookup, body.query, market=body.market)
     if result is None:
         return SemanticLookupResponse(hit=False)
 
@@ -420,6 +425,7 @@ async def semantic_lookup(body: SemanticLookupRequest) -> SemanticLookupResponse
         hit=True,
         answer=result.answer,
         cache_domain=result.cache_domain,
+        cache_market=result.market,
         score=result.score,
         matched_question=result.matched_question,
         exact=result.exact,
