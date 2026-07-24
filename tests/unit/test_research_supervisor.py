@@ -25,6 +25,8 @@ from research_agent.agents.specialists import (
     build_report_expert,
     build_us_data_expert,
     build_us_filing_expert,
+    build_us_news_expert,
+    build_us_sentiment_expert,
 )
 from research_agent.config import LLMConfig
 from research_agent.graph.research_supervisor import (
@@ -36,6 +38,8 @@ from research_agent.graph.research_supervisor import (
     SUPERVISOR_PROMPT_REPORT,
     SUPERVISOR_PROMPT_US_DATA,
     SUPERVISOR_PROMPT_US_FILING,
+    SUPERVISOR_PROMPT_US_NEWS,
+    SUPERVISOR_PROMPT_US_SENTIMENT,
     _build_supervisor_prompt,
     build_research_supervisor,
 )
@@ -133,6 +137,24 @@ def fake_us_filing_tools() -> list[BaseTool]:
 
 
 @pytest.fixture
+def fake_us_news_tools() -> list[BaseTool]:
+    return [
+        _fake_tool("us_news_get_ticker_news"),
+        _fake_tool("us_news_get_market_news"),
+        _fake_tool("us_news_get_etf_news"),
+        _fake_tool("us_news_get_recent_8k_headlines"),
+    ]
+
+
+@pytest.fixture
+def fake_us_sentiment_tools() -> list[BaseTool]:
+    return [
+        _fake_tool("us_sentiment_analyze_text_sentiment"),
+        _fake_tool("us_sentiment_get_ticker_sentiment_report"),
+    ]
+
+
+@pytest.fixture
 def router() -> ModelRouter:
     # 假凭据 — 仅用于编译阶段，此处不会发生网络调用。
     cfg = LLMConfig(
@@ -152,12 +174,16 @@ class TestSpecialistBuilders:
         assert "data_expert" in SPECIALIST_BUILDERS
         assert "us_data_expert" in SPECIALIST_BUILDERS
         assert "us_filing_expert" in SPECIALIST_BUILDERS
+        assert "us_news_expert" in SPECIALIST_BUILDERS
+        assert "us_sentiment_expert" in SPECIALIST_BUILDERS
         assert "report_expert" in SPECIALIST_BUILDERS
         assert "knowledge_expert" in SPECIALIST_BUILDERS
         assert "news_expert" in SPECIALIST_BUILDERS
         assert SPECIALIST_BUILDERS["data_expert"] is build_data_expert
         assert SPECIALIST_BUILDERS["us_data_expert"] is build_us_data_expert
         assert SPECIALIST_BUILDERS["us_filing_expert"] is build_us_filing_expert
+        assert SPECIALIST_BUILDERS["us_news_expert"] is build_us_news_expert
+        assert SPECIALIST_BUILDERS["us_sentiment_expert"] is build_us_sentiment_expert
         assert SPECIALIST_BUILDERS["report_expert"] is build_report_expert
         assert SPECIALIST_BUILDERS["knowledge_expert"] is build_knowledge_expert
         assert SPECIALIST_BUILDERS["news_expert"] is build_news_expert
@@ -173,6 +199,14 @@ class TestSpecialistBuilders:
     def test_us_filing_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="us_filing_server"):
             build_us_filing_expert(router, [])
+
+    def test_us_news_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
+        with pytest.raises(ValueError, match="us_news_server"):
+            build_us_news_expert(router, [])
+
+    def test_us_sentiment_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
+        with pytest.raises(ValueError, match="us_sentiment_server"):
+            build_us_sentiment_expert(router, [])
 
     def test_report_expert_rejects_empty_tools(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="pdf_report_server"):
@@ -209,6 +243,20 @@ class TestSpecialistBuilders:
         assert hasattr(agent, "ainvoke")
         assert getattr(agent, "name", None) == "us_filing_expert"
 
+    def test_us_news_expert_compiles_with_tools(
+        self, router: ModelRouter, fake_us_news_tools: list[BaseTool]
+    ) -> None:
+        agent = build_us_news_expert(router, fake_us_news_tools)
+        assert hasattr(agent, "ainvoke")
+        assert getattr(agent, "name", None) == "us_news_expert"
+
+    def test_us_sentiment_expert_compiles_with_tools(
+        self, router: ModelRouter, fake_us_sentiment_tools: list[BaseTool]
+    ) -> None:
+        agent = build_us_sentiment_expert(router, fake_us_sentiment_tools)
+        assert hasattr(agent, "ainvoke")
+        assert getattr(agent, "name", None) == "us_sentiment_expert"
+
     def test_report_expert_compiles_with_tools(
         self, router: ModelRouter, fake_report_tools: list[BaseTool]
     ) -> None:
@@ -242,6 +290,8 @@ class TestSupervisorPrompt:
             has_data=True,
             has_us_data=True,
             has_us_filing=True,
+            has_us_news=True,
+            has_us_sentiment=True,
             has_report=True,
             has_coder=True,
             has_knowledge=True,
@@ -249,20 +299,24 @@ class TestSupervisorPrompt:
             has_sentiment=True,
             has_fund=True,
         )
-        # 使用 "  - <name>" 避免 us_data_expert 子串命中 data_expert。
+        # 使用 "  - <name>" 避免 us_*_expert 子串命中裸名。
         assert "  - data_expert" in prompt
         assert "us_data_expert" in prompt
         assert "us_filing_expert" in prompt
+        assert "us_news_expert" in prompt
+        assert "us_sentiment_expert" in prompt
         assert "report_expert" in prompt
         assert "coder_expert" in prompt
         assert "knowledge_expert" in prompt
-        assert "news_expert" in prompt
-        assert "sentiment_expert" in prompt
+        assert "  - news_expert" in prompt
+        assert "  - sentiment_expert" in prompt
         assert "fund_expert" in prompt
         # 各节文本确实被追加。
         assert SUPERVISOR_PROMPT_DATA in prompt
         assert SUPERVISOR_PROMPT_US_DATA in prompt
         assert SUPERVISOR_PROMPT_US_FILING in prompt
+        assert SUPERVISOR_PROMPT_US_NEWS in prompt
+        assert SUPERVISOR_PROMPT_US_SENTIMENT in prompt
         assert SUPERVISOR_PROMPT_REPORT in prompt
         assert SUPERVISOR_PROMPT_CODER in prompt
         assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
@@ -276,6 +330,8 @@ class TestSupervisorPrompt:
             has_data=True,
             has_us_data=False,
             has_us_filing=False,
+            has_us_news=False,
+            has_us_sentiment=False,
             has_report=False,
             has_coder=False,
             has_knowledge=False,
@@ -286,11 +342,13 @@ class TestSupervisorPrompt:
         assert "  - data_expert" in prompt
         assert "us_data_expert" not in prompt
         assert "us_filing_expert" not in prompt
+        assert "us_news_expert" not in prompt
+        assert "us_sentiment_expert" not in prompt
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
         assert "knowledge_expert" not in prompt
-        assert "news_expert" not in prompt
-        assert "sentiment_expert" not in prompt
+        assert "  - news_expert" not in prompt
+        assert "  - sentiment_expert" not in prompt
         assert "fund_expert" not in prompt
 
     def test_us_only_prompt_omits_cn_data_expert(self) -> None:
@@ -364,43 +422,86 @@ class TestSupervisorPrompt:
             has_sentiment=False,
             has_fund=False,
         )
-        assert "news_expert" in prompt
+        assert "  - news_expert" in prompt
         assert SUPERVISOR_PROMPT_NEWS in prompt
         assert "  - data_expert" not in prompt
         assert "us_data_expert" not in prompt
         assert "us_filing_expert" not in prompt
+        assert "us_news_expert" not in prompt
+        assert "us_sentiment_expert" not in prompt
         assert "report_expert" not in prompt
         assert "coder_expert" not in prompt
         assert "knowledge_expert" not in prompt
-        assert "sentiment_expert" not in prompt
+        assert "  - sentiment_expert" not in prompt
         assert "fund_expert" not in prompt
+
+    def test_us_news_only_prompt_omits_cn_news_expert(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=False,
+            has_us_data=False,
+            has_us_filing=False,
+            has_us_news=True,
+            has_us_sentiment=False,
+            has_report=False,
+            has_coder=False,
+            has_knowledge=False,
+            has_news=False,
+            has_sentiment=False,
+            has_fund=False,
+        )
+        assert "us_news_expert" in prompt
+        assert SUPERVISOR_PROMPT_US_NEWS in prompt
+        assert "  - news_expert" not in prompt
+        assert SUPERVISOR_PROMPT_NEWS not in prompt
+
+    def test_us_sentiment_only_prompt_omits_cn_sentiment_expert(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=False,
+            has_us_data=False,
+            has_us_filing=False,
+            has_us_news=False,
+            has_us_sentiment=True,
+            has_report=False,
+            has_coder=False,
+            has_knowledge=False,
+            has_news=False,
+            has_sentiment=False,
+            has_fund=False,
+        )
+        assert "us_sentiment_expert" in prompt
+        assert SUPERVISOR_PROMPT_US_SENTIMENT in prompt
+        assert "  - sentiment_expert" not in prompt
 
     def test_rules_always_included(self) -> None:
         """路由规则（"每次只移交一个子任务"、"不可捏造数字"等）是不可协商的 —
         无论团队组成如何，它们都必须出现。"""
-        # 元组: (has_data, has_us_data, has_us_filing, has_report, has_coder, has_knowledge, has_news, has_sentiment, has_fund)
+        # 元组: (data, us_data, us_filing, us_news, us_sentiment, report, coder, knowledge, news, sentiment, fund)
         for flags in [
-            (True, False, False, False, False, False, False, False, False),
-            (False, True, False, False, False, False, False, False, False),
-            (False, False, True, False, False, False, False, False, False),
-            (False, False, False, True, False, False, False, False, False),
-            (False, False, False, False, True, False, False, False, False),
-            (False, False, False, False, False, True, False, False, False),
-            (False, False, False, False, False, False, True, False, False),
-            (False, False, False, False, False, False, False, True, False),
-            (False, False, False, False, False, False, False, False, True),
-            (True, True, True, True, True, True, True, True, True),
+            (True, False, False, False, False, False, False, False, False, False, False),
+            (False, True, False, False, False, False, False, False, False, False, False),
+            (False, False, True, False, False, False, False, False, False, False, False),
+            (False, False, False, True, False, False, False, False, False, False, False),
+            (False, False, False, False, True, False, False, False, False, False, False),
+            (False, False, False, False, False, True, False, False, False, False, False),
+            (False, False, False, False, False, False, True, False, False, False, False),
+            (False, False, False, False, False, False, False, True, False, False, False),
+            (False, False, False, False, False, False, False, False, True, False, False),
+            (False, False, False, False, False, False, False, False, False, True, False),
+            (False, False, False, False, False, False, False, False, False, False, True),
+            (True, True, True, True, True, True, True, True, True, True, True),
         ]:
             prompt = _build_supervisor_prompt(
                 has_data=flags[0],
                 has_us_data=flags[1],
                 has_us_filing=flags[2],
-                has_report=flags[3],
-                has_coder=flags[4],
-                has_knowledge=flags[5],
-                has_news=flags[6],
-                has_sentiment=flags[7],
-                has_fund=flags[8],
+                has_us_news=flags[3],
+                has_us_sentiment=flags[4],
+                has_report=flags[5],
+                has_coder=flags[6],
+                has_knowledge=flags[7],
+                has_news=flags[8],
+                has_sentiment=flags[9],
+                has_fund=flags[10],
             )
             assert "移交" in prompt
             assert "不要编造" in prompt
@@ -549,6 +650,24 @@ class TestBuildResearchSupervisor:
         assert "report_expert" not in node_names
         assert "data_expert" not in node_names
 
+    def test_us_news_only_compiles(
+        self, router: ModelRouter, fake_us_news_tools: list[BaseTool]
+    ) -> None:
+        graph = build_research_supervisor(model_router=router, us_news_tools=fake_us_news_tools)
+        node_names = set(graph.get_graph().nodes.keys())
+        assert "us_news_expert" in node_names
+        assert "news_expert" not in node_names
+
+    def test_us_sentiment_only_compiles(
+        self, router: ModelRouter, fake_us_sentiment_tools: list[BaseTool]
+    ) -> None:
+        graph = build_research_supervisor(
+            model_router=router, us_sentiment_tools=fake_us_sentiment_tools
+        )
+        node_names = set(graph.get_graph().nodes.keys())
+        assert "us_sentiment_expert" in node_names
+        assert "sentiment_expert" not in node_names
+
     def test_empty_inputs_raise(self, router: ModelRouter) -> None:
         with pytest.raises(ValueError, match="至少需要一个专家的工具列表非空"):
             build_research_supervisor(model_router=router)
@@ -560,6 +679,9 @@ class TestBuildResearchSupervisor:
                 model_router=router,
                 data_tools=[],
                 us_data_tools=[],
+                us_filing_tools=[],
+                us_news_tools=[],
+                us_sentiment_tools=[],
                 report_tools=[],
                 coder_tools=[],
                 knowledge_tools=[],

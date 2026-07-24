@@ -446,6 +446,8 @@ _KNOWN_SPECIALISTS = frozenset(
         "data_expert",
         "us_data_expert",
         "us_filing_expert",
+        "us_news_expert",
+        "us_sentiment_expert",
         "fund_expert",
         "report_expert",
         "coder_expert",
