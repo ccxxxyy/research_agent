@@ -132,7 +132,7 @@ async def run_eval(
         dataset_label = dataset_path.name
     else:
         examples = load_merged_routing_dataset(include_us=include_us, limit=limit)
-        dataset_label = "merged_cn_us_routing" if include_us else CN_ROUTING_PATH.name
+        dataset_label = "merged_cn_us_mixed_routing" if include_us else CN_ROUTING_PATH.name
 
     logger.info("Loading dataset: {} examples ({})", len(examples), dataset_label)
     logger.info("Building evaluation environment...")

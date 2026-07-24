@@ -6,7 +6,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen.svg)](#评估体系)
-[![Eval Dataset](https://img.shields.io/badge/eval-138%20examples-blueviolet.svg)](#评估体系)
+[![Eval Dataset](https://img.shields.io/badge/eval-146%20examples-blueviolet.svg)](#评估体系)
 
 ---
 
@@ -447,10 +447,11 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 ### 数据集
 
-合并后 **138 条**（默认 `run_local` / LangSmith 上传）：
+合并后 **146** 条（默认 `run_local` / LangSmith 上传）：
 
 1. `evals/datasets/supervisor_routing.json` — **110** 条 A 股路由样本  
-2. `evals/datasets/us_market_routing.json` — **28** 条美股路由 / 隔离 / CN 对照样本（含 `expected_market`）
+2. `evals/datasets/us_market_routing.json` — **28** 条美股路由 / 隔离 / CN 对照样本（含 `expected_market`）  
+3. `evals/datasets/mixed_market_routing.json` — **8** 条跨市场 MIXED 编排样本
 
 A 股集类别：
 
@@ -463,7 +464,8 @@ A 股集类别：
 | `adversarial` | 8 | prompt injection、角色劫持、恶意代码注入 |
 | `memory_test` | 6 | 匿名 vs 登录用户的记忆写入验证 |
 
-美股集类别：`us_single_route` / `us_multi_route` / `us_isolation` / `us_robustness` / `cn_control`。
+美股集类别：`us_single_route` / `us_multi_route` / `us_isolation` / `us_robustness` / `cn_control`。  
+MIXED 集类别：`mixed_compare` / `mixed_quote` / `mixed_news` / `mixed_filing` / `mixed_index` / `mixed_sentiment` / `mixed_isolation`。
 
 ### 运行评估
 
@@ -472,9 +474,10 @@ A 股集类别：
 python -m evals.eval_supervisor
 
 # 方式 2：本地离线评估，输出 JSON 报告（不依赖 LangSmith）
-python -m evals.run_local                 # 默认合并 CN + US
+python -m evals.run_local                 # 默认合并 CN + US + MIXED
 python -m evals.run_local --cn-only       # 仅 A 股集
 python -m evals.run_local --dataset evals/datasets/us_market_routing.json
+python -m evals.run_local --dataset evals/datasets/mixed_market_routing.json
 python -m evals.run_local --limit 10      # 快速验证前 10 条
 
 # 对比两次评估结果（检测 regression）
@@ -634,8 +637,9 @@ src/research_agent/
 evals/                    # 量化评估套件
 ├── datasets/
 │   ├── supervisor_routing.json   # A 股 110 条
-│   └── us_market_routing.json    # 美股 28 条（含 expected_market）
-├── datasets.py           # 合并加载 CN + US
+│   ├── us_market_routing.json    # 美股 28 条（含 expected_market）
+│   └── mixed_market_routing.json # MIXED 8 条
+├── datasets.py           # 合并加载 CN + US + MIXED
 ├── evaluators.py         # 7 个评估器（含 market_routing / market_isolation）
 ├── eval_supervisor.py    # LangSmith 在线评估入口
 ├── run_local.py          # 离线评估 runner（输出 JSON 报告）
@@ -708,7 +712,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 - **美股 P4-语义缓存（已完成）**：种子 `market=CN_A|US|SHARED` + 按解析市场过滤
 - **美股 P4-Eval（已完成）**：`us_market_routing` 样本 + `market_routing_accuracy` / `market_isolation`
 - **美股 P4-UI（已完成）**：研究页市场徽章 + 市场覆盖选择 + `us_*` 专家列表
-- **美股后续**：跨市场 MIXED 深度编排
+- **美股 P5（已完成）**：MIXED 分侧编排计划 `[MixedOrchestration]` + `mixed_market_routing` 评估集
 - 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）

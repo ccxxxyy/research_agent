@@ -7,6 +7,7 @@
 - ``compare`` — 两次评估报告的 regression 对比工具
 - ``datasets/supervisor_routing.json`` — A 股路由样本（110）
 - ``datasets/us_market_routing.json`` — 美股路由 / 隔离样本
+- ``datasets/mixed_market_routing.json`` — 跨市场 MIXED 编排样本
 
 运行方式::
 

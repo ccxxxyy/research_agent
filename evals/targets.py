@@ -83,7 +83,7 @@ async def supervisor_target(inputs: dict[str, Any]) -> dict[str, Any]:
         user_id=user_id,
         override=None,
     )
-    preamble = format_market_preamble(resolution)
+    preamble = format_market_preamble(resolution, query=query)
     messages = [
         SystemMessage(content=preamble),
         HumanMessage(content=query),

@@ -1,0 +1,66 @@
+[
+  {
+    "query": "对比宁德时代和特斯拉最近的股价表现",
+    "user_id": "eval_user_mixed_01",
+    "expected_specialists": ["data_expert", "us_data_expert"],
+    "expected_reply_keywords": ["宁德时代", "特斯拉"],
+    "expected_market": "MIXED",
+    "category": "mixed_compare"
+  },
+  {
+    "query": "茅台和苹果的市盈率大概差多少",
+    "user_id": "eval_user_mixed_01",
+    "expected_specialists": ["data_expert", "us_data_expert"],
+    "expected_reply_keywords": ["茅台", "苹果"],
+    "expected_market": "MIXED",
+    "category": "mixed_compare"
+  },
+  {
+    "query": "查一下 300750 和 AAPL 的最新报价",
+    "user_id": "eval_user_mixed_02",
+    "expected_specialists": ["data_expert", "us_data_expert"],
+    "expected_reply_keywords": ["300750", "AAPL"],
+    "expected_market": "MIXED",
+    "category": "mixed_quote"
+  },
+  {
+    "query": "中美对比：比亚迪和特斯拉谁最近新闻更多",
+    "user_id": "eval_user_mixed_01",
+    "expected_specialists": ["news_expert", "us_news_expert"],
+    "expected_reply_keywords": ["新闻"],
+    "expected_market": "MIXED",
+    "category": "mixed_news"
+  },
+  {
+    "query": "贵州茅台年报要点，再查一下 Apple 最新 10-K 摘要",
+    "user_id": "eval_user_mixed_02",
+    "expected_specialists": ["report_expert", "us_filing_expert"],
+    "expected_reply_keywords": ["茅台", "10-K"],
+    "expected_market": "MIXED",
+    "category": "mixed_filing"
+  },
+  {
+    "query": "同时看看沪深300和标普500最近走势",
+    "user_id": "eval_user_mixed_01",
+    "expected_specialists": ["data_expert", "us_data_expert"],
+    "expected_reply_keywords": ["沪深", "标普"],
+    "expected_market": "MIXED",
+    "category": "mixed_index"
+  },
+  {
+    "query": "跨市场比较宁德时代舆情和特斯拉英文情绪",
+    "user_id": "eval_user_mixed_02",
+    "expected_specialists": ["sentiment_expert", "us_sentiment_expert"],
+    "expected_reply_keywords": ["舆情"],
+    "expected_market": "MIXED",
+    "category": "mixed_sentiment"
+  },
+  {
+    "query": "A股茅台和美股 KO 都查一下最新价，不要混用工具",
+    "user_id": "eval_user_mixed_01",
+    "expected_specialists": ["data_expert", "us_data_expert"],
+    "expected_reply_keywords": ["茅台", "KO"],
+    "expected_market": "MIXED",
+    "category": "mixed_isolation"
+  }
+]

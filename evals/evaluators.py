@@ -250,6 +250,8 @@ def _normalize_market_label(raw: str) -> str:
         "ASHARE": "CN_A",
         "A_SHARE": "CN_A",
         "MIXED": "MIXED",
+        "BOTH": "MIXED",
+        "CROSS": "MIXED",
         "UNKNOWN": "UNKNOWN",
     }
     return aliases.get(text, text)
