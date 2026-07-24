@@ -54,7 +54,7 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - `us_data_expert` 挂入 research supervisor roster；
 - 判定为 US 时路由至美股行情专家，**禁止**用 A 股 `fin_*` / `news_*` 查美股。
 
-### 5b. P4-ETF 行为（已落地，P4 子集）
+### 5b. P4-ETF 行为（已落地）
 
 - `us_get_etf_holdings`：Yahoo top holdings（重仓股 + 权重）；
 - `us_get_etf_sector_weights`：行业权重 + 大类资产占比（`funds_data`）；
@@ -72,12 +72,19 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - `us_sentiment_server`（英文金融关键词词典）暴露 `us_sentiment_*`；
 - **禁止**用 A 股 `news_*` / `sentiment_*`（SnowNLP）处理美股新闻舆情。
 
-### 8. P4-语义缓存 US 域（已落地，P4 子集）
+### 8. P4-语义缓存 US 域（已落地）
 
 - 种子条目增加 ``market``：`CN_A` / `US` / `SHARED`；
 - `lookup(..., market=)`：`US` → 仅 US+SHARED，`CN_A` → 仅 CN_A+SHARED；
 - 跳过规则扩展：白名单美股 ticker + 英文时效/研究意图模式；
 - research 路由先 `resolve_market` 再查缓存，避免美股问句命中 A 股 FAQ。
+
+### 9. P4-Eval（已落地）
+
+- 新增 `evals/datasets/us_market_routing.json`（美股单路由 / 多路由 / 隔离 / 对照）；
+- 评估器：`market_routing_accuracy`、`market_isolation`；
+- `supervisor_target` 注入 `[MarketResolution]` 前导，与生产对齐；
+- 默认本地/LangSmith 评估合并 CN + US 样本集。
 
 ## 考虑过的替代方案
 
@@ -104,4 +111,8 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - **P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` + 接入 supervisor roster
 - **P2（已完成）**：EDGAR `us_filing_server` + `us_filing_expert`
 - **P3（已完成）**：`us_news` / `us_sentiment`
-- **P4**：ETF 深化（**已完成子集**）、语义缓存 US 域（**已完成子集**）、eval、UI 市场徽章
+- **P4**（四块并行，完成一块勾一块）：
+  - ETF 深化 — **已完成**
+  - 语义缓存 US 域 — **已完成**
+  - Eval（美股路由 / 隔离评估）— **已完成**
+  - UI 市场徽章 — **待做**

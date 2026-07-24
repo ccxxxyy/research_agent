@@ -6,7 +6,7 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen.svg)](#评估体系)
-[![Eval Dataset](https://img.shields.io/badge/eval-110%20examples-blueviolet.svg)](#评估体系)
+[![Eval Dataset](https://img.shields.io/badge/eval-138%20examples-blueviolet.svg)](#评估体系)
 
 ---
 
@@ -431,7 +431,7 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 ## 八、评估体系
 
-本项目具备完整的量化评估流水线，覆盖路由准确率、回复质量、关键词命中、记忆持久化和工具选择精确度五个维度。
+本项目具备完整的量化评估流水线，覆盖路由准确率、回复质量、关键词命中、记忆持久化、工具选择精确度，以及美股市场判定 / 跨市场隔离。
 
 ### 评估指标
 
@@ -442,10 +442,17 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 | `keyword_coverage` | 确定性 | 回复是否包含预期关键词 |
 | `tool_selection_precision` | 确定性 | 是否路由了不必要的 specialist（惩罚过度路由） |
 | `memory_persistence` | 确定性 | 长期记忆是否在该写入时已写入 |
+| `market_routing_accuracy` | 确定性 | 预期市场 vs `MarketResolution.market` |
+| `market_isolation` | 确定性 | 美股不得命中 A 股专家，反之亦然 |
 
 ### 数据集
 
-`evals/datasets/supervisor_routing.json` — **110 条标注样本**，覆盖：
+合并后 **138 条**（默认 `run_local` / LangSmith 上传）：
+
+1. `evals/datasets/supervisor_routing.json` — **110** 条 A 股路由样本  
+2. `evals/datasets/us_market_routing.json` — **28** 条美股路由 / 隔离 / CN 对照样本（含 `expected_market`）
+
+A 股集类别：
 
 | 类别 | 数量 | 说明 |
 |---|---|---|
@@ -456,6 +463,8 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 | `adversarial` | 8 | prompt injection、角色劫持、恶意代码注入 |
 | `memory_test` | 6 | 匿名 vs 登录用户的记忆写入验证 |
 
+美股集类别：`us_single_route` / `us_multi_route` / `us_isolation` / `us_robustness` / `cn_control`。
+
 ### 运行评估
 
 ```bash
@@ -463,14 +472,16 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 python -m evals.eval_supervisor
 
 # 方式 2：本地离线评估，输出 JSON 报告（不依赖 LangSmith）
-python -m evals.run_local
-python -m evals.run_local --limit 10  # 快速验证前 10 条
+python -m evals.run_local                 # 默认合并 CN + US
+python -m evals.run_local --cn-only       # 仅 A 股集
+python -m evals.run_local --dataset evals/datasets/us_market_routing.json
+python -m evals.run_local --limit 10      # 快速验证前 10 条
 
 # 对比两次评估结果（检测 regression）
 python -m evals.compare eval_results/baseline.json eval_results/current.json
 
-# 评估器单元测试（32 个，纯离线）
-pytest evals/test_evaluators.py -q
+# 评估器 + 美股样本契约单测（纯离线）
+pytest evals/test_evaluators.py evals/test_us_eval_dataset.py -q
 ```
 
 报告输出到 `eval_results/` 目录，格式示例：
@@ -622,12 +633,15 @@ src/research_agent/
 
 evals/                    # 量化评估套件
 ├── datasets/
-│   └── supervisor_routing.json  # 100 条标注样本（6 类 × 多场景）
-├── evaluators.py         # 5 个评估器（routing_accuracy / reply_quality / keyword_coverage / memory_persistence / tool_selection_precision）
+│   ├── supervisor_routing.json   # A 股 110 条
+│   └── us_market_routing.json    # 美股 28 条（含 expected_market）
+├── datasets.py           # 合并加载 CN + US
+├── evaluators.py         # 7 个评估器（含 market_routing / market_isolation）
 ├── eval_supervisor.py    # LangSmith 在线评估入口
 ├── run_local.py          # 离线评估 runner（输出 JSON 报告）
 ├── compare.py            # 评估报告 regression 对比工具
-└── test_evaluators.py    # 评估器单元测试（32 个）
+├── test_evaluators.py    # 评估器单元测试
+└── test_us_eval_dataset.py  # 美股样本 × resolve_market 契约
 eval_results/             # 评估报告输出目录（git tracked）
 .github/workflows/        # CI/CD 三层流水线
 ├── ci.yml                # PR: lint + test + coverage
@@ -692,7 +706,8 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 - **美股 P3（已完成）**：`us_news_server` + `us_sentiment_server`（Yahoo 新闻 / 英文舆情）
 - **美股 P4-ETF（已完成）**：`us_get_etf_holdings` / `us_get_etf_sector_weights`（并入 `us_data_expert`）
 - **美股 P4-语义缓存（已完成）**：种子 `market=CN_A|US|SHARED` + 按解析市场过滤
-- **美股 P4+**：跨市场 MIXED 编排、UI 市场徽章、eval
+- **美股 P4-Eval（已完成）**：`us_market_routing` 样本 + `market_routing_accuracy` / `market_isolation`
+- **美股 P4+**：跨市场 MIXED 编排、UI 市场徽章
 - 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）

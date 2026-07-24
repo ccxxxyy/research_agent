@@ -32,15 +32,18 @@ from typing import Any
 
 from loguru import logger
 
+from evals.datasets import CN_ROUTING_PATH, load_json_dataset, load_merged_routing_dataset
 from evals.evaluators import (
     keyword_coverage,
+    market_isolation,
+    market_routing_accuracy,
     memory_persistence,
     routing_accuracy,
     tool_selection_precision,
 )
 from evals.targets import build_eval_environment, supervisor_target
 
-_DATASET_PATH = Path(__file__).parent / "datasets" / "supervisor_routing.json"
+_DATASET_PATH = CN_ROUTING_PATH  # 兼容旧 CLI；默认实际加载合并集
 _DEFAULT_OUTPUT_DIR = Path("eval_results")
 
 _DETERMINISTIC_EVALUATORS = [
@@ -48,6 +51,8 @@ _DETERMINISTIC_EVALUATORS = [
     keyword_coverage,
     memory_persistence,
     tool_selection_precision,
+    market_routing_accuracy,
+    market_isolation,
 ]
 
 
@@ -78,6 +83,7 @@ async def _run_single(
         "user_id": example.get("user_id", "anonymous"),
         "expected_specialists": example.get("expected_specialists", []),
         "expected_reply_keywords": example.get("expected_reply_keywords", []),
+        "expected_market": example.get("expected_market"),
     }
 
     try:
@@ -91,6 +97,8 @@ async def _run_single(
             "specialists_reached": [],
             "memory_saved": False,
             "thread_id": "",
+            "market": "",
+            "market_source": "",
         }
         record["error"] = str(exc)
 
@@ -110,16 +118,23 @@ async def _run_single(
 
 
 async def run_eval(
-    dataset_path: Path,
     output_dir: Path,
     limit: int | None = None,
+    *,
+    dataset_path: Path | None = None,
+    include_us: bool = True,
 ) -> Path:
     """Run full local evaluation and write JSON report."""
-    examples = json.loads(dataset_path.read_text(encoding="utf-8"))
-    if limit:
-        examples = examples[:limit]
+    if dataset_path is not None:
+        examples = load_json_dataset(dataset_path)
+        if limit:
+            examples = examples[:limit]
+        dataset_label = dataset_path.name
+    else:
+        examples = load_merged_routing_dataset(include_us=include_us, limit=limit)
+        dataset_label = "merged_cn_us_routing" if include_us else CN_ROUTING_PATH.name
 
-    logger.info("Loading dataset: {} examples", len(examples))
+    logger.info("Loading dataset: {} examples ({})", len(examples), dataset_label)
     logger.info("Building evaluation environment...")
     await build_eval_environment()
     logger.info("Environment ready. Starting evaluation...")
@@ -150,7 +165,7 @@ async def run_eval(
     report = {
         "metadata": {
             "timestamp": datetime.now(UTC).isoformat(),
-            "dataset": str(dataset_path.name),
+            "dataset": dataset_label,
             "num_examples": len(examples),
             "num_errors": sum(1 for d in details if d["error"]),
             "model_config": {
@@ -198,15 +213,20 @@ def _print_summary(
             f"{stats['max']:>7.3f} {stats['std']:>7.3f} {stats['count']:>5}"
         )
 
-    header = f"\n{'Category':<20} {'routing_acc':>12} {'keyword_cov':>12} {'tool_prec':>10}"
+    header = (
+        f"\n{'Category':<20} {'routing_acc':>12} {'keyword_cov':>12} " 
+        f"{'tool_prec':>10} {'mkt_acc':>8} {'isolate':>8}"
+    )
     print(header)
-    print("-" * 58)
+    print("-" * 78)
     for cat in sorted(by_category):
         metrics = by_category[cat]
         ra = metrics.get("routing_accuracy", {}).get("mean", 0)
         kc = metrics.get("keyword_coverage", {}).get("mean", 0)
         tp = metrics.get("tool_selection_precision", {}).get("mean", 0)
-        print(f"  {cat:<18} {ra:>11.3f} {kc:>11.3f} {tp:>9.3f}")
+        ma = metrics.get("market_routing_accuracy", {}).get("mean", 0)
+        mi = metrics.get("market_isolation", {}).get("mean", 0)
+        print(f"  {cat:<18} {ra:>11.3f} {kc:>11.3f} {tp:>9.3f} {ma:>7.3f} {mi:>7.3f}")
 
     print("=" * 70 + "\n")
 
@@ -218,8 +238,13 @@ def main() -> None:
     parser.add_argument(
         "--dataset",
         type=Path,
-        default=_DATASET_PATH,
-        help=f"Path to evaluation dataset JSON (default: {_DATASET_PATH})",
+        default=None,
+        help="Path to a single dataset JSON; default merges CN + US routing sets",
+    )
+    parser.add_argument(
+        "--cn-only",
+        action="store_true",
+        help="Only run the legacy A-share supervisor_routing.json set",
     )
     parser.add_argument(
         "--output-dir",
@@ -235,7 +260,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    report_path = asyncio.run(run_eval(args.dataset, args.output_dir, args.limit))
+    report_path = asyncio.run(
+        run_eval(
+            args.output_dir,
+            args.limit,
+            dataset_path=args.dataset,
+            include_us=not args.cn_only,
+        )
+    )
     print(f"Report: {report_path}")
 
 

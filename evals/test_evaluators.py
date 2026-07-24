@@ -14,6 +14,8 @@ import pytest
 from evals.evaluators import (
     _build_reply_quality_evaluator,
     keyword_coverage,
+    market_isolation,
+    market_routing_accuracy,
     memory_persistence,
     routing_accuracy,
     tool_selection_precision,
@@ -269,3 +271,54 @@ class TestToolSelectionPrecision:
         run = _make_run({"specialists_reached": ["coder_expert"]})
         example = _make_example({"expected_specialists": ["data_expert"]})
         assert tool_selection_precision(run, example)["score"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# market_routing_accuracy / market_isolation
+# ---------------------------------------------------------------------------
+
+
+class TestMarketRoutingAccuracy:
+    def test_match(self) -> None:
+        run = _make_run({"market": "US"})
+        example = _make_example({"expected_market": "US"})
+        assert market_routing_accuracy(run, example)["score"] == 1.0
+
+    def test_alias_normalization(self) -> None:
+        run = _make_run({"market": "US"})
+        example = _make_example({"expected_market": "USA"})
+        assert market_routing_accuracy(run, example)["score"] == 1.0
+
+    def test_mismatch(self) -> None:
+        run = _make_run({"market": "CN_A"})
+        example = _make_example({"expected_market": "US"})
+        assert market_routing_accuracy(run, example)["score"] == 0.0
+
+    def test_missing_label_is_neutral(self) -> None:
+        run = _make_run({"market": "US"})
+        example = _make_example({})
+        assert market_routing_accuracy(run, example)["score"] == 1.0
+
+
+class TestMarketIsolation:
+    def test_us_clean(self) -> None:
+        run = _make_run({"specialists_reached": ["us_data_expert", "us_news_expert"]})
+        example = _make_example({"expected_market": "US"})
+        assert market_isolation(run, example)["score"] == 1.0
+
+    def test_us_leaks_to_cn(self) -> None:
+        run = _make_run({"specialists_reached": ["us_data_expert", "data_expert"]})
+        example = _make_example({"expected_market": "US"})
+        result = market_isolation(run, example)
+        assert result["score"] == 0.0
+        assert "data_expert" in result["comment"]
+
+    def test_cn_clean(self) -> None:
+        run = _make_run({"specialists_reached": ["data_expert", "news_expert"]})
+        example = _make_example({"expected_market": "CN_A"})
+        assert market_isolation(run, example)["score"] == 1.0
+
+    def test_cn_leaks_to_us(self) -> None:
+        run = _make_run({"specialists_reached": ["data_expert", "us_filing_expert"]})
+        example = _make_example({"expected_market": "CN_A"})
+        assert market_isolation(run, example)["score"] == 0.0

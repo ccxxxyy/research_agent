@@ -16,15 +16,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-from pathlib import Path
 
 from langsmith import Client, evaluate
 from loguru import logger
 
+from evals.datasets import load_merged_routing_dataset
 from evals.evaluators import (
     create_reply_quality_evaluator,
     keyword_coverage,
+    market_isolation,
+    market_routing_accuracy,
     memory_persistence,
     routing_accuracy,
     tool_selection_precision,
@@ -33,15 +34,14 @@ from evals.targets import build_eval_environment, supervisor_target
 from research_agent.config import get_settings
 
 _DEFAULT_DATASET_NAME = "supervisor-routing-eval"
-_DATASET_PATH = Path(__file__).parent / "datasets" / "supervisor_routing.json"
 
 
 def _ensure_dataset(client: Client, dataset_name: str) -> str:
-    """从本地 JSON 文件创建或更新 LangSmith 数据集。
+    """从本地合并数据集创建或更新 LangSmith 数据集。
 
     返回数据集名称（用于 ``evaluate(data=...)``）。
     """
-    examples = json.loads(_DATASET_PATH.read_text(encoding="utf-8"))
+    examples = load_merged_routing_dataset()
 
     try:
         ds = client.read_dataset(dataset_name=dataset_name)
@@ -50,8 +50,8 @@ def _ensure_dataset(client: Client, dataset_name: str) -> str:
         ds = client.create_dataset(
             dataset_name=dataset_name,
             description=(
-                "Research supervisor routing accuracy, reply quality, "
-                "and memory persistence evaluation set."
+                "Research supervisor routing accuracy (CN_A + US), reply quality, "
+                "market isolation, and memory persistence evaluation set."
             ),
         )
         logger.info("Created dataset '{}' (id={})", dataset_name, ds.id)
@@ -72,6 +72,7 @@ def _ensure_dataset(client: Client, dataset_name: str) -> str:
                 "user_id": ex.get("user_id", "anonymous"),
                 "expected_specialists": ex.get("expected_specialists", []),
                 "expected_reply_keywords": ex.get("expected_reply_keywords", []),
+                "expected_market": ex.get("expected_market"),
                 "category": ex.get("category", ""),
             },
             outputs={},
@@ -103,6 +104,8 @@ async def _run_eval(dataset_name: str, experiment_prefix: str) -> None:
             keyword_coverage,
             memory_persistence,
             tool_selection_precision,
+            market_routing_accuracy,
+            market_isolation,
         ],
         experiment_prefix=experiment_prefix,
         max_concurrency=2,
