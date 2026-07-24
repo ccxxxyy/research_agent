@@ -187,8 +187,21 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 
 /* Panel */
 .dash-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.dash-panel .panel-title{font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-shrink:0}
+.dash-panel .panel-title{font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap}
 .dash-panel .panel-title::before{content:'';width:3px;height:12px;background:var(--accent);border-radius:2px}
+.panel-fetched{margin-left:auto;font-size:10px;font-weight:500;color:var(--text2);text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dash-indices-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px}
+.dash-indices-head::before{content:'';width:3px;height:12px;background:var(--accent);border-radius:2px}
+.dash-indices-head .panel-fetched{margin-left:auto}
+.dash-section{margin-top:18px;padding-top:14px;border-top:1px dashed var(--border)}
+.dash-section-title{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;font-weight:800;color:var(--text);letter-spacing:.3px}
+.dash-section-title .sec-tag{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(99,102,241,.12);color:var(--accent)}
+.dash-section-title .sec-tag.cn{background:rgba(248,113,113,.12);color:var(--red)}
+.dash-section-title .sec-tag.us{background:rgba(96,165,250,.14);color:#60a5fa}
+.dash-status .market-badge.us-trading{background:rgba(96,165,250,.15);color:#60a5fa}
+.dash-status .market-badge.us-pre{background:rgba(250,204,21,.12);color:var(--yellow)}
+.dash-status .market-badge.us-closed{background:rgba(139,143,163,.15);color:var(--text2)}
+.dash-status .us-status-msg{color:var(--text2);font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Pie chart */
 .pie-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center}
@@ -219,17 +232,22 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .hot-list{list-style:none;padding:0;margin:0;flex:1;overflow-y:auto;max-height:230px}
 .hot-list::-webkit-scrollbar{width:3px}
 .hot-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.hot-list.topic-list{overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.hot-list.topic-list::-webkit-scrollbar{height:4px;width:3px}
 .hot-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;cursor:pointer;transition:background .12s;font-size:12px}
 .hot-item:hover{background:var(--surface2)}
+.hot-list.topic-list .hot-item{min-width:max-content;width:max-content}
 .hot-item .hot-rank{width:18px;height:18px;line-height:18px;text-align:center;font-weight:800;font-size:10px;color:var(--text2);flex-shrink:0;border-radius:4px;background:var(--surface2)}
 .hot-item:nth-child(1) .hot-rank{background:var(--red);color:#fff}
 .hot-item:nth-child(2) .hot-rank{background:#e06030;color:#fff}
 .hot-item:nth-child(3) .hot-rank{background:#c08040;color:#fff}
 .hot-item .hot-name{flex:1;color:var(--text);font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hot-list.topic-list .hot-name{overflow:visible;text-overflow:unset;max-width:none;flex:0 0 auto}
 .hot-item .hot-code{color:var(--text2);font-size:10px;font-family:monospace;flex-shrink:0}
 .hot-item .hot-price{color:var(--text);font-size:11px;min-width:44px;text-align:right;font-weight:500;font-variant-numeric:tabular-nums;flex-shrink:0}
 .hot-item .hot-change{font-size:11px;font-weight:700;min-width:50px;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
 .topic-tag{font-size:10px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:8px;white-space:nowrap;flex-shrink:0}
+.specialist-group{font-size:10px;color:var(--text2);padding:8px 16px 4px;letter-spacing:.5px}
 
 /* LHB */
 .lhb-list .lhb-item{flex-wrap:wrap}
@@ -361,33 +379,74 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
           <span class="dash-desc">基于 LangGraph 多智能体协作的金融深度研究系统</span>
         </div>
         <div class="dash-status" id="dashStatus">
-          <span class="market-badge closed" id="dashBadge">加载中</span>
+          <span class="market-badge closed" id="dashBadge">A股 · 加载中</span>
+          <span class="market-badge us-closed" id="dashBadgeUs">美股 · 加载中</span>
           <span class="status-msg" id="dashMsg">正在获取行情数据...</span>
+          <span class="us-status-msg" id="dashMsgUs"></span>
           <span class="status-time" id="dashTime">--:--:--</span>
           <button class="refresh-btn" onclick="refreshDashboard()" id="dashRefreshBtn">刷新</button>
         </div>
+        <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板</div>
         <div class="dash-top">
-          <div class="dash-top-left"><div class="dash-indices" id="dashIndices"></div></div>
-          <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌分布</div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div></div>
+          <div class="dash-top-left">
+            <div class="dash-indices-head">主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
+            <div class="dash-indices" id="dashIndices"></div>
+          </div>
+          <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌分布<span class="panel-fetched" data-fetch="breadth"></span></div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div></div>
         </div>
         <div class="dash-row3">
-          <div class="dash-panel"><div class="panel-title">今日涨停</div><ul class="zt-list" id="ztList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">市场热搜</div><div id="hotPanel"></div></div>
-          <div class="dash-panel"><div class="panel-title">热门研报</div><ul class="hot-list" id="topicList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">今日涨停<span class="panel-fetched" data-fetch="zt_pool"></span></div><ul class="zt-list" id="ztList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">市场热搜<span class="panel-fetched" data-fetch="trending"></span></div><div id="hotPanel"></div></div>
+          <div class="dash-panel"><div class="panel-title">热门研报<span class="panel-fetched" data-fetch="topics"></span></div><ul class="hot-list topic-list" id="topicList"></ul></div>
         </div>
         <div class="dash-row3">
-          <div class="dash-panel"><div class="panel-title">行业板块 TOP10</div><ul class="zt-list" id="industryList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">概念板块 TOP10</div><ul class="zt-list" id="conceptList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">盘中异动</div><ul class="zt-list" id="changesList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">行业板块 TOP10<span class="panel-fetched" data-fetch="boards_industry"></span></div><ul class="zt-list" id="industryList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">概念板块 TOP10<span class="panel-fetched" data-fetch="boards_concept"></span></div><ul class="zt-list" id="conceptList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
         </div>
         <div class="dash-row3">
-          <div class="dash-panel"><div class="panel-title">强势股</div><ul class="zt-list" id="strongList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">昨日涨停表现</div><ul class="zt-list" id="prevZtList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">炸板股</div><ul class="zt-list" id="zbgcList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">强势股<span class="panel-fetched" data-fetch="strong_pool"></span></div><ul class="zt-list" id="strongList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">昨日涨停表现<span class="panel-fetched" data-fetch="previous_zt"></span></div><ul class="zt-list" id="prevZtList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">炸板股<span class="panel-fetched" data-fetch="zbgc_pool"></span></div><ul class="zt-list" id="zbgcList"></ul></div>
         </div>
         <div class="dash-row2">
-          <div class="dash-panel"><div class="panel-title">龙虎榜</div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">龙虎榜<span class="panel-fetched" data-fetch="lhb"></span></div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
           <div class="dash-panel"><div class="panel-title">快捷提问</div><div class="example-list" id="quickQueries"><div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div><div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？</div><div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行</div><div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div></div></div>
+        </div>
+
+        <div class="dash-section" id="usDashboardSection">
+          <div class="dash-section-title"><span class="sec-tag us">US</span> 美股看板</div>
+          <div class="dash-top">
+            <div class="dash-top-left">
+              <div class="dash-indices-head">美股主要指数<span class="panel-fetched" data-fetch="us_indices"></span></div>
+              <div class="dash-indices" id="usDashIndices"></div>
+            </div>
+            <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌概览<span class="panel-fetched" data-fetch="us_breadth"></span></div><div class="pie-wrap"><div id="usPieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="usPieStats"></div></div></div></div>
+          </div>
+          <div class="dash-row3">
+            <div class="dash-panel"><div class="panel-title">日内涨幅榜<span class="panel-fetched" data-fetch="us_gainers"></span></div><ul class="zt-list" id="usGainersList"></ul></div>
+            <div class="dash-panel"><div class="panel-title">成交最活跃<span class="panel-fetched" data-fetch="us_actives"></span></div><ul class="zt-list" id="usActivesList"></ul></div>
+            <div class="dash-panel"><div class="panel-title">成长科技股<span class="panel-fetched" data-fetch="us_growth"></span></div><ul class="zt-list" id="usGrowthList"></ul></div>
+          </div>
+          <div class="dash-row3">
+            <div class="dash-panel"><div class="panel-title">行业板块 ETF<span class="panel-fetched" data-fetch="us_sectors"></span></div><ul class="zt-list" id="usSectorsList"></ul></div>
+            <div class="dash-panel"><div class="panel-title">主题概念 ETF<span class="panel-fetched" data-fetch="us_theme_etfs"></span></div><ul class="zt-list" id="usThemeList"></ul></div>
+            <div class="dash-panel"><div class="panel-title">小盘异动<span class="panel-fetched" data-fetch="us_small_gainers"></span></div><ul class="zt-list" id="usSmallList"></ul></div>
+          </div>
+          <div class="dash-row3">
+            <div class="dash-panel"><div class="panel-title">七巨头<span class="panel-fetched" data-fetch="us_mega"></span></div><ul class="zt-list" id="usMegaList"></ul></div>
+            <div class="dash-panel"><div class="panel-title">低估值大盘<span class="panel-fetched" data-fetch="us_undervalued"></span></div><ul class="zt-list" id="usUnderList"></ul></div>
+            <div class="dash-panel"><div class="panel-title">日内跌幅榜<span class="panel-fetched" data-fetch="us_losers"></span></div><ul class="zt-list" id="usLosersList"></ul></div>
+          </div>
+          <div class="dash-row2">
+            <div class="dash-panel"><div class="panel-title">空头最重<span class="panel-fetched" data-fetch="us_shorted"></span></div><ul class="zt-list" id="usShortedList"></ul></div>
+            <div class="dash-panel"><div class="panel-title">美股快捷提问</div><div class="example-list" id="usQuickQueries">
+              <div class="example" onclick="fillQuery(this)">分析标普500与纳斯达克今日走势</div>
+              <div class="example" onclick="fillQuery(this)">美股科技板块和七巨头今日表现如何？</div>
+              <div class="example" onclick="fillQuery(this)">QQQ与SMH最近走势和重仓股分析</div>
+              <div class="example" onclick="fillQuery(this)">对比今日美股涨幅榜龙头与半导体ETF</div>
+            </div></div>
+          </div>
         </div>
       </div>
     </div>
@@ -419,17 +478,25 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 
 <script>
 const ALL_SPECIALISTS = [
-  {id:'data_expert',         label:'数据专家',     desc:'A股财务 / 行情'},
-  {id:'fund_expert',         label:'基金专家',     desc:'基金分析 / ETF'},
-  {id:'report_expert',       label:'公告专家',     desc:'巨潮公告 / 年报'},
-  {id:'coder_expert',        label:'代码专家',     desc:'Python 计算'},
-  {id:'news_expert',         label:'新闻专家',     desc:'A股新闻 / 快讯'},
-  {id:'knowledge_expert',    label:'知识库专家',   desc:'用户知识库'},
-  {id:'sentiment_expert',    label:'舆情专家',     desc:'A股舆情量化'},
-  {id:'us_data_expert',      label:'美股数据专家',     desc:'美股行情 / ETF'},
-  {id:'us_filing_expert',    label:'美股披露专家',     desc:'SEC EDGAR'},
-  {id:'us_news_expert',      label:'美股新闻专家',     desc:'Yahoo 新闻'},
-  {id:'us_sentiment_expert', label:'美股舆情专家',     desc:'英文舆情'},
+  // A 股专属
+  {id:'data_expert',         label:'数据专家',   desc:'A股财务 / 行情', group:'cn'},
+  {id:'fund_expert',         label:'基金专家',   desc:'场内ETF/LOF + 场外开放式', group:'cn'},
+  {id:'report_expert',       label:'公告专家',   desc:'巨潮公告 / 年报', group:'cn'},
+  {id:'news_expert',         label:'新闻专家',   desc:'A股新闻 / 快讯', group:'cn'},
+  {id:'sentiment_expert',    label:'舆情专家',   desc:'A股舆情量化', group:'cn'},
+  // 跨市场共享（CN / US 均可调用，不重复挂美股副本）
+  {id:'coder_expert',        label:'代码专家',   desc:'共享 · Python 计算', group:'shared'},
+  {id:'knowledge_expert',    label:'知识库专家', desc:'共享 · 用户 PDF', group:'shared'},
+  // 美股专属（ETF 并入 us_data；共同基金一期不做）
+  {id:'us_data_expert',      label:'美股数据专家', desc:'美股行情 / ETF', group:'us'},
+  {id:'us_filing_expert',    label:'美股披露专家', desc:'SEC EDGAR', group:'us'},
+  {id:'us_news_expert',      label:'美股新闻专家', desc:'Yahoo 新闻', group:'us'},
+  {id:'us_sentiment_expert', label:'美股舆情专家', desc:'英文舆情', group:'us'},
+];
+const SPECIALIST_GROUPS = [
+  {id:'cn', label:'A 股'},
+  {id:'shared', label:'共享'},
+  {id:'us', label:'美股'},
 ];
 
 // =====================================================================
@@ -758,47 +825,59 @@ let _dashTimer = null;
 let _dashCountdown = 30;
 let _dashCountdownTimer = null;
 let _pieChart = null;
+let _usPieChart = null;
 let _trendingData = {};
 let _trendingActiveTab = '';
 
 function showDashboard() {
   const m = document.getElementById('messages');
-  m.innerHTML = `<div class="dashboard" id="dashboard">
+  m.innerHTML = `<div class="dashboard" id="dashboard">${_dashboardInnerHtml()}</div>`;
+  _pieChart = null;
+  _usPieChart = null;
+  initDashboard();
+}
+
+function _dashboardInnerHtml() {
+  return `
     <div class="dash-header">
       <span class="dash-title">金融研究助手</span>
       <span class="dash-desc">基于 LangGraph 多智能体协作的金融深度研究系统</span>
     </div>
     <div class="dash-status" id="dashStatus">
-      <span class="market-badge closed" id="dashBadge">加载中</span>
+      <span class="market-badge closed" id="dashBadge">A股 · 加载中</span>
+      <span class="market-badge us-closed" id="dashBadgeUs">美股 · 加载中</span>
       <span class="status-msg" id="dashMsg">正在获取行情数据...</span>
+      <span class="us-status-msg" id="dashMsgUs"></span>
       <span class="status-time" id="dashTime">--:--:--</span>
       <button class="refresh-btn" onclick="refreshDashboard()" id="dashRefreshBtn">刷新</button>
     </div>
+    <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板</div>
     <div class="dash-top">
       <div class="dash-top-left">
+        <div class="dash-indices-head">主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
         <div class="dash-indices" id="dashIndices"></div>
       </div>
       <div class="dash-top-right">
-        <div class="dash-panel"><div class="panel-title">涨跌分布</div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div>
+        <div class="dash-panel"><div class="panel-title">涨跌分布<span class="panel-fetched" data-fetch="breadth"></span></div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div>
       </div>
     </div>
     <div class="dash-row3">
-      <div class="dash-panel"><div class="panel-title">今日涨停</div><ul class="zt-list" id="ztList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">市场热搜</div><div id="hotPanel"></div></div>
-      <div class="dash-panel"><div class="panel-title">热门研报</div><ul class="hot-list" id="topicList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">今日涨停<span class="panel-fetched" data-fetch="zt_pool"></span></div><ul class="zt-list" id="ztList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">市场热搜<span class="panel-fetched" data-fetch="trending"></span></div><div id="hotPanel"></div></div>
+      <div class="dash-panel"><div class="panel-title">热门研报<span class="panel-fetched" data-fetch="topics"></span></div><ul class="hot-list topic-list" id="topicList"></ul></div>
     </div>
     <div class="dash-row3">
-      <div class="dash-panel"><div class="panel-title">行业板块 TOP10</div><ul class="zt-list" id="industryList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">概念板块 TOP10</div><ul class="zt-list" id="conceptList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">盘中异动</div><ul class="zt-list" id="changesList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">行业板块 TOP10<span class="panel-fetched" data-fetch="boards_industry"></span></div><ul class="zt-list" id="industryList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">概念板块 TOP10<span class="panel-fetched" data-fetch="boards_concept"></span></div><ul class="zt-list" id="conceptList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
     </div>
     <div class="dash-row3">
-      <div class="dash-panel"><div class="panel-title">强势股</div><ul class="zt-list" id="strongList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">昨日涨停表现</div><ul class="zt-list" id="prevZtList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">炸板股</div><ul class="zt-list" id="zbgcList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">强势股<span class="panel-fetched" data-fetch="strong_pool"></span></div><ul class="zt-list" id="strongList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">昨日涨停表现<span class="panel-fetched" data-fetch="previous_zt"></span></div><ul class="zt-list" id="prevZtList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">炸板股<span class="panel-fetched" data-fetch="zbgc_pool"></span></div><ul class="zt-list" id="zbgcList"></ul></div>
     </div>
     <div class="dash-row2">
-      <div class="dash-panel"><div class="panel-title">龙虎榜</div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">龙虎榜<span class="panel-fetched" data-fetch="lhb"></span></div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
       <div class="dash-panel">
         <div class="panel-title">快捷提问</div>
         <div class="example-list" id="quickQueries">
@@ -809,9 +888,40 @@ function showDashboard() {
         </div>
       </div>
     </div>
-  </div>`;
-  _pieChart = null;
-  initDashboard();
+    <div class="dash-section" id="usDashboardSection">
+      <div class="dash-section-title"><span class="sec-tag us">US</span> 美股看板</div>
+      <div class="dash-top">
+        <div class="dash-top-left">
+          <div class="dash-indices-head">美股主要指数<span class="panel-fetched" data-fetch="us_indices"></span></div>
+          <div class="dash-indices" id="usDashIndices"></div>
+        </div>
+        <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌概览<span class="panel-fetched" data-fetch="us_breadth"></span></div><div class="pie-wrap"><div id="usPieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="usPieStats"></div></div></div></div>
+      </div>
+      <div class="dash-row3">
+        <div class="dash-panel"><div class="panel-title">日内涨幅榜<span class="panel-fetched" data-fetch="us_gainers"></span></div><ul class="zt-list" id="usGainersList"></ul></div>
+        <div class="dash-panel"><div class="panel-title">成交最活跃<span class="panel-fetched" data-fetch="us_actives"></span></div><ul class="zt-list" id="usActivesList"></ul></div>
+        <div class="dash-panel"><div class="panel-title">成长科技股<span class="panel-fetched" data-fetch="us_growth"></span></div><ul class="zt-list" id="usGrowthList"></ul></div>
+      </div>
+      <div class="dash-row3">
+        <div class="dash-panel"><div class="panel-title">行业板块 ETF<span class="panel-fetched" data-fetch="us_sectors"></span></div><ul class="zt-list" id="usSectorsList"></ul></div>
+        <div class="dash-panel"><div class="panel-title">主题概念 ETF<span class="panel-fetched" data-fetch="us_theme_etfs"></span></div><ul class="zt-list" id="usThemeList"></ul></div>
+        <div class="dash-panel"><div class="panel-title">小盘异动<span class="panel-fetched" data-fetch="us_small_gainers"></span></div><ul class="zt-list" id="usSmallList"></ul></div>
+      </div>
+      <div class="dash-row3">
+        <div class="dash-panel"><div class="panel-title">七巨头<span class="panel-fetched" data-fetch="us_mega"></span></div><ul class="zt-list" id="usMegaList"></ul></div>
+        <div class="dash-panel"><div class="panel-title">低估值大盘<span class="panel-fetched" data-fetch="us_undervalued"></span></div><ul class="zt-list" id="usUnderList"></ul></div>
+        <div class="dash-panel"><div class="panel-title">日内跌幅榜<span class="panel-fetched" data-fetch="us_losers"></span></div><ul class="zt-list" id="usLosersList"></ul></div>
+      </div>
+      <div class="dash-row2">
+        <div class="dash-panel"><div class="panel-title">空头最重<span class="panel-fetched" data-fetch="us_shorted"></span></div><ul class="zt-list" id="usShortedList"></ul></div>
+        <div class="dash-panel"><div class="panel-title">美股快捷提问</div><div class="example-list" id="usQuickQueries">
+          <div class="example" onclick="fillQuery(this)">分析标普500与纳斯达克今日走势</div>
+          <div class="example" onclick="fillQuery(this)">美股科技板块和七巨头今日表现如何？</div>
+          <div class="example" onclick="fillQuery(this)">QQQ与SMH最近走势和重仓股分析</div>
+          <div class="example" onclick="fillQuery(this)">对比今日美股涨幅榜龙头与半导体ETF</div>
+        </div></div>
+      </div>
+    </div>`;
 }
 
 function initDashboard() {
@@ -836,7 +946,8 @@ async function refreshDashboard() {
   const btn = document.getElementById('dashRefreshBtn');
   if (btn) btn.textContent = '刷新中...';
   try {
-    const resp = await fetch('/api/dashboard');
+    // cache: 'no-store' 确保浏览器也不复用旧响应；后端已取消 TTL 缓存
+    const resp = await fetch('/api/dashboard?_=' + Date.now(), { cache: 'no-store' });
     if (!resp.ok) return;
     _dashData = await resp.json();
     _renderDashboard();
@@ -844,9 +955,18 @@ async function refreshDashboard() {
   if (btn) btn.textContent = '30s';
 }
 
+function _applyFetchedAt(fetched) {
+  const map = fetched || {};
+  document.querySelectorAll('[data-fetch]').forEach(el => {
+    const t = map[el.dataset.fetch];
+    el.textContent = t ? `获取时间：${t}` : '';
+    el.title = t ? `该板块数据于 ${t} 拉取完成` : '';
+  });
+}
+
 function _renderDashboard() {
   if (!_dashData) return;
-  _renderStatusBar(_dashData.market_status);
+  _renderStatusBar(_dashData.market_status, _dashData.us?.market_status);
   _renderIndexCards(_dashData.indices);
   _renderPieChart(_dashData.breadth);
   _renderZTPool(_dashData.zt_pool);
@@ -860,20 +980,134 @@ function _renderDashboard() {
   _renderChangesList(_dashData.changes);
   _renderLHB(_dashData.lhb);
   _renderDynamicQueries(_dashData);
+  _renderUsDashboard(_dashData.us);
+  _applyFetchedAt(_dashData.fetched_at);
   const timeEl = document.getElementById('dashTime');
   if (timeEl) timeEl.textContent = _dashData.updated_at || '';
 }
 
-function _renderStatusBar(status) {
-  if (!status) return;
-  const badge = document.getElementById('dashBadge');
-  const msg = document.getElementById('dashMsg');
-  if (!badge || !msg) return;
-  const s = status.status || 'unknown';
-  badge.className = 'market-badge ' + (s === 'trading' ? 'trading' : s === 'pre_market' || s === 'lunch_break' ? 'pre' : 'closed');
-  const labels = {trading:'交易中',closed:'已收盘',pre_market:'盘前',lunch_break:'午休',non_trading_day:'休市'};
-  badge.textContent = labels[s] || s;
-  msg.textContent = status.message || '';
+function _renderUsDashboard(us) {
+  if (!us) return;
+  _renderUsIndexCards(us.indices);
+  _renderUsPieChart(us.breadth);
+  _renderUsQuoteList('usGainersList', us.gainers, '涨幅');
+  _renderUsQuoteList('usActivesList', us.actives, '活跃');
+  _renderUsQuoteList('usGrowthList', us.growth, '成长科技');
+  _renderUsQuoteList('usSectorsList', us.sectors, '行业ETF');
+  _renderUsQuoteList('usThemeList', us.theme_etfs, '主题ETF');
+  _renderUsQuoteList('usSmallList', us.small_gainers, '小盘');
+  _renderUsQuoteList('usMegaList', us.mega, '七巨头');
+  _renderUsQuoteList('usUnderList', us.undervalued, '低估值');
+  _renderUsQuoteList('usLosersList', us.losers, '跌幅');
+  _renderUsQuoteList('usShortedList', us.shorted, '空头');
+}
+
+function _renderStatusBar(status, usStatus) {
+  if (status) {
+    const badge = document.getElementById('dashBadge');
+    const msg = document.getElementById('dashMsg');
+    if (badge && msg) {
+      const s = status.status || 'unknown';
+      badge.className = 'market-badge ' + (s === 'trading' ? 'trading' : s === 'pre_market' || s === 'lunch_break' ? 'pre' : 'closed');
+      const labels = {trading:'交易中',closed:'已收盘',pre_market:'盘前',lunch_break:'午休',non_trading_day:'休市'};
+      badge.textContent = 'A股 · ' + (labels[s] || s);
+      msg.textContent = status.message || '';
+    }
+  }
+  if (usStatus) {
+    const badge = document.getElementById('dashBadgeUs');
+    const msg = document.getElementById('dashMsgUs');
+    if (badge) {
+      const s = usStatus.status || 'unknown';
+      const cls = s === 'open' ? 'us-trading' : (s === 'pre_market' || s === 'after_hours' ? 'us-pre' : 'us-closed');
+      badge.className = 'market-badge ' + cls;
+      badge.textContent = '美股 · ' + (usStatus.label || s);
+    }
+    if (msg) {
+      const et = usStatus.local_time ? ` ET ${usStatus.local_time}` : '';
+      msg.textContent = (usStatus.yahoo_message || usStatus.message || '') + et;
+      msg.title = msg.textContent;
+    }
+  }
+}
+
+function _renderUsIndexCards(indices) {
+  const el = document.getElementById('usDashIndices');
+  if (!el) return;
+  if (!indices || !indices.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--text2);padding:8px">暂无美股指数</div>';
+    return;
+  }
+  el.innerHTML = indices.map(idx => {
+    const chg = idx.change_pct != null ? parseFloat(idx.change_pct) : (idx.change != null ? parseFloat(idx.change) : 0);
+    const cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+    const sign = chg > 0 ? '+' : '';
+    const price = idx.price != null ? parseFloat(idx.price) : null;
+    const change = idx.change != null ? parseFloat(idx.change) : null;
+    const query = `分析美股${idx.name}(${idx.symbol || idx.code})今日走势和后市展望`;
+    return `<div class="idx-card ${cls}" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <div class="idx-name">${escHtml(idx.name)}</div>
+      <div class="idx-price">${price != null ? price.toFixed(2) : '-'}</div>
+      <div class="idx-row">
+        <span>${change != null ? sign + change.toFixed(2) : '-'}</span>
+        <span>${idx.change_pct != null ? sign + parseFloat(idx.change_pct).toFixed(2) + '%' : '-'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _renderUsPieChart(breadth) {
+  if (!breadth) return;
+  const el = document.getElementById('usPieChart');
+  if (!el) return;
+  if (!_usPieChart && typeof echarts !== 'undefined') {
+    _usPieChart = echarts.init(el, 'dark');
+    _usPieChart.setOption({backgroundColor:'transparent'});
+  }
+  if (!_usPieChart) return;
+  const up = breadth.up || 0;
+  const down = breadth.down || 0;
+  _usPieChart.setOption({
+    series:[{
+      type:'pie', radius:['42%','72%'], center:['50%','48%'],
+      label:{show:false},
+      data: [
+        {value:up, name:'涨幅榜命中', itemStyle:{color:'#f87171'}},
+        {value:down, name:'跌幅榜命中', itemStyle:{color:'#4ade80'}},
+      ],
+      emphasis:{scale:true,scaleSize:4}
+    }],
+    tooltip:{trigger:'item',formatter:'{b}: {c} ({d}%)',confine:true}
+  });
+  const stats = document.getElementById('usPieStats');
+  if (stats) {
+    stats.innerHTML = `<span class="stat-up">涨 ${up}</span><span class="stat-down">跌 ${down}</span>`;
+    stats.title = breadth.note || '';
+  }
+}
+
+function _renderUsQuoteList(elId, items, label) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!items || !items.length) {
+    el.innerHTML = `<li style="font-size:11px;color:var(--text2);padding:8px">暂无${label}数据</li>`;
+    return;
+  }
+  el.innerHTML = items.map(s => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null && !Number.isNaN(change)
+      ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const priceText = s.price != null ? parseFloat(s.price).toFixed(2) : '';
+    const code = s.code || s.symbol || '';
+    const query = `分析美股${s.name}(${code})的最新行情、驱动因素和后市展望`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-name">${escHtml(s.name || code)}</span>
+      <span class="hot-code">${escHtml(code)}</span>
+      ${priceText ? `<span class="hot-price">${priceText}</span>` : ''}
+      <span class="hot-change ${cls}">${changeText}</span>
+    </li>`;
+  }).join('');
 }
 
 function _renderIndexCards(indices) {
@@ -1549,13 +1783,16 @@ async function refreshKnowledgeCollections() {
 function renderSpecialists(availableList) {
   available = new Set(availableList);
   const el = document.getElementById('specialistList');
-  el.innerHTML = ALL_SPECIALISTS.map(s => {
-    const state = available.has(s.id) ? 'available' : (availableList.length ? 'unavailable' : '');
-    return `<div class="specialist" id="spec-${s.id}">
-      <div class="dot ${state}"></div>
-      <span class="name">${s.label}</span>
-      <span class="badge" id="badge-${s.id}">调度中</span>
-    </div>`;
+  el.innerHTML = SPECIALIST_GROUPS.map(g => {
+    const items = ALL_SPECIALISTS.filter(s => s.group === g.id).map(s => {
+      const state = available.has(s.id) ? 'available' : (availableList.length ? 'unavailable' : '');
+      return `<div class="specialist" id="spec-${s.id}" title="${escHtmlAttr(s.desc)}">
+        <div class="dot ${state}"></div>
+        <span class="name">${s.label}</span>
+        <span class="badge" id="badge-${s.id}">调度中</span>
+      </div>`;
+    }).join('');
+    return `<div class="specialist-group">${g.label}</div>${items}`;
   }).join('');
 }
 

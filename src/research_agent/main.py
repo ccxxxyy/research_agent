@@ -345,18 +345,20 @@ def create_app() -> FastAPI:
     _trending_ttl = 300  # 5 分钟缓存
 
     @app.get("/api/trending", tags=["trending"])
-    async def get_trending():
+    async def get_trending(fresh: bool = False):
         """返回多源热搜榜，供首页展示。
 
         数据源（3 个）：
         1. 人气榜 — emappdata.eastmoney.com 搜索热度 + 新浪实时行情
         2. 飙升榜 — 同源数据，按历史排名升幅排序
         3. 热门话题 — 东方财富研报标题提取市场焦点
+
+        ``fresh=True`` 时跳过缓存，强制重新拉取。
         """
         import asyncio
 
         now = _time.time()
-        if _trending_cache["data"] and now - _trending_cache["ts"] < _trending_ttl:
+        if not fresh and _trending_cache["data"] and now - _trending_cache["ts"] < _trending_ttl:
             return _trending_cache["data"]
 
         async def _em_rank_data():
@@ -422,7 +424,7 @@ def create_app() -> FastAPI:
                     stock_code = rpt.get("stockCode", "")
                     out.append(
                         {
-                            "title": title[:40],
+                            "title": title,
                             "industry": industry,
                             "org": org,
                             "stock_name": stock_name,
@@ -439,7 +441,9 @@ def create_app() -> FastAPI:
         topic_task = asyncio.create_task(_em_topics())
 
         all_items = await rank_task
+        rank_fetched_at = _time.strftime("%H:%M:%S")
         topics = await topic_task
+        topics_fetched_at = _time.strftime("%H:%M:%S")
 
         # --- 人气榜 Top 10 ---
         em_hot = []
@@ -447,6 +451,7 @@ def create_app() -> FastAPI:
             top10 = all_items[:10]
             codes = [it["sc"] for it in top10]
             info = await asyncio.to_thread(_batch_stock_info_sina, codes)
+            rank_fetched_at = _time.strftime("%H:%M:%S")
             for it in top10:
                 sc = it["sc"]
                 si = info.get(sc, {})
@@ -471,6 +476,7 @@ def create_app() -> FastAPI:
             if surged:
                 codes = [it["sc"] for it in surged]
                 info = await asyncio.to_thread(_batch_stock_info_sina, codes)
+                rank_fetched_at = _time.strftime("%H:%M:%S")
                 for i, it in enumerate(surged):
                     sc = it["sc"]
                     si = info.get(sc, {})
@@ -486,7 +492,12 @@ def create_app() -> FastAPI:
                         }
                     )
 
-        result: dict = {}
+        result: dict = {
+            "fetched_at": {
+                "hot": rank_fetched_at,
+                "topics": topics_fetched_at,
+            },
+        }
         if em_hot:
             result["eastmoney"] = {"label": "人气榜", "items": em_hot}
         if surge:
@@ -494,7 +505,7 @@ def create_app() -> FastAPI:
         if topics:
             result["topics"] = {"label": "热门话题", "items": topics}
 
-        if result:
+        if result.get("eastmoney") or result.get("surge") or result.get("topics"):
             _trending_cache["ts"] = now
             _trending_cache["data"] = result
         return result
@@ -551,40 +562,82 @@ def create_app() -> FastAPI:
         return result
 
     # --- 行情看板 API ---
-    _dashboard_cache: dict = {"ts": 0, "data": None}
-    _dashboard_ttl = 30  # 30 秒缓存
+    # 不再做服务端 TTL 缓存：首页每次刷新都拉取最新数据，并由 fetched_at 如实标注。
 
     @app.get("/api/dashboard", tags=["dashboard"])
     async def get_dashboard():
-        """聚合首页行情看板数据，30 秒缓存。
+        """聚合首页行情看板数据（每次实时拉取）。
 
         数据源：新浪实时指数 + EM 人气榜 + EM 涨停池 + EM 研报 + 市场状态。
+        响应含 ``fetched_at``：各板块数据实际拉取完成时刻（本地 ``HH:MM:SS``）。
         """
-        now = _time.time()
-        if _dashboard_cache["data"] and now - _dashboard_cache["ts"] < _dashboard_ttl:
-            return _dashboard_cache["data"]
 
-        idx_task = asyncio.create_task(asyncio.to_thread(_fetch_indices_sina))
-        zt_task = asyncio.create_task(asyncio.to_thread(_fetch_zt_pool))
-        extra_task = asyncio.create_task(asyncio.to_thread(_fetch_extra_pools))
-        boards_task = asyncio.create_task(asyncio.to_thread(_fetch_boards))
-        changes_task = asyncio.create_task(asyncio.to_thread(_fetch_changes))
-        lhb_task = asyncio.create_task(asyncio.to_thread(_fetch_lhb))
-        status_task = asyncio.create_task(asyncio.to_thread(_fetch_market_status))
-        trending_task = asyncio.create_task(get_trending())
+        def _hms() -> str:
+            return _time.strftime("%H:%M:%S")
 
-        indices = await idx_task
-        zt_pool = await zt_task
-        extra_pools = await extra_task
-        boards = await boards_task
-        changes = await changes_task
-        lhb = await lhb_task
-        market_status = await status_task
+        async def _timed_thread(fn):
+            data = await asyncio.to_thread(fn)
+            return data, _hms()
+
+        idx_task = asyncio.create_task(_timed_thread(_fetch_indices_sina))
+        zt_task = asyncio.create_task(_timed_thread(_fetch_zt_pool))
+        extra_task = asyncio.create_task(_timed_thread(_fetch_extra_pools))
+        boards_task = asyncio.create_task(_timed_thread(_fetch_boards))
+        changes_task = asyncio.create_task(_timed_thread(_fetch_changes))
+        lhb_task = asyncio.create_task(_timed_thread(_fetch_lhb))
+        status_task = asyncio.create_task(_timed_thread(_fetch_market_status))
+        trending_task = asyncio.create_task(get_trending(fresh=True))
+        us_task = asyncio.create_task(_timed_thread(_fetch_us_dashboard))
+
+        indices, indices_at = await idx_task
+        zt_pool, zt_at = await zt_task
+        extra_pools, extra_at = await extra_task
+        boards, boards_at = await boards_task
+        changes, changes_at = await changes_task
+        lhb, lhb_at = await lhb_task
+        market_status, status_at = await status_task
         trending = await trending_task
+        us_dash, us_bundle_at = await us_task
+        trending_fa = (trending or {}).get("fetched_at") or {}
+        us_fa = (us_dash or {}).get("fetched_at") or {}
 
         breadth = _compute_breadth(indices, zt_pool)
+        breadth_at = _hms()
+        updated_at = _hms()
 
-        result = {
+        # 强势/昨涨停/炸板在同一函数内串行拉取，完成时刻用 extra_at；
+        # 行业/概念同属 boards 一次请求。
+        fetched_at = {
+            "indices": indices_at,
+            "breadth": breadth_at,
+            "zt_pool": zt_at,
+            "trending": trending_fa.get("hot") or updated_at,
+            "topics": trending_fa.get("topics") or updated_at,
+            "strong_pool": extra_at,
+            "previous_zt": extra_at,
+            "zbgc_pool": extra_at,
+            "boards_industry": boards_at,
+            "boards_concept": boards_at,
+            "changes": changes_at,
+            "lhb": lhb_at,
+            "market_status": status_at,
+            # 美股各子板块时间（缺失时回退到美股整包完成时刻）
+            "us_indices": us_fa.get("indices") or us_bundle_at,
+            "us_breadth": us_fa.get("breadth") or us_bundle_at,
+            "us_gainers": us_fa.get("gainers") or us_bundle_at,
+            "us_actives": us_fa.get("actives") or us_bundle_at,
+            "us_growth": us_fa.get("growth") or us_bundle_at,
+            "us_sectors": us_fa.get("sectors") or us_bundle_at,
+            "us_theme_etfs": us_fa.get("theme_etfs") or us_bundle_at,
+            "us_small_gainers": us_fa.get("small_gainers") or us_bundle_at,
+            "us_mega": us_fa.get("mega") or us_bundle_at,
+            "us_undervalued": us_fa.get("undervalued") or us_bundle_at,
+            "us_losers": us_fa.get("losers") or us_bundle_at,
+            "us_shorted": us_fa.get("shorted") or us_bundle_at,
+            "us_market_status": us_fa.get("market_status") or us_bundle_at,
+        }
+
+        return {
             "market_status": market_status,
             "indices": indices,
             "zt_pool": zt_pool,
@@ -596,11 +649,274 @@ def create_app() -> FastAPI:
             "lhb": lhb,
             "breadth": breadth,
             "trending": trending,
-            "updated_at": _time.strftime("%H:%M:%S"),
+            "us": us_dash,
+            "updated_at": updated_at,
+            "fetched_at": fetched_at,
         }
-        _dashboard_cache["ts"] = now
-        _dashboard_cache["data"] = result
-        return result
+
+    def _fetch_us_dashboard() -> dict:
+        """美股首页看板聚合（yfinance，与 A 股平行、不混用）。
+
+        对应 A 股面板：
+        指数 / 涨跌概览 / 涨幅榜 / 最活跃 / 成长科技 /
+        行业 ETF / 主题 ETF / 小盘异动 / 七巨头 / 低估值大盘 /
+        跌幅榜 / 空头最重 / 市场状态。
+        """
+        import yfinance as yf
+
+        fetched_at: dict[str, str] = {}
+
+        def _stamp(key: str) -> None:
+            fetched_at[key] = _time.strftime("%H:%M:%S")
+
+        def _close_series(df, symbol: str):
+            if df is None or getattr(df, "empty", True):
+                return None
+            try:
+                if hasattr(df.columns, "levels"):
+                    if ("Close", symbol) in df.columns:
+                        return df[("Close", symbol)].dropna()
+                    if (symbol, "Close") in df.columns:
+                        return df[(symbol, "Close")].dropna()
+                if "Close" in df.columns:
+                    col = df["Close"]
+                    if hasattr(col, "columns"):
+                        return col[symbol].dropna()
+                    return col.dropna()
+            except Exception:
+                return None
+            return None
+
+        def _batch_quotes(pairs: list[tuple[str, str]], *, period: str = "5d") -> list[dict]:
+            if not pairs:
+                return []
+            symbols = [s for s, _ in pairs]
+            name_map = {s: n for s, n in pairs}
+            try:
+                df = yf.download(
+                    symbols,
+                    period=period,
+                    interval="1d",
+                    auto_adjust=True,
+                    progress=False,
+                    threads=True,
+                )
+            except Exception:
+                return []
+            out: list[dict] = []
+            for sym in symbols:
+                series = _close_series(df, sym)
+                if series is None or len(series) < 1:
+                    continue
+                price = float(series.iloc[-1])
+                prev = float(series.iloc[-2]) if len(series) >= 2 else None
+                change = (price - prev) if prev else None
+                change_pct = ((price - prev) / prev * 100) if prev and prev else None
+                out.append(
+                    {
+                        "code": sym.lstrip("^"),
+                        "symbol": sym,
+                        "name": name_map.get(sym, sym),
+                        "price": round(price, 4) if price == price else None,
+                        "change": round(change, 4) if change is not None else None,
+                        "change_pct": round(change_pct, 2) if change_pct is not None else None,
+                    }
+                )
+            return out
+
+        def _screen_list(preset: str, *, limit: int = 10) -> tuple[list[dict], int]:
+            try:
+                raw = yf.screen(preset, count=limit)
+            except Exception:
+                return [], 0
+            quotes = raw.get("quotes") or []
+            total = int(raw.get("total") or len(quotes) or 0)
+            items: list[dict] = []
+            for q in quotes[:limit]:
+                sym = q.get("symbol") or ""
+                if not sym:
+                    continue
+                items.append(
+                    {
+                        "code": sym,
+                        "symbol": sym,
+                        "name": q.get("shortName") or q.get("longName") or sym,
+                        "price": q.get("regularMarketPrice"),
+                        "change": q.get("regularMarketChange"),
+                        "change_pct": q.get("regularMarketChangePercent"),
+                        "volume": q.get("regularMarketVolume"),
+                        "market_cap": q.get("marketCap"),
+                    }
+                )
+            return items, total
+
+        # --- 市场状态 ---
+        market_status: dict = {"status": "unknown", "message": "美股状态获取失败"}
+        try:
+            from research_agent.mcp_servers.us_data_server import _session_status
+
+            st = _session_status()
+            labels = {
+                "open": "交易中",
+                "pre_market": "盘前",
+                "after_hours": "盘后",
+                "closed": "已收盘",
+            }
+            market_status = {
+                "status": st.get("status") or "unknown",
+                "session": st.get("session"),
+                "message": st.get("hint") or "",
+                "label": labels.get(st.get("status") or "", st.get("status") or ""),
+                "local_time": st.get("local_time"),
+                "timezone": st.get("timezone") or "America/New_York",
+            }
+            try:
+                ym = yf.Market("US").status or {}
+                if ym.get("message"):
+                    market_status["yahoo_message"] = ym.get("message")
+                    if not market_status["message"]:
+                        market_status["message"] = ym.get("message")
+            except Exception:
+                pass
+        except Exception:
+            pass
+        _stamp("market_status")
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        index_pairs = [
+            ("^GSPC", "标普500"),
+            ("^DJI", "道琼斯"),
+            ("^IXIC", "纳斯达克"),
+            ("^NDX", "纳指100"),
+            ("^RUT", "罗素2000"),
+            ("^VIX", "VIX恐慌"),
+        ]
+        sector_pairs = [
+            ("XLK", "科技"),
+            ("XLF", "金融"),
+            ("XLE", "能源"),
+            ("XLV", "医疗"),
+            ("XLI", "工业"),
+            ("XLY", "可选消费"),
+            ("XLP", "必选消费"),
+            ("XLU", "公用事业"),
+            ("XLB", "材料"),
+            ("XLRE", "房地产"),
+            ("XLC", "通信服务"),
+        ]
+        theme_pairs = [
+            ("QQQ", "纳指ETF"),
+            ("SPY", "标普ETF"),
+            ("IWM", "罗素2000ETF"),
+            ("SMH", "半导体"),
+            ("SOXX", "芯片"),
+            ("BOTZ", "机器人/AI"),
+            ("ARKK", "ARK创新"),
+            ("XBI", "生物科技"),
+            ("IBIT", "比特币现货"),
+            ("GLD", "黄金"),
+            ("TLT", "长债"),
+            ("HYG", "高收益债"),
+        ]
+        mega_pairs = [
+            ("AAPL", "苹果"),
+            ("MSFT", "微软"),
+            ("NVDA", "英伟达"),
+            ("AMZN", "亚马逊"),
+            ("GOOGL", "谷歌"),
+            ("META", "Meta"),
+            ("TSLA", "特斯拉"),
+        ]
+
+        def _sort_by_chg(items: list[dict]) -> list[dict]:
+            items.sort(
+                key=lambda x: -(x["change_pct"] if x.get("change_pct") is not None else -9999)
+            )
+            return items
+
+        # 指数 / 行业 / 主题 / 七巨头 / 七个筛选榜并行，缩短看板等待
+        jobs = {
+            "indices": lambda: _batch_quotes(index_pairs),
+            "sectors": lambda: _sort_by_chg(_batch_quotes(sector_pairs)),
+            "theme_etfs": lambda: _sort_by_chg(_batch_quotes(theme_pairs)),
+            "mega": lambda: _sort_by_chg(_batch_quotes(mega_pairs)),
+            "gainers": lambda: _screen_list("day_gainers", limit=10),
+            "losers": lambda: _screen_list("day_losers", limit=10),
+            "actives": lambda: _screen_list("most_actives", limit=10),
+            "growth": lambda: _screen_list("growth_technology_stocks", limit=10),
+            "small_gainers": lambda: _screen_list("small_cap_gainers", limit=10),
+            "undervalued": lambda: _screen_list("undervalued_large_caps", limit=10),
+            "shorted": lambda: _screen_list("most_shorted_stocks", limit=10),
+        }
+        results: dict = {}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            fut_map = {pool.submit(fn): key for key, fn in jobs.items()}
+            for fut in as_completed(fut_map):
+                key = fut_map[fut]
+                try:
+                    results[key] = fut.result()
+                except Exception:
+                    results[key] = (
+                        ([], 0)
+                        if key
+                        in {
+                            "gainers",
+                            "losers",
+                            "actives",
+                            "growth",
+                            "small_gainers",
+                            "undervalued",
+                            "shorted",
+                        }
+                        else []
+                    )
+                _stamp(key)
+
+        indices = results.get("indices") or []
+        sectors = (results.get("sectors") or [])[:10]
+        theme_etfs = (results.get("theme_etfs") or [])[:10]
+        mega = results.get("mega") or []
+
+        def _unpack_screen(key: str) -> tuple[list[dict], int]:
+            val = results.get(key)
+            if isinstance(val, tuple) and len(val) == 2:
+                return val[0] or [], int(val[1] or 0)
+            return [], 0
+
+        gainers, gainers_total = _unpack_screen("gainers")
+        losers, losers_total = _unpack_screen("losers")
+        actives, _ = _unpack_screen("actives")
+        growth, _ = _unpack_screen("growth")
+        small_gainers, _ = _unpack_screen("small_gainers")
+        undervalued, _ = _unpack_screen("undervalued")
+        shorted, _ = _unpack_screen("shorted")
+        breadth = {
+            "up": gainers_total or len(gainers),
+            "down": losers_total or len(losers),
+            "flat": 0,
+            "gainers_shown": len(gainers),
+            "losers_shown": len(losers),
+            "note": "Yahoo 筛选器统计（涨幅榜/跌幅榜命中总数，非全市场家数）",
+        }
+        _stamp("breadth")
+
+        return {
+            "market_status": market_status,
+            "indices": indices,
+            "breadth": breadth,
+            "gainers": gainers,
+            "losers": losers,
+            "actives": actives,
+            "growth": growth,
+            "sectors": sectors[:10],
+            "theme_etfs": theme_etfs[:10],
+            "small_gainers": small_gainers,
+            "mega": mega,
+            "undervalued": undervalued,
+            "shorted": shorted,
+            "fetched_at": fetched_at,
+        }
 
     def _fetch_indices_sina() -> list[dict]:
         """新浪批量获取 6 大指数实时行情。"""
@@ -758,41 +1074,141 @@ def create_app() -> FastAPI:
         return result
 
     def _fetch_boards() -> dict:
-        """行业板块 + 概念板块（push2 API）。"""
+        """行业板块 + 概念板块。
+
+        优先 ``push2delay``（本机常比 ``push2`` / ``88.push2`` 更稳），
+        再试curl_cffi / ``requests(trust_env=False)``；
+        最后降级 akshare。
+        """
+        from urllib.parse import urlencode
+
         import requests
 
         out: dict = {"industry": [], "concept": []}
-        base = "https://push2.eastmoney.com/api/qt/clist/get"
-        headers = {"User-Agent": "Mozilla/5.0"}
         fields = "f2,f3,f4,f12,f14"
+        board_fs = [("industry", "m:90+t:2"), ("concept", "m:90+t:3")]
+        hosts = (
+            "https://push2delay.eastmoney.com/api/qt/clist/get",
+            "https://88.push2.eastmoney.com/api/qt/clist/get",
+            "https://push2.eastmoney.com/api/qt/clist/get",
+        )
 
-        for key, fs_code in [("industry", "m:90+t:2"), ("concept", "m:90+t:3")]:
-            try:
-                params = {
-                    "pn": "1",
-                    "pz": "10",
-                    "po": "1",
-                    "np": "1",
-                    "fltt": "2",
-                    "invt": "2",
-                    "fid": "f3",
-                    "fs": fs_code,
-                    "fields": fields,
+        def _parse_diff(items: list) -> list[dict]:
+            return [
+                {
+                    "code": it.get("f12", ""),
+                    "name": it.get("f14", ""),
+                    "change_pct": it.get("f3"),
+                    "price": it.get("f2"),
                 }
-                r = requests.get(base, params=params, timeout=8, headers=headers)
-                d = r.json()
-                items = d.get("data", {}).get("diff", []) if d.get("data") else []
-                out[key] = [
-                    {
-                        "code": it.get("f12", ""),
-                        "name": it.get("f14", ""),
-                        "change_pct": it.get("f3"),
-                        "price": it.get("f2"),
-                    }
-                    for it in items
-                ]
+                for it in items
+                if it.get("f14")
+            ]
+
+        def _query_params(fs_code: str) -> dict:
+            return {
+                "pn": "1",
+                "pz": "10",
+                "po": "1",
+                "np": "1",
+                "fltt": "2",
+                "invt": "2",
+                "fid": "f3",
+                "fs": fs_code,
+                "fields": fields,
+                "ut": "7eea3edcaed734bea9cbfc24409ed989",
+            }
+
+        def _via_curl(fs_code: str) -> list[dict]:
+            try:
+                from curl_cffi import requests as curl_requests
+            except ImportError:
+                return []
+            qs = urlencode(_query_params(fs_code))
+            for base in hosts:
+                try:
+                    resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=10)
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json().get("data") or {}
+                    items = _parse_diff(data.get("diff") or [])
+                    if items:
+                        return items
+                except Exception:
+                    continue
+            return []
+
+        def _via_requests(fs_code: str) -> list[dict]:
+            # Windows 会从注册表读系统代理；push2 走代理常被断开
+            sess = requests.Session()
+            sess.trust_env = False
+            try:
+                params = _query_params(fs_code)
+                headers = {
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://quote.eastmoney.com/",
+                }
+                for base in hosts:
+                    try:
+                        r = sess.get(base, params=params, timeout=8, headers=headers)
+                        data = r.json().get("data") or {}
+                        items = _parse_diff(data.get("diff") or [])
+                        if items:
+                            return items
+                    except Exception:
+                        continue
+                return []
+            finally:
+                sess.close()
+
+        def _via_akshare() -> dict:
+            try:
+                import akshare as ak
+            except ImportError:
+                return {"industry": [], "concept": []}
+            result = {"industry": [], "concept": []}
+            try:
+                df = ak.stock_board_industry_name_em()
+                if df is not None and not df.empty:
+                    for r in df.head(10).to_dict("records"):
+                        result["industry"].append(
+                            {
+                                "code": str(r.get("板块代码", r.get("代码", ""))),
+                                "name": str(r.get("板块名称", r.get("名称", ""))),
+                                "change_pct": r.get("涨跌幅"),
+                                "price": r.get("最新价"),
+                            }
+                        )
             except Exception:
                 pass
+            try:
+                df = ak.stock_board_concept_name_em()
+                if df is not None and not df.empty:
+                    for r in df.head(10).to_dict("records"):
+                        result["concept"].append(
+                            {
+                                "code": str(r.get("板块代码", r.get("代码", ""))),
+                                "name": str(r.get("板块名称", r.get("名称", ""))),
+                                "change_pct": r.get("涨跌幅"),
+                                "price": r.get("最新价"),
+                            }
+                        )
+            except Exception:
+                pass
+            return result
+
+        for key, fs_code in board_fs:
+            items = _via_curl(fs_code) or _via_requests(fs_code)
+            out[key] = items
+
+        if not out["industry"] and not out["concept"]:
+            out = _via_akshare()
+        elif not out["industry"] or not out["concept"]:
+            fb = _via_akshare()
+            if not out["industry"]:
+                out["industry"] = fb["industry"]
+            if not out["concept"]:
+                out["concept"] = fb["concept"]
         return out
 
     def _fetch_changes() -> list[dict]:
