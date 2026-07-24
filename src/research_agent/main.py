@@ -358,11 +358,7 @@ def create_app() -> FastAPI:
         import asyncio
 
         now = _time.time()
-        if (
-            not fresh
-            and _trending_cache["data"]
-            and now - _trending_cache["ts"] < _trending_ttl
-        ):
+        if not fresh and _trending_cache["data"] and now - _trending_cache["ts"] < _trending_ttl:
             return _trending_cache["data"]
 
         async def _em_rank_data():
@@ -835,9 +831,7 @@ def create_app() -> FastAPI:
 
         def _sort_by_chg(items: list[dict]) -> list[dict]:
             items.sort(
-                key=lambda x: (
-                    -(x["change_pct"] if x.get("change_pct") is not None else -9999)
-                )
+                key=lambda x: -(x["change_pct"] if x.get("change_pct") is not None else -9999)
             )
             return items
 
@@ -863,15 +857,20 @@ def create_app() -> FastAPI:
                 try:
                     results[key] = fut.result()
                 except Exception:
-                    results[key] = ([], 0) if key in {
-                        "gainers",
-                        "losers",
-                        "actives",
-                        "growth",
-                        "small_gainers",
-                        "undervalued",
-                        "shorted",
-                    } else []
+                    results[key] = (
+                        ([], 0)
+                        if key
+                        in {
+                            "gainers",
+                            "losers",
+                            "actives",
+                            "growth",
+                            "small_gainers",
+                            "undervalued",
+                            "shorted",
+                        }
+                        else []
+                    )
                 _stamp(key)
 
         indices = results.get("indices") or []
@@ -1128,9 +1127,7 @@ def create_app() -> FastAPI:
             qs = urlencode(_query_params(fs_code))
             for base in hosts:
                 try:
-                    resp = curl_requests.get(
-                        f"{base}?{qs}", impersonate="chrome", timeout=10
-                    )
+                    resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=10)
                     if resp.status_code != 200:
                         continue
                     data = resp.json().get("data") or {}
