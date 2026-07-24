@@ -234,6 +234,23 @@ NEWS_EXPERT_PROMPT = """\
 5. 工具返回 ``error`` 时简要报告并停止；非新闻类请求说明并退回 supervisor。
 """
 
+US_NEWS_EXPERT_PROMPT = """\
+你是美股新闻专家。你的工具集是 ``us_news_*`` 系列（Yahoo Finance / 可选 EDGAR 8-K 标题）：
+
+  - ``us_news_get_ticker_news``         — 个股 / ETF 近期新闻
+  - ``us_news_get_market_news``         — 标普 / 道指 / 纳指 / VIX 相关新闻
+  - ``us_news_get_etf_news``            — 常见 ETF 新闻（SPY/QQQ/…）
+  - ``us_news_get_recent_8k_headlines`` — 近期 8-K 标题（官方事件；正文走 us_filing_*）
+
+规则
+----
+1. 优先精准：个股新闻用 get_ticker_news；美股大盘用 get_market_news；ETF 用 get_etf_news。
+2. 用户问"刚发生了什么公司大事/临时公告"时可辅以 get_recent_8k_headlines。
+3. 每次最多 **4 次**工具；总结 3-5 要点，含事件含义，附 URL。
+4. 绝不用 A 股 ``news_*``；A 股新闻请求退回 supervisor。
+5. 工具 ``error`` 时简要报告并停止。
+"""
+
 FUND_EXPERT_PROMPT = """\
 你是公募基金分析专家。你的工具集是基于 akshare + 东方财富基金网的 ``fund_*`` 系列工具（实际前缀可能不同，以运行时传入的工具名为准）：
 
@@ -578,6 +595,25 @@ def build_news_expert(
     )
 
 
+def build_us_news_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """美股新闻专家（``us_news_server``）。与 ``news_expert`` 平行隔离。"""
+    if not mcp_tools:
+        raise ValueError(
+            "us_news_expert 需要 us_news_server 的 MCP 工具；"
+            "收到了空序列。是否忘记调用 "
+            "``await load_us_news_server_tools()``？"
+        )
+    return create_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        system_prompt=US_NEWS_EXPERT_PROMPT,
+        name="us_news_expert",
+    )
+
+
 def build_knowledge_expert(
     model_router: ModelRouter,
     mcp_tools: Sequence[BaseTool],
@@ -641,6 +677,24 @@ SENTIMENT_EXPERT_PROMPT = """\
 """
 
 
+US_SENTIMENT_EXPERT_PROMPT = """\
+你是美股英文舆情量化专家。工具集是 ``us_sentiment_*``（英文金融关键词词典，**不用 SnowNLP**）：
+
+  - ``us_sentiment_get_ticker_sentiment_report`` — Yahoo 新闻 → 逐条打分 → 聚合
+  - ``us_sentiment_analyze_text_sentiment`` — 任意英文文本批量打分
+
+返回字段同构于 A 股舆情工具：``sentiment_score ∈ [-1,1]``、标签、关键词、聚合、``model_version``。
+
+规则
+----
+1. 个股情绪 / 舆情量化 → get_ticker_sentiment_report。
+2. 用户给出英文段落要打分 → analyze_text_sentiment。
+3. 每次最多 **2 次**工具；汇报总体结论 + 2-3 条代表性标题。
+4. 绝不用中文 ``sentiment_*`` 去打英文；A 股舆情退回 supervisor。
+5. 不要编造分数；``error`` 时如实说明。
+"""
+
+
 def build_sentiment_expert(
     model_router: ModelRouter,
     mcp_tools: Sequence[BaseTool],
@@ -667,6 +721,25 @@ def build_sentiment_expert(
     )
 
 
+def build_us_sentiment_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """美股英文舆情专家（``us_sentiment_server``）。与 ``sentiment_expert`` 平行隔离。"""
+    if not mcp_tools:
+        raise ValueError(
+            "us_sentiment_expert 需要 us_sentiment_server 的 MCP 工具；"
+            "收到了空序列。是否忘记调用 "
+            "``await load_us_sentiment_server_tools()``？"
+        )
+    return create_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        system_prompt=US_SENTIMENT_EXPERT_PROMPT,
+        name="us_sentiment_expert",
+    )
+
+
 SPECIALIST_BUILDERS = {
     "math_expert": build_math_expert,
     "time_expert": build_time_expert,
@@ -675,6 +748,8 @@ SPECIALIST_BUILDERS = {
     "data_expert": build_data_expert,
     "us_data_expert": build_us_data_expert,
     "us_filing_expert": build_us_filing_expert,
+    "us_news_expert": build_us_news_expert,
+    "us_sentiment_expert": build_us_sentiment_expert,
     "fund_expert": build_fund_expert,
     "report_expert": build_report_expert,
     "news_expert": build_news_expert,

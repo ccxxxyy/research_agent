@@ -60,6 +60,12 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - `us_filing_expert` 挂入 research supervisor roster；
 - 美股 10-K / 10-Q / 8-K / DEF 14A 走 EDGAR，**禁止**用巨潮 `pdf_*` 查美股披露。
 
+### 7. P3 行为（已落地）
+
+- `us_news_server`（yfinance Yahoo 新闻 + 可选 8-K 标题）暴露 `us_news_*`；
+- `us_sentiment_server`（英文金融关键词词典）暴露 `us_sentiment_*`；
+- **禁止**用 A 股 `news_*` / `sentiment_*`（SnowNLP）处理美股新闻舆情。
+
 ## 考虑过的替代方案
 
 | 方案 | 否决理由 |
@@ -77,12 +83,12 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 
 **负面 / 中性**
 
-- 美股新闻 / 舆情仍未上线（P3）；
-- 知名名表需持续扩充（可辅以 `us_search_ticker`）。
+- 跨市场 MIXED 深度编排与 UI 市场徽章仍属后续；
+- 英文舆情为关键词词典 PoC（可换 VADER / 专用模型）。
 
 ## 后续
 
 - **P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` + 接入 supervisor roster
 - **P2（已完成）**：EDGAR `us_filing_server` + `us_filing_expert`
-- **P3**：`us_news` / `us_sentiment`
+- **P3（已完成）**：`us_news` / `us_sentiment`
 - **P4**：ETF 深化、语义缓存 US 域、eval、UI 市场徽章

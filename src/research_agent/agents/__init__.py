@@ -28,6 +28,8 @@ from research_agent.agents.specialists import (
     build_time_expert,
     build_us_data_expert,
     build_us_filing_expert,
+    build_us_news_expert,
+    build_us_sentiment_expert,
 )
 
 __all__ = [
@@ -50,4 +52,6 @@ __all__ = [
     "build_time_expert",
     "build_us_data_expert",
     "build_us_filing_expert",
+    "build_us_news_expert",
+    "build_us_sentiment_expert",
 ]
