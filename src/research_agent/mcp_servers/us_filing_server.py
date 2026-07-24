@@ -129,11 +129,14 @@ async def _http_get_json(url: str) -> Any:
 
 
 async def _http_get_bytes(url: str) -> bytes:
-    async with httpx.AsyncClient(
-        timeout=DOWNLOAD_TIMEOUT_SECONDS,
-        headers=_sec_headers(),
-        follow_redirects=True,
-    ) as client, client.stream("GET", url) as r:
+    async with (
+        httpx.AsyncClient(
+            timeout=DOWNLOAD_TIMEOUT_SECONDS,
+            headers=_sec_headers(),
+            follow_redirects=True,
+        ) as client,
+        client.stream("GET", url) as r,
+    ):
         r.raise_for_status()
         total = 0
         chunks: list[bytes] = []
