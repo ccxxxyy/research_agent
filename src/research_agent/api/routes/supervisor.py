@@ -837,9 +837,12 @@ async def _research_event_stream(
                         if not snippet:
                             continue
 
-                        if not tool_call_name and str(node_name) in _SYNTH_NODES_FOR_HISTORY:
-                            if not _looks_like_interim_supervisor_text(snippet):
-                                outcome["last_plain_synthesis"] = snippet
+                        if (
+                            not tool_call_name
+                            and str(node_name) in _SYNTH_NODES_FOR_HISTORY
+                            and not _looks_like_interim_supervisor_text(snippet)
+                        ):
+                            outcome["last_plain_synthesis"] = snippet
 
                         is_supervisor_final = node_name == "supervisor" and not tool_call_name
                         if is_supervisor_final and not final_emitted_local:
