@@ -66,24 +66,45 @@ def test_session_status_pre_market():
 async def test_get_quote_mocked():
     from research_agent.mcp_servers import us_data_server as mod
 
+    mock_fi = MagicMock()
+    mock_fi.last_price = 190.5
+    mock_fi.previous_close = 188.0
     mock_ticker = MagicMock()
-    mock_ticker.info = {
-        "shortName": "Apple Inc.",
-        "regularMarketPrice": 190.5,
-        "previousClose": 188.0,
-        "currency": "USD",
-        "quoteType": "EQUITY",
-        "exchange": "NMS",
-    }
-    mock_ticker.fast_info = {"last_price": 190.5, "previous_close": 188.0, "currency": "USD"}
+    mock_ticker.fast_info = mock_fi
 
-    with patch("yfinance.Ticker", return_value=mock_ticker):
+    # 强制走 yfinance 回退，避免本机可达时 Yahoo Chart HTTP 抢先返回真实行情
+    with (
+        patch.object(mod, "_quote_via_yahoo_chart", return_value=None),
+        patch("yfinance.Ticker", return_value=mock_ticker),
+    ):
         result = await mod.get_quote("aapl")
 
     assert "error" not in result
     assert result["symbol"] == "AAPL"
     assert result["price"] == 190.5
     assert result["change_percent"] == pytest.approx(1.3298, rel=1e-3)
+    assert result["source"] == "yfinance"
+
+
+@pytest.mark.asyncio
+async def test_get_quote_via_yahoo_chart_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    chart = {
+        "symbol": "AAPL",
+        "price": 200.0,
+        "previous_close": 190.0,
+        "change": 10.0,
+        "change_percent": 5.2632,
+        "source": "yahoo_chart",
+    }
+    with patch.object(mod, "_quote_via_yahoo_chart", return_value=chart):
+        result = await mod.get_quote("aapl")
+
+    assert "error" not in result
+    assert result["price"] == 200.0
+    assert result["change_percent"] == pytest.approx(5.2632)
+    assert result["source"] == "yahoo_chart"
 
 
 @pytest.mark.asyncio

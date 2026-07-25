@@ -206,9 +206,7 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
                 "title": str(title),
                 "summary": "",
                 "publisher": provider,
-                "published_at": str(
-                    raw.get("publishTime") or raw.get("providerPublishTime") or ""
-                ),
+                "published_at": str(raw.get("publishTime") or raw.get("providerPublishTime") or ""),
                 "url": link,
                 "source": "yahoo_search",
             }

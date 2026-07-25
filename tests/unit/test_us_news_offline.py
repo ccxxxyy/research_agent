@@ -56,13 +56,18 @@ async def test_get_ticker_news_mocked():
     mock_ticker = MagicMock()
     mock_ticker.news = fake_news
 
-    with patch("yfinance.Ticker", return_value=mock_ticker):
+    # 强制走 yfinance 回退，避免本机可达时 Search HTTP 返回真实新闻
+    with (
+        patch.object(mod, "_fetch_news_via_yahoo_search", return_value=[]),
+        patch("yfinance.Ticker", return_value=mock_ticker),
+    ):
         result = await mod.get_ticker_news("tsla", limit=5)
 
     assert "error" not in result
     assert result["symbol"] == "TSLA"
     assert result["count"] == 1
     assert result["news"][0]["title"] == "TSLA rally"
+    assert result["source"] == "yfinance"
 
 
 @pytest.mark.asyncio

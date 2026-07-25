@@ -1496,9 +1496,7 @@ def create_app() -> FastAPI:
                 qs = urlencode(params)
                 for base in hosts:
                     try:
-                        resp = curl_requests.get(
-                            f"{base}?{qs}", impersonate="chrome", timeout=10
-                        )
+                        resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=10)
                         if resp.status_code != 200:
                             continue
                         diff = (resp.json().get("data") or {}).get("diff") or []
@@ -1532,9 +1530,7 @@ def create_app() -> FastAPI:
 
         boards = _clist("m:90+t:2", pz=80, fields="f12,f14,f3")
         tech_boards = [
-            b
-            for b in boards
-            if any(k in str(b.get("f14") or "") for k in tech_keywords)
+            b for b in boards if any(k in str(b.get("f14") or "") for k in tech_keywords)
         ]
         if not tech_boards:
             # 兜底：半导体板块

@@ -177,9 +177,7 @@ PAGE3 = [
 
 
 def main() -> None:
-    out = Path(__file__).resolve().parent / (
-        "HelixOrion_Nullweave_NXWV_FY2025_10K_FICTIONAL.pdf"
-    )
+    out = Path(__file__).resolve().parent / ("HelixOrion_Nullweave_NXWV_FY2025_10K_FICTIONAL.pdf")
     pdf = build_pdf([PAGE1, PAGE2, PAGE3])
     out.write_bytes(pdf)
     print(f"wrote {out} ({len(pdf)} bytes)")

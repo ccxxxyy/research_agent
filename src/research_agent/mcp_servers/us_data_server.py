@@ -351,9 +351,7 @@ def _quote_via_yahoo_chart(symbol: str) -> dict[str, Any] | None:
         price = _num_or_none(meta.get("regularMarketPrice")) or _num_or_none(
             meta.get("postMarketPrice")
         )
-        closes = (((result[0].get("indicators") or {}).get("quote") or [{}])[0]).get(
-            "close"
-        ) or []
+        closes = (((result[0].get("indicators") or {}).get("quote") or [{}])[0]).get("close") or []
         closes = [float(c) for c in closes if c is not None]
 
         # 昨收优先用日线倒数第二根（与 yfinance fast_info.previous_close / 看板一致）。
@@ -363,9 +361,10 @@ def _quote_via_yahoo_chart(symbol: str) -> dict[str, Any] | None:
         prev: float | None = None
         if price is not None and len(closes) >= 2:
             last_bar = closes[-1]
-            if abs(last_bar - float(price)) < 1e-2 or abs(last_bar - float(price)) / max(
-                abs(float(price)), 1e-9
-            ) < 1e-4:
+            if (
+                abs(last_bar - float(price)) < 1e-2
+                or abs(last_bar - float(price)) / max(abs(float(price)), 1e-9) < 1e-4
+            ):
                 prev = closes[-2]
             else:
                 # 最新价尚未进最后一根 bar：用最后一根当昨收
