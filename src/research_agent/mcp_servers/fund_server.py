@@ -431,10 +431,23 @@ async def search_fund(keyword: str, limit: int = 10) -> dict:
         names = df["基金简称"].astype(str)
         cols = [c for c in ["基金代码", "基金简称", "基金类型"] if c in df.columns]
 
-        # 6 位代码：精确匹配，避免 contains("300") 命中一堆无关基金
-        if re.fullmatch(r"\d{1,6}", kw):
-            code = _normalize_fund_code(kw)
-            matched = df[codes == code].head(limit)
+        # 完整 6 位代码：精确匹配。短数字（如 "300"）走包含匹配，
+        # 否则 zfill("300")→"000300" 会误匹配失败（测试/用户搜指数简称都会挂）。
+        if re.fullmatch(r"\d{6}", kw):
+            matched = df[codes == kw].head(limit)
+        elif re.fullmatch(r"\d{1,5}", kw):
+            padded = kw.zfill(6)
+            exact = df[codes == padded]
+            if not exact.empty:
+                matched = exact.head(limit)
+            else:
+                code_hit = df[codes.str.contains(kw, na=False)]
+                name_hit = df[names.str.contains(kw, case=False, na=False)]
+                matched = (
+                    pd.concat([code_hit, name_hit], ignore_index=True)
+                    .drop_duplicates(subset=["基金代码"])
+                    .head(limit)
+                )
         else:
             exact_name = df[names == kw]
             start_name = df[names.str.startswith(kw, na=False)]
