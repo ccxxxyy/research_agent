@@ -230,6 +230,7 @@ SUPERVISOR_PROMPT_FUND = """\
 
 SUPERVISOR_PROMPT_US_DATA = """\
   - us_data_expert ：通过 yfinance MCP 获取美股股票 / 指数 / ETF 数据（与 A 股 ``fin_*`` 工具链平行隔离）。
+    **休市也可提问**：非交易时段仍用最近收盘/历史/概况作答并标注日期，禁止以「美股没开盘」拒绝。
     工具集（前缀 us_）：
         * us_get_market_status  — 美东交易时段状态
         * us_search_ticker      — 名称 → ticker

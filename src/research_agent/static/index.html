@@ -64,7 +64,12 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 
 /* Stats */
 .stats{padding:0 0 8px;font-size:12px;color:var(--text2);flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-.stats-body{padding:0 20px 8px;flex:1;min-height:0;overflow-y:auto}
+.stats-body{padding:0 20px 8px;flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:transparent transparent}
+.stats-body:hover{scrollbar-color:rgba(255,255,255,0.12) transparent}
+.stats-body::-webkit-scrollbar{width:3px;background:transparent}
+.stats-body::-webkit-scrollbar-track{background:transparent}
+.stats-body::-webkit-scrollbar-thumb{background:transparent;border-radius:2px}
+.stats-body:hover::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12)}
 .stats .row{display:flex;justify-content:space-between;padding:3px 0}
 .stats .val{color:var(--text);font-variant-numeric:tabular-nums}
 
@@ -201,7 +206,12 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 /* Grid Rows */
 .dash-row3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .dash-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.dash-row2 .example-list{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dash-row2 .example-list{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:230px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:transparent transparent}
+.dash-row2 .example-list:hover{scrollbar-color:rgba(255,255,255,0.12) transparent}
+.dash-row2 .example-list::-webkit-scrollbar,.dash-row3 .example-list::-webkit-scrollbar{width:3px;background:transparent}
+.dash-row2 .example-list::-webkit-scrollbar-track,.dash-row3 .example-list::-webkit-scrollbar-track{background:transparent}
+.dash-row2 .example-list::-webkit-scrollbar-thumb,.dash-row3 .example-list::-webkit-scrollbar-thumb{background:transparent;border-radius:2px}
+.dash-row2 .example-list:hover::-webkit-scrollbar-thumb,.dash-row3 .example-list:hover::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12)}
 .dash-row2 .example{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--text);cursor:pointer;transition:border-color .15s,background .15s;text-align:left;line-height:1.4}
 .dash-row2 .example:hover{border-color:var(--accent);background:var(--accent);color:#fff}
 
@@ -234,15 +244,20 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .dash-top-right .dash-panel{overflow:visible}
 
 /* Lists */
-.zt-list{list-style:none;padding:0;margin:0;flex:1;overflow-y:auto;max-height:230px}
-.zt-list::-webkit-scrollbar{width:3px}
-.zt-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.zt-list{list-style:none;padding:0;margin:0;flex:1;overflow-y:auto;max-height:230px;scrollbar-width:thin;scrollbar-color:transparent transparent}
+.zt-list:hover{scrollbar-color:rgba(255,255,255,0.12) transparent}
+.zt-list::-webkit-scrollbar{width:3px;background:transparent}
+.zt-list::-webkit-scrollbar-track{background:transparent}
+.zt-list::-webkit-scrollbar-thumb{background:transparent;border-radius:2px}
+.zt-list:hover::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12)}
 .zt-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;cursor:pointer;transition:background .12s;font-size:12px}
 .zt-item:hover{background:var(--surface2)}
-.zt-item .zt-name{flex:1;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.zt-item .zt-name{flex:0 0 auto;font-weight:600;color:var(--text);white-space:nowrap;overflow:visible;text-overflow:unset;max-width:none}
 .zt-item .zt-tag{font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,113,113,0.12);color:var(--red);font-weight:700;white-space:nowrap;flex-shrink:0}
-.zt-item .zt-industry{font-size:10px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:72px;flex-shrink:0;text-align:right}
-.zt-item .zt-time{font-size:10px;color:var(--text2);font-family:monospace}
+.zt-item .zt-industry{font-size:10px;color:var(--text2);white-space:nowrap;overflow:visible;text-overflow:unset;max-width:none;flex:0 0 auto;text-align:left;margin-right:auto}
+.hot-item .zt-industry{font-size:10px;color:var(--text2);white-space:nowrap;overflow:visible;text-overflow:unset;max-width:none;flex:0 0 auto;text-align:left;margin-right:auto}
+.zt-item .zt-metrics,.zt-item .zt-right{display:flex;align-items:center;gap:6px;flex:0 0 auto;margin-left:auto}
+.zt-item .zt-time{font-size:10px;color:var(--text2);font-family:monospace;flex-shrink:0}
 
 /* Hot Panel */
 .hot-tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:8px}
@@ -261,18 +276,28 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .hot-item:nth-child(1) .hot-rank{background:var(--red);color:#fff}
 .hot-item:nth-child(2) .hot-rank{background:#e06030;color:#fff}
 .hot-item:nth-child(3) .hot-rank{background:#c08040;color:#fff}
-.hot-item .hot-name{flex:1;color:var(--text);font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hot-item .hot-name{flex:0 0 auto;color:var(--text);font-weight:600;font-size:12px;white-space:nowrap;overflow:visible;text-overflow:unset;max-width:none}
 .hot-list.topic-list .hot-name{overflow:visible;text-overflow:unset;max-width:none;flex:0 0 auto}
 .hot-item .hot-code{color:var(--text2);font-size:10px;font-family:monospace;flex-shrink:0}
-.hot-item .hot-price{color:var(--text);font-size:11px;min-width:44px;text-align:right;font-weight:500;font-variant-numeric:tabular-nums;flex-shrink:0}
-.hot-item .hot-change{font-size:11px;font-weight:700;min-width:50px;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
+.hot-item .hot-price,.zt-item .hot-price{color:var(--text);font-size:11px;min-width:52px;text-align:right;font-weight:500;font-variant-numeric:tabular-nums;flex-shrink:0}
+.hot-item .hot-change,.zt-item .hot-change{font-size:11px;font-weight:700;min-width:50px;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
+.zt-item .hot-code{color:var(--text2);font-size:10px;font-family:monospace;flex-shrink:0}
 .topic-tag{font-size:10px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:8px;white-space:nowrap;flex-shrink:0}
 .specialist-group{font-size:10px;color:var(--text2);padding:8px 16px 4px;letter-spacing:.5px}
 
-/* LHB */
-.lhb-list .lhb-item{flex-wrap:wrap}
-.lhb-net{font-size:10px;font-weight:600;margin-left:4px;flex-shrink:0}
-.lhb-comment{display:block;width:100%;font-size:10px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* LHB：上行行情，下行「所属行业 + 解读」完整显示 */
+.lhb-list .lhb-item{display:flex;flex-direction:column;align-items:stretch;gap:2px;flex-wrap:nowrap}
+.lhb-main{display:flex;align-items:center;gap:6px;width:100%;min-width:0}
+.lhb-main .zt-name{flex:1;min-width:0}
+.lhb-net{font-size:10px;font-weight:600;flex-shrink:0;min-width:3.5em;text-align:right}
+.lhb-meta{display:flex;align-items:baseline;gap:6px;width:100%;min-width:0;line-height:1.35}
+.lhb-industry{font-size:10px;color:var(--accent);font-weight:600;flex-shrink:0;white-space:nowrap}
+.lhb-comment{font-size:10px;color:var(--text2);flex:1;min-width:0;white-space:normal;overflow:visible;word-break:break-all}
+.panel-sub{margin-left:6px;font-size:10px;font-weight:500;color:var(--text2)}
+.dash-row3 .example-list{display:flex;flex-direction:column;gap:6px;max-height:230px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:transparent transparent}
+.dash-row3 .example-list:hover{scrollbar-color:rgba(255,255,255,0.12) transparent}
+.dash-row3 .example{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--text);cursor:pointer;transition:border-color .15s,background .15s;text-align:left;line-height:1.4}
+.dash-row3 .example:hover{border-color:var(--accent);background:var(--accent);color:#fff}
 
 /* Changes */
 .change-time{font-size:10px;color:var(--text2);min-width:46px;flex-shrink:0;font-family:monospace}
@@ -441,8 +466,9 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
           <div class="dash-panel"><div class="panel-title" title="昨日涨停的股票，看它们今天怎么走">昨涨停今表现<span class="panel-fetched" data-fetch="previous_zt"></span></div><ul class="zt-list" id="prevZtList"></ul></div>
           <div class="dash-panel"><div class="panel-title">炸板股<span class="panel-fetched" data-fetch="zbgc_pool"></span></div><ul class="zt-list" id="zbgcList"></ul></div>
         </div>
-        <div class="dash-row2">
-          <div class="dash-panel"><div class="panel-title">龙虎榜<span class="panel-fetched" data-fetch="lhb"></span></div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
+        <div class="dash-row3">
+          <div class="dash-panel"><div class="panel-title" title="交易所异动席位成交明细">龙虎榜<span class="panel-fetched" data-fetch="lhb"></span></div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
+          <div class="dash-panel"><div class="panel-title">科技股<span class="panel-fetched" data-fetch="tech_stocks"></span><span id="techBoardTag" class="panel-sub"></span></div><ul class="zt-list" id="techList"></ul></div>
           <div class="dash-panel"><div class="panel-title">快捷提问</div><div class="example-list" id="quickQueries"><div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div><div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？</div><div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行</div><div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div></div></div>
         </div>
 
@@ -477,6 +503,12 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
               <div class="example" onclick="fillQuery(this)">美股科技板块和七巨头今日表现如何？</div>
               <div class="example" onclick="fillQuery(this)">QQQ与SMH最近走势和重仓股分析</div>
               <div class="example" onclick="fillQuery(this)">对比今日美股涨幅榜龙头与半导体ETF</div>
+              <div class="example" onclick="fillQuery(this)">英伟达与AMD近期走势和估值对比</div>
+              <div class="example" onclick="fillQuery(this)">标普500今日涨跌驱动因素是什么？</div>
+              <div class="example" onclick="fillQuery(this)">美股小盘股与罗素2000ETF今日异动分析</div>
+              <div class="example" onclick="fillQuery(this)">比特币现货ETF(IBIT)与纳指相关性如何？</div>
+              <div class="example" onclick="fillQuery(this)">今日美股跌幅榜有哪些风险信号？</div>
+              <div class="example" onclick="fillQuery(this)">特斯拉最新行情、交付预期与后市展望</div>
             </div></div>
           </div>
         </div>
@@ -492,14 +524,6 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
       </div>
       <div class="input-meta">
         <label>用户 ID: <input id="userIdInput" value="demo_user" onchange="refreshKnowledgeCollections();loadConversations()" /></label>
-        <label>市场:
-          <select id="marketSelect" title="auto=按问句信号与用户偏好判定；也可强制 A 股或美股" onchange="onMarketSelectChange()">
-            <option value="auto">自动</option>
-            <option value="CN_A">A股</option>
-            <option value="US">美股</option>
-            <option value="MIXED">跨市场</option>
-          </select>
-        </label>
         <label>知识库集合: <input id="collectionInput" value="default" title="上传 PDF 时写入的集合名称" /></label>
       </div>
     </div>
@@ -696,8 +720,7 @@ function setResolvedMarketBadge(market, source, msgEl) {
 }
 
 function getMarketOverride() {
-  const el = document.getElementById('marketSelect');
-  return el ? el.value : 'auto';
+  return 'auto';
 }
 
 async function onMarketSelectChange() {
@@ -904,8 +927,9 @@ function _dashboardInnerHtml() {
       <div class="dash-panel"><div class="panel-title" title="昨日涨停的股票，看它们今天怎么走">昨涨停今表现<span class="panel-fetched" data-fetch="previous_zt"></span></div><ul class="zt-list" id="prevZtList"></ul></div>
       <div class="dash-panel"><div class="panel-title">炸板股<span class="panel-fetched" data-fetch="zbgc_pool"></span></div><ul class="zt-list" id="zbgcList"></ul></div>
     </div>
-    <div class="dash-row2">
-      <div class="dash-panel"><div class="panel-title">龙虎榜<span class="panel-fetched" data-fetch="lhb"></span></div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
+    <div class="dash-row3">
+      <div class="dash-panel"><div class="panel-title" title="交易所异动席位成交明细">龙虎榜<span class="panel-fetched" data-fetch="lhb"></span></div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
+      <div class="dash-panel"><div class="panel-title">科技股<span class="panel-fetched" data-fetch="tech_stocks"></span><span id="techBoardTag" class="panel-sub"></span></div><ul class="zt-list" id="techList"></ul></div>
       <div class="dash-panel">
         <div class="panel-title">A股快捷提问</div>
         <div class="example-list" id="quickQueries">
@@ -947,6 +971,12 @@ function _dashboardInnerHtml() {
           <div class="example" onclick="fillQuery(this)">美股科技板块和七巨头今日表现如何？</div>
           <div class="example" onclick="fillQuery(this)">QQQ与SMH最近走势和重仓股分析</div>
           <div class="example" onclick="fillQuery(this)">对比今日美股涨幅榜龙头与半导体ETF</div>
+          <div class="example" onclick="fillQuery(this)">英伟达与AMD近期走势和估值对比</div>
+          <div class="example" onclick="fillQuery(this)">标普500今日涨跌驱动因素是什么？</div>
+          <div class="example" onclick="fillQuery(this)">美股小盘股与罗素2000ETF今日异动分析</div>
+          <div class="example" onclick="fillQuery(this)">比特币现货ETF(IBIT)与纳指相关性如何？</div>
+          <div class="example" onclick="fillQuery(this)">今日美股跌幅榜有哪些风险信号？</div>
+          <div class="example" onclick="fillQuery(this)">特斯拉最新行情、交付预期与后市展望</div>
         </div></div>
       </div>
     </div>`;
@@ -1038,6 +1068,7 @@ function _renderDashboard() {
   _renderBoardList('conceptList', _dashData.boards?.concept, '概念');
   _renderChangesList(_dashData.changes);
   _renderLHB(_dashData.lhb);
+  _renderTechStocks(_dashData.tech_stocks);
   _renderDynamicQueries(_dashData);
   _renderUsDashboard(_dashData.us);
   _applyFetchedAt(_dashData.fetched_at);
@@ -1092,6 +1123,7 @@ function _renderStatusBar(status, usStatus) {
         pre_market: et ? `美股盘前（${et}）` : '美股盘前',
         after_hours: et ? `美股盘后（${et}）` : '美股盘后',
         closed: et ? `美股已收盘（${et}）` : '美股已收盘',
+        unknown: '美股状态未知',
       }[s] || (usStatus.yahoo_message || usStatus.message || '');
       msg.textContent = usText;
       msg.title = usStatus.yahoo_message || usStatus.message || usText;
@@ -1154,6 +1186,24 @@ function _renderUsPieChart(breadth) {
   }
 }
 
+/** 美股常见 ticker → 中英展示名（与后端 us_cn_names 对齐，兜底英文 shortName） */
+const US_CN_NAMES = {
+  XLK:'科技 (XLK)', XLF:'金融 (XLF)', XLE:'能源 (XLE)', XLV:'医疗 (XLV)',
+  XLI:'工业 (XLI)', XLY:'可选消费 (XLY)', XLP:'必选消费 (XLP)', XLU:'公用事业 (XLU)',
+  XLB:'材料 (XLB)', XLRE:'房地产 (XLRE)', XLC:'通信服务 (XLC)',
+  QQQ:'纳指ETF (QQQ)', SPY:'标普ETF (SPY)', IWM:'罗素2000ETF (IWM)',
+  SMH:'半导体 (SMH)', SOXX:'芯片 (SOXX)', BOTZ:'机器人/AI (BOTZ)', ARKK:'ARK创新 (ARKK)',
+  XBI:'生物科技 (XBI)', IBIT:'比特币现货 (IBIT)', GLD:'黄金 (GLD)', TLT:'长债 (TLT)', HYG:'高收益债 (HYG)',
+  AAPL:'苹果 (AAPL)', MSFT:'微软 (MSFT)', NVDA:'英伟达 (NVDA)', AMZN:'亚马逊 (AMZN)',
+  GOOGL:'谷歌 (GOOGL)', GOOG:'谷歌 (GOOG)', META:'Meta (META)', TSLA:'特斯拉 (TSLA)',
+  AMD:'超威 (AMD)', AVGO:'博通 (AVGO)', INTC:'英特尔 (INTC)', NFLX:'奈飞 (NFLX)',
+  BABA:'阿里巴巴 (BABA)', PDD:'拼多多 (PDD)', JD:'京东 (JD)', NIO:'蔚来 (NIO)',
+  XPEV:'小鹏 (XPEV)', LI:'理想 (LI)',
+};
+function _usDisplayName(s) {
+  const code = String(s?.code || s?.symbol || '').toUpperCase();
+  return US_CN_NAMES[code] || s?.name || code;
+}
 function _renderUsQuoteList(elId, items, label) {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -1168,11 +1218,12 @@ function _renderUsQuoteList(elId, items, label) {
       ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
     const priceText = s.price != null ? parseFloat(s.price).toFixed(2) : '';
     const code = s.code || s.symbol || '';
-    const query = `分析美股${s.name}(${code})的最新行情、驱动因素和后市展望`;
+    const name = _usDisplayName(s);
+    const query = `分析美股${name}(${code})的最新行情、驱动因素和后市展望`;
     return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
-      <span class="zt-name">${escHtml(s.name || code)}</span>
+      <span class="zt-name">${escHtml(name || code)}</span>
       <span class="hot-code">${escHtml(code)}</span>
-      ${priceText ? `<span class="hot-price">${priceText}</span>` : ''}
+      ${priceText ? `<span class="hot-price" title="最新价（美元）">$${priceText}</span>` : ''}
       <span class="hot-change ${cls}">${changeText}</span>
     </li>`;
   }).join('');
@@ -1238,8 +1289,8 @@ function _renderZTPool(pool) {
     const ind = _industryOf(s);
     return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
       ${streak}<span class="zt-name">${escHtml(s.name)}</span>
-      <span class="zt-time">${s.first_time || ''}</span>
       ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
+      <span class="zt-metrics"><span class="zt-time">${s.first_time || ''}</span></span>
     </li>`;
   }).join('');
 }
@@ -1283,10 +1334,10 @@ function _renderHotList() {
     return `<li class="hot-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
       <span class="hot-rank">${s.rank}</span>
       <span class="hot-name">${escHtml(s.name)}</span>
+      ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
       <span class="hot-code">${s.code}</span>
       ${priceText ? `<span class="hot-price">${priceText}</span>` : ''}
       <span class="hot-change ${cls}">${changeText}</span>
-      ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
     </li>`;
   }).join('');
 }
@@ -1321,9 +1372,11 @@ function _renderStockList(elId, items, label) {
     const query = `分析${s.name}(${s.code})的最新走势和市场表现`;
     return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
       <span class="zt-name">${escHtml(s.name)}</span>
-      <span class="hot-code">${s.code}</span>
-      <span class="hot-change ${cls}">${changeText}</span>
       ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
+      <span class="zt-right">
+        <span class="hot-code">${escHtml(s.code)}</span>
+        <span class="hot-change ${cls}">${changeText}</span>
+      </span>
     </li>`;
   }).join('');
 }
@@ -1355,9 +1408,11 @@ function _renderChangesList(items) {
     return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
       <span class="change-time">${s.time || ''}</span>
       <span class="zt-name">${escHtml(s.name)}</span>
-      <span class="hot-code">${s.code}</span>
-      <span class="change-type">${escHtml(s.type || '')}</span>
       ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
+      <span class="zt-right">
+        <span class="hot-code">${escHtml(s.code)}</span>
+        <span class="change-type">${escHtml(s.type || '')}</span>
+      </span>
     </li>`;
   }).join('');
 }
@@ -1374,15 +1429,26 @@ function _renderLHB(items) {
     const netCls = s.net_buy > 0 ? 'fin-up' : s.net_buy < 0 ? 'fin-down' : '';
     const query = `分析${s.name}(${s.code})的龙虎榜资金动向和游资情况`;
     const ind = _industryOf(s);
-    return `<li class="zt-item lhb-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
-      <span class="zt-name">${escHtml(s.name)}</span>
-      <span class="hot-code">${s.code}</span>
-      <span class="hot-change ${cls}">${changeText}</span>
-      <span class="lhb-net ${netCls}">${netBuy}</span>
-      ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
-      <span class="lhb-comment">${escHtml(s.comment || '')}</span>
+    const reason = s.reason ? `上榜原因：${s.reason}` : '所属行业';
+    return `<li class="zt-item lhb-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}" title="${escHtmlAttr(reason)}">
+      <div class="lhb-main">
+        <span class="zt-name">${escHtml(s.name)}</span>
+        <span class="hot-code">${escHtml(s.code)}</span>
+        <span class="hot-change ${cls}">${changeText}</span>
+        <span class="lhb-net ${netCls}" title="龙虎榜净买额">${netBuy}</span>
+      </div>
+      <div class="lhb-meta">
+        ${ind ? `<span class="lhb-industry" title="所属行业">${escHtml(ind)}</span>` : ''}
+        <span class="lhb-comment" title="东财「解读」：上榜席位中机构买卖家数；成功率为其历史龙虎榜统计，非交易所官方指标，仅供参考">${escHtml(s.comment || '')}</span>
+      </div>
     </li>`;
   }).join('');
+}
+function _renderTechStocks(tech) {
+  const tag = document.getElementById('techBoardTag');
+  const board = tech?.board || '';
+  if (tag) tag.textContent = board ? `· ${board}` : '';
+  _renderStockList('techList', tech?.items || [], board ? `${board}科技股` : '科技股');
 }
 function _renderDynamicQueries(data) {
   const el = document.getElementById('quickQueries');

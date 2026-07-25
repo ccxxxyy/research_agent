@@ -220,7 +220,12 @@ def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
             "local_weekday": weekday_cn,
             "local_display": local_display,
             "timezone": "America/New_York",
-            "hint": f"周末休市；请使用上一交易日收盘数据（美东 {local_display}）。",
+            "hint": (
+                f"周末休市（美东 {local_display}）。"
+                "数据源仍可用：上一交易日收盘价、日线历史、公司概况、SEC 披露与新闻；"
+                "请标注为上一交易日数据后正常回答，不要拒绝提问。"
+            ),
+            "available_off_hours": True,
             "source": "us_session_clock",
         }
 
@@ -249,7 +254,11 @@ def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
         status, session, hint = (
             "closed",
             "overnight",
-            f"已收盘（美东 {local_display}）；请使用最近一笔收盘数据并写明日期。",
+            (
+                f"已收盘（美东 {local_display}）。"
+                "仍可获取最近收盘价、日线历史、概况、披露与新闻；"
+                "请写明数据日期后正常回答，不要因休市拒绝提问。"
+            ),
         )
 
     return {
@@ -261,6 +270,7 @@ def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
         "local_display": local_display,
         "timezone": "America/New_York",
         "hint": hint,
+        "available_off_hours": True,
         "source": "us_session_clock",
     }
 
@@ -285,50 +295,162 @@ def _history_records(df: Any, *, limit: int) -> list[dict[str, Any]]:
     return records
 
 
-def _quote_from_ticker(symbol: str) -> dict[str, Any]:
-    """未复权常规市价：优先 ``fast_info.last_price``，对齐 Yahoo 官网。
+def _num_or_none(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        fval = float(val)
+    except (TypeError, ValueError):
+        return None
+    if fval != fval:  # NaN
+        return None
+    return fval
 
-    ``history(5d)`` 最新 Close 常为 NaN，不能直接 ``dropna`` 当最新价。
-    避免 ``Ticker.info``（Yahoo 慢/挂起是研究流卡死主因）。
-    """
-    import yfinance as yf
+
+def _quote_via_yahoo_chart(symbol: str) -> dict[str, Any] | None:
+    """Yahoo chart HTTP 快路径（休市/周末也稳定，避开 yfinance 挂起）。"""
+    from urllib.parse import quote
 
     ticker = _normalize_ticker(symbol)
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        f"{quote(ticker, safe='')}?interval=1d&range=5d"
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
+    payload: dict[str, Any] | None = None
+    try:
+        from curl_cffi import requests as curl_requests
+
+        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=8)
+        if resp.status_code == 200:
+            payload = resp.json()
+    except Exception:  # noqa: BLE001
+        payload = None
+    if payload is None:
+        try:
+            import requests
+
+            sess = requests.Session()
+            sess.trust_env = False
+            try:
+                resp = sess.get(url, headers=headers, timeout=8)
+                if resp.status_code == 200:
+                    payload = resp.json()
+            finally:
+                sess.close()
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        result = ((payload or {}).get("chart") or {}).get("result") or []
+        if not result:
+            return None
+        meta = result[0].get("meta") or {}
+        price = _num_or_none(meta.get("regularMarketPrice")) or _num_or_none(
+            meta.get("postMarketPrice")
+        )
+        closes = (((result[0].get("indicators") or {}).get("quote") or [{}])[0]).get(
+            "close"
+        ) or []
+        closes = [float(c) for c in closes if c is not None]
+
+        # 昨收优先用日线倒数第二根（与 yfinance fast_info.previous_close / 看板一致）。
+        # 勿优先 chartPreviousClose：周末/休市时该字段常偏离上一交易日收盘
+        # （例：^GSPC 现价 7411.98，chartPreviousClose=7457.69→-0.61%，
+        #  而正确昨收 7408.30→+0.05%，与看板一致）。
+        prev: float | None = None
+        if price is not None and len(closes) >= 2:
+            last_bar = closes[-1]
+            if abs(last_bar - float(price)) < 1e-2 or abs(last_bar - float(price)) / max(
+                abs(float(price)), 1e-9
+            ) < 1e-4:
+                prev = closes[-2]
+            else:
+                # 最新价尚未进最后一根 bar：用最后一根当昨收
+                prev = last_bar
+        if prev is None:
+            prev = _num_or_none(meta.get("previousClose")) or _num_or_none(
+                meta.get("chartPreviousClose")
+            )
+        if price is None and closes:
+            price = closes[-1]
+            if prev is None and len(closes) >= 2:
+                prev = closes[-2]
+        if price is None:
+            return None
+        change = (float(price) - float(prev)) if prev is not None else None
+        change_pct = None
+        if prev not in (None, 0):
+            change_pct = round((float(price) - float(prev)) / float(prev) * 100, 4)
+        return {
+            "symbol": ticker,
+            "price": price,
+            "previous_close": prev,
+            "change": round(change, 4) if change is not None else None,
+            "change_percent": change_pct,
+            "source": "yahoo_chart",
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _quote_from_ticker(symbol: str) -> dict[str, Any]:
+    """报价：优先 Yahoo chart HTTP（休市可用），失败再回退 yfinance。"""
+    ticker = _normalize_ticker(symbol)
+    display = {
+        "^GSPC": "标普500 (S&P 500)",
+        "^DJI": "道琼斯 (Dow 30)",
+        "^IXIC": "纳斯达克 (Nasdaq)",
+        "^NDX": "纳指100 (Nasdaq 100)",
+        "^RUT": "罗素2000 (Russell 2000)",
+        "^VIX": "VIX恐慌 (VIX)",
+    }
+    session = _session_status()
+    as_of_note = {
+        "open": "常规交易时段近实时/延迟报价",
+        "pre_market": "可能为盘前价，请与常规收盘价区分",
+        "after_hours": "可能为盘后价，请与今日常规收盘价区分",
+        "closed": "非交易时段：一般为最近一笔常规收盘价",
+    }.get(session.get("status") or "", "最近可得报价")
+
+    chart = _quote_via_yahoo_chart(ticker)
+    if chart and chart.get("price") is not None:
+        return {
+            "symbol": ticker,
+            "name": display.get(ticker, ticker),
+            "price": _json_safe(chart.get("price")),
+            "previous_close": _json_safe(chart.get("previous_close")),
+            "change_percent": chart.get("change_percent"),
+            "currency": "USD",
+            "exchange": "",
+            "quote_type": "INDEX" if ticker.startswith("^") else "",
+            "market_cap": None,
+            "market_status": session.get("status"),
+            "session": session.get("session"),
+            "as_of_note": as_of_note,
+            "local_display": session.get("local_display"),
+            "available_off_hours": True,
+            "source": chart.get("source") or "yahoo_chart",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
+        }
+
+    # 回退 yfinance（可能慢/限流）
+    import yfinance as yf
+
     t = yf.Ticker(ticker)
     price: Any = None
     prev: Any = None
-
-    def _num(val: Any) -> float | None:
-        if val is None:
-            return None
-        try:
-            fval = float(val)
-        except (TypeError, ValueError):
-            return None
-        if fval != fval:  # NaN
-            return None
-        return fval
-
     try:
         fi = t.fast_info
         if fi is not None:
-            try:
-                price = _num(getattr(fi, "last_price", None))
-                prev = _num(getattr(fi, "previous_close", None)) or _num(
-                    getattr(fi, "regular_market_previous_close", None)
-                )
-            except Exception:  # noqa: BLE001
-                pass
-            if price is None:
-                try:
-                    fi_map = dict(fi)
-                    price = _num(fi_map.get("last_price"))
-                    prev = _num(fi_map.get("previous_close")) or prev
-                except Exception:  # noqa: BLE001
-                    pass
+            price = _num_or_none(getattr(fi, "last_price", None))
+            prev = _num_or_none(getattr(fi, "previous_close", None)) or _num_or_none(
+                getattr(fi, "regular_market_previous_close", None)
+            )
     except Exception:  # noqa: BLE001
         pass
-
     if price is None:
         try:
             h1 = t.history(period="1d", auto_adjust=False)
@@ -338,7 +460,6 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
                     price = float(c1.iloc[-1])
         except Exception:  # noqa: BLE001
             pass
-
     if prev is None:
         try:
             hist = t.history(period="5d", auto_adjust=False)
@@ -363,15 +484,6 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
         except (TypeError, ValueError, ZeroDivisionError):
             change_pct = None
 
-    display = {
-        "^GSPC": "标普500 (S&P 500)",
-        "^DJI": "道琼斯 (Dow 30)",
-        "^IXIC": "纳斯达克 (Nasdaq)",
-        "^NDX": "纳指100 (Nasdaq 100)",
-        "^RUT": "罗素2000 (Russell 2000)",
-        "^VIX": "VIX恐慌 (VIX)",
-    }
-
     return {
         "symbol": ticker,
         "name": display.get(ticker, ticker),
@@ -382,6 +494,11 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
         "exchange": "",
         "quote_type": "INDEX" if ticker.startswith("^") else "",
         "market_cap": None,
+        "market_status": session.get("status"),
+        "session": session.get("session"),
+        "as_of_note": as_of_note,
+        "local_display": session.get("local_display"),
+        "available_off_hours": True,
         "source": "yfinance",
         "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
     }
@@ -399,8 +516,12 @@ async def get_market_status() -> dict:
 
     状态：``open`` / ``pre_market`` / ``after_hours`` / ``closed``。
     回答含"今天/实时/收盘"时必须先调本工具，并按 ``hint`` 标注数据时点。
+    纯本地时钟计算，**不**进线程池（避免被挂起的 yfinance 占满 executor 导致误超时）。
     """
-    return await _yf_call(_session_status, context="get_market_status()", timeout=10.0)
+    try:
+        return _session_status()
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context="get_market_status()")
 
 
 @mcp.tool()
@@ -596,43 +717,43 @@ async def get_basic_info(symbol: str) -> dict:
 @mcp.tool()
 @cached_tool(ttl=TTL_REALTIME, namespace="us")
 async def get_index_quotes() -> dict:
-    """返回主要美股指数最新报价（标普、道指、纳指、纳斯达克100、罗素2000、VIX）。"""
+    """返回主要美股指数最新报价（标普、道指、纳指、纳斯达克100、罗素2000、VIX）。
+
+    优先 Yahoo chart HTTP（休市可用）；单票失败不影响其余。
+    """
 
     def _call() -> dict[str, Any]:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         indices: list[dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            futs = {
-                pool.submit(_quote_from_ticker, sym): (name, sym)
-                for name, sym in _MAJOR_INDICES.items()
-            }
-            for fut in as_completed(futs):
-                name, sym = futs[fut]
-                try:
-                    q = fut.result()
-                    indices.append(
-                        {
-                            "name": name,
-                            "symbol": sym,
-                            "price": q.get("price"),
-                            "previous_close": q.get("previous_close"),
-                            "change_percent": q.get("change_percent"),
-                        }
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    indices.append({"name": name, "symbol": sym, "error": str(exc)})
-        # 保持主要指数展示顺序
-        order = {sym: i for i, sym in enumerate(_MAJOR_INDICES.values())}
-        indices.sort(key=lambda x: order.get(x.get("symbol", ""), 999))
+        sources: set[str] = set()
+        for name, sym in _MAJOR_INDICES.items():
+            try:
+                q = _quote_from_ticker(sym)
+                sources.add(str(q.get("source") or "unknown"))
+                indices.append(
+                    {
+                        "name": name,
+                        "symbol": sym,
+                        "price": q.get("price"),
+                        "previous_close": q.get("previous_close"),
+                        "change_percent": q.get("change_percent"),
+                        "as_of_note": q.get("as_of_note"),
+                        "market_status": q.get("market_status"),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                indices.append({"name": name, "symbol": sym, "error": str(exc)})
+        ok = sum(1 for x in indices if x.get("price") is not None)
         return {
             "indices": indices,
             "count": len(indices),
-            "source": "yfinance",
+            "ok_count": ok,
+            "market_status": _session_status(),
+            "source": "+".join(sorted(sources)) or "yahoo_chart",
             "source_url": "https://finance.yahoo.com/markets/stocks/",
         }
 
-    return await _yf_call(_call, context="get_index_quotes()", timeout=90.0)
+    # chart HTTP 很快；给足余量但远低于旧的 90s yfinance 并发
+    return await _yf_call(_call, context="get_index_quotes()", timeout=40.0)
 
 
 @mcp.tool()

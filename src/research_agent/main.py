@@ -451,11 +451,12 @@ def create_app() -> FastAPI:
             top10 = all_items[:10]
             codes = [it["sc"] for it in top10]
             info = await asyncio.to_thread(_batch_stock_info_sina, codes)
+            industries = await asyncio.to_thread(_batch_stock_industry_em, codes)
             rank_fetched_at = _time.strftime("%H:%M:%S")
             for it in top10:
                 sc = it["sc"]
                 si = info.get(sc, {})
-                code_bare = sc.replace("SZ", "").replace("SH", "")
+                code_bare = sc.replace("SZ", "").replace("SH", "").replace("BJ", "")
                 em_hot.append(
                     {
                         "rank": it.get("rk", ""),
@@ -463,6 +464,8 @@ def create_app() -> FastAPI:
                         "code": code_bare,
                         "price": si.get("price"),
                         "change_pct": si.get("change_pct"),
+                        "industry": industries.get(code_bare.zfill(6), "")
+                        or industries.get(code_bare, ""),
                     }
                 )
 
@@ -476,11 +479,12 @@ def create_app() -> FastAPI:
             if surged:
                 codes = [it["sc"] for it in surged]
                 info = await asyncio.to_thread(_batch_stock_info_sina, codes)
+                industries = await asyncio.to_thread(_batch_stock_industry_em, codes)
                 rank_fetched_at = _time.strftime("%H:%M:%S")
                 for i, it in enumerate(surged):
                     sc = it["sc"]
                     si = info.get(sc, {})
-                    code_bare = sc.replace("SZ", "").replace("SH", "")
+                    code_bare = sc.replace("SZ", "").replace("SH", "").replace("BJ", "")
                     surge.append(
                         {
                             "rank": i + 1,
@@ -489,6 +493,8 @@ def create_app() -> FastAPI:
                             "price": si.get("price"),
                             "change_pct": si.get("change_pct"),
                             "rank_change": abs(it.get("hisRc", 0)),
+                            "industry": industries.get(code_bare.zfill(6), "")
+                            or industries.get(code_bare, ""),
                         }
                     )
 
@@ -561,6 +567,93 @@ def create_app() -> FastAPI:
             }
         return result
 
+    def _batch_stock_industry_em(codes: list[str]) -> dict[str, str]:
+        """批量查 A 股所属行业（东财 ulist ``f100``），补齐热搜等列表右侧行业。
+
+        ``codes`` 可为 ``002156`` / ``SZ002156`` / ``SH600519``。
+        """
+        from urllib.parse import urlencode
+
+        bare: list[str] = []
+        for c in codes:
+            s = str(c or "").strip().upper()
+            s = s.removeprefix("SZ").removeprefix("SH").removeprefix("BJ")
+            if s.isdigit():
+                bare.append(s.zfill(6))
+        bare = list(dict.fromkeys(bare))
+        if not bare:
+            return {}
+
+        def _secid(code: str) -> str:
+            # 6/5/9/688 → 沪市；其余深/京按深市 secid
+            if code.startswith(("5", "6", "9")) or code.startswith("688"):
+                return f"1.{code}"
+            return f"0.{code}"
+
+        secids = ",".join(_secid(c) for c in bare)
+        params = {
+            "fltt": "2",
+            "secids": secids,
+            "fields": "f12,f14,f100",
+            "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        }
+        hosts = (
+            "https://push2delay.eastmoney.com/api/qt/ulist.np/get",
+            "https://push2.eastmoney.com/api/qt/ulist.np/get",
+            "https://88.push2.eastmoney.com/api/qt/ulist.np/get",
+        )
+        diff: list = []
+
+        def _parse(payload: dict) -> list:
+            data = (payload or {}).get("data") or {}
+            return data.get("diff") or []
+
+        try:
+            from curl_cffi import requests as curl_requests
+
+            qs = urlencode(params)
+            for base in hosts:
+                try:
+                    resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=8)
+                    if resp.status_code != 200:
+                        continue
+                    diff = _parse(resp.json())
+                    if diff:
+                        break
+                except Exception:
+                    continue
+        except ImportError:
+            pass
+
+        if not diff:
+            import requests
+
+            sess = requests.Session()
+            sess.trust_env = False
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://quote.eastmoney.com/",
+                }
+                for base in hosts:
+                    try:
+                        r = sess.get(base, params=params, timeout=8, headers=headers)
+                        diff = _parse(r.json())
+                        if diff:
+                            break
+                    except Exception:
+                        continue
+            finally:
+                sess.close()
+
+        out: dict[str, str] = {}
+        for it in diff:
+            code = str(it.get("f12") or "").zfill(6)
+            industry = str(it.get("f100") or "").strip()
+            if code and industry and industry not in {"-", "—", "null"}:
+                out[code] = industry
+        return out
+
     # --- 行情看板 API ---
     # 不再做服务端 TTL 缓存：首页每次刷新都拉取最新数据，并由 fetched_at 如实标注。
 
@@ -586,6 +679,7 @@ def create_app() -> FastAPI:
         boards_task = asyncio.create_task(_timed_thread(_fetch_boards))
         changes_task = asyncio.create_task(_timed_thread(_fetch_changes))
         lhb_task = asyncio.create_task(_timed_thread(_fetch_lhb))
+        tech_task = asyncio.create_task(_timed_thread(_fetch_tech_stocks))
         status_task = asyncio.create_task(_timed_thread(_fetch_market_status))
         trending_task = asyncio.create_task(get_trending(fresh=True))
         us_task = asyncio.create_task(_timed_thread(lambda: _get_us_dashboard_cached(force=fresh)))
@@ -596,6 +690,7 @@ def create_app() -> FastAPI:
         boards, boards_at = await boards_task
         changes, changes_at = await changes_task
         lhb, lhb_at = await lhb_task
+        tech_stocks, tech_at = await tech_task
         market_status, status_at = await status_task
         trending = await trending_task
         us_dash, us_bundle_at = await us_task
@@ -621,6 +716,7 @@ def create_app() -> FastAPI:
             "boards_concept": boards_at,
             "changes": changes_at,
             "lhb": lhb_at,
+            "tech_stocks": tech_at,
             "market_status": status_at,
             # 美股各子板块时间（缺失时回退到美股整包完成时刻）
             "us_indices": us_fa.get("indices") or us_bundle_at,
@@ -648,6 +744,7 @@ def create_app() -> FastAPI:
             "boards": boards,
             "changes": changes,
             "lhb": lhb,
+            "tech_stocks": tech_stocks,
             "breadth": breadth,
             "trending": trending,
             "us": us_dash,
@@ -684,97 +781,38 @@ def create_app() -> FastAPI:
             fetched_at[key] = _time.strftime("%H:%M:%S")
 
         def _quote_one(symbol: str, name: str, *, period: str = "5d") -> dict | None:
-            """未复权常规市价：优先 ``fast_info.last_price``，对齐 Yahoo 官网顶栏。
+            """与 ``us_data_server._quote_from_ticker`` 同源，避免看板与问答涨跌幅口径不一致。
 
-            注意：``history(period='5d')`` 最新一行 Close 常为 NaN，
-            ``dropna`` 会误用前一日收盘（例如官网 7411.98，错误落到 7408.30）。
-            回退时必须先用 ``period='1d'`` 取当日/最近交易日收盘。
+            ``period`` 保留签名兼容，昨收已由 chart 日线 / fast_info 统一处理。
             """
+            del period  # 口径统一后不再使用独立 history 窗口
             try:
+                from research_agent.mcp_servers.us_data_server import _quote_from_ticker
+
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                    t = yf.Ticker(symbol)
-                    price: float | None = None
-                    prev: float | None = None
-                    price_source = ""
-
-                    def _fi_get(fi: object, key: str) -> float | None:
-                        try:
-                            val = getattr(fi, key, None)
-                            if val is None and hasattr(fi, "get"):
-                                val = fi.get(key)  # type: ignore[operator]
-                            if val is None:
-                                return None
-                            fval = float(val)
-                            if fval != fval:  # NaN
-                                return None
-                            return fval
-                        except Exception:
-                            return None
-
-                    try:
-                        fi = t.fast_info
-                        if fi is not None:
-                            price = _fi_get(fi, "last_price")
-                            prev = _fi_get(fi, "previous_close") or _fi_get(
-                                fi, "regular_market_previous_close"
-                            )
-                            if price is not None:
-                                price_source = "fast_info"
-                    except Exception:
-                        pass
-
-                    # 当日未复权收盘（比 5d 末行更可靠）
-                    if price is None:
-                        h1 = t.history(period="1d", auto_adjust=False)
-                        if (
-                            h1 is not None
-                            and not getattr(h1, "empty", True)
-                            and "Close" in h1.columns
-                        ):
-                            c1 = h1["Close"].dropna()
-                            if len(c1) >= 1:
-                                price = float(c1.iloc[-1])
-                                price_source = "history_1d"
-
-                    if prev is None:
-                        hist = t.history(period=period, auto_adjust=False)
-                        if (
-                            hist is not None
-                            and not getattr(hist, "empty", True)
-                            and "Close" in hist.columns
-                        ):
-                            closes = hist["Close"].dropna()
-                            if len(closes) >= 2:
-                                # 若末值已是最新价，昨收取倒数第二；否则末值当昨收
-                                last = float(closes.iloc[-1])
-                                prev_candidate = float(closes.iloc[-2])
-                                if price is not None and abs(last - price) < 1e-6:
-                                    prev = prev_candidate
-                                elif price is not None:
-                                    prev = last
-                                else:
-                                    price = last
-                                    prev = prev_candidate
-                                    price_source = price_source or "history_5d"
-                            elif len(closes) == 1 and price is None:
-                                price = float(closes.iloc[-1])
-                                price_source = price_source or "history_5d"
-
+                    q = _quote_from_ticker(symbol)
+                price = q.get("price")
                 if price is None:
                     return None
-                change = (price - prev) if prev is not None else None
-                change_pct = (price - prev) / prev * 100 if prev not in (None, 0) else None
+                prev = q.get("previous_close")
+                change = q.get("change")
+                if change is None and price is not None and prev is not None:
+                    change = float(price) - float(prev)
+                change_pct = q.get("change_percent")
                 return {
                     "code": symbol.lstrip("^"),
                     "symbol": symbol,
                     "name": name,
-                    "price": round(price, 2),
-                    "change": round(change, 2) if change is not None else None,
-                    "change_pct": round(change_pct, 2) if change_pct is not None else None,
-                    "price_source": price_source or "unknown",
+                    "price": round(float(price), 2),
+                    "change": round(float(change), 2) if change is not None else None,
+                    "change_pct": round(float(change_pct), 2) if change_pct is not None else None,
+                    "price_source": str(q.get("source") or "us_data_server"),
                 }
             except Exception:
                 return None
+
+        # 常见美股中英名；行业/主题 ETF 与筛选榜共用（_screen_list 闭包读取）
+        us_cn_names: dict[str, str] = {}
 
         def _batch_quotes(pairs: list[tuple[str, str]], *, period: str = "5d") -> list[dict]:
             if not pairs:
@@ -807,11 +845,12 @@ def create_app() -> FastAPI:
                 sym = q.get("symbol") or ""
                 if not sym:
                     continue
+                en = q.get("shortName") or q.get("longName") or sym
                 items.append(
                     {
                         "code": sym,
                         "symbol": sym,
-                        "name": q.get("shortName") or q.get("longName") or sym,
+                        "name": us_cn_names.get(sym) or en,
                         "price": q.get("regularMarketPrice"),
                         "change": q.get("regularMarketChange"),
                         "change_pct": q.get("regularMarketChangePercent"),
@@ -865,41 +904,68 @@ def create_app() -> FastAPI:
             ("^VIX", "VIX恐慌 (VIX)"),
         ]
         sector_pairs = [
-            ("XLK", "科技"),
-            ("XLF", "金融"),
-            ("XLE", "能源"),
-            ("XLV", "医疗"),
-            ("XLI", "工业"),
-            ("XLY", "可选消费"),
-            ("XLP", "必选消费"),
-            ("XLU", "公用事业"),
-            ("XLB", "材料"),
-            ("XLRE", "房地产"),
-            ("XLC", "通信服务"),
+            ("XLK", "科技 (XLK)"),
+            ("XLF", "金融 (XLF)"),
+            ("XLE", "能源 (XLE)"),
+            ("XLV", "医疗 (XLV)"),
+            ("XLI", "工业 (XLI)"),
+            ("XLY", "可选消费 (XLY)"),
+            ("XLP", "必选消费 (XLP)"),
+            ("XLU", "公用事业 (XLU)"),
+            ("XLB", "材料 (XLB)"),
+            ("XLRE", "房地产 (XLRE)"),
+            ("XLC", "通信服务 (XLC)"),
         ]
         theme_pairs = [
-            ("QQQ", "纳指ETF"),
-            ("SPY", "标普ETF"),
-            ("IWM", "罗素2000ETF"),
-            ("SMH", "半导体"),
-            ("SOXX", "芯片"),
-            ("BOTZ", "机器人/AI"),
-            ("ARKK", "ARK创新"),
-            ("XBI", "生物科技"),
-            ("IBIT", "比特币现货"),
-            ("GLD", "黄金"),
-            ("TLT", "长债"),
-            ("HYG", "高收益债"),
+            ("QQQ", "纳指ETF (QQQ)"),
+            ("SPY", "标普ETF (SPY)"),
+            ("IWM", "罗素2000ETF (IWM)"),
+            ("SMH", "半导体 (SMH)"),
+            ("SOXX", "芯片 (SOXX)"),
+            ("BOTZ", "机器人/AI (BOTZ)"),
+            ("ARKK", "ARK创新 (ARKK)"),
+            ("XBI", "生物科技 (XBI)"),
+            ("IBIT", "比特币现货 (IBIT)"),
+            ("GLD", "黄金 (GLD)"),
+            ("TLT", "长债 (TLT)"),
+            ("HYG", "高收益债 (HYG)"),
         ]
         mega_pairs = [
-            ("AAPL", "苹果"),
-            ("MSFT", "微软"),
-            ("NVDA", "英伟达"),
-            ("AMZN", "亚马逊"),
-            ("GOOGL", "谷歌"),
-            ("META", "Meta"),
-            ("TSLA", "特斯拉"),
+            ("AAPL", "苹果 (AAPL)"),
+            ("MSFT", "微软 (MSFT)"),
+            ("NVDA", "英伟达 (NVDA)"),
+            ("AMZN", "亚马逊 (AMZN)"),
+            ("GOOGL", "谷歌 (GOOGL)"),
+            ("META", "Meta (META)"),
+            ("TSLA", "特斯拉 (TSLA)"),
         ]
+        # 涨跌/活跃等筛选榜常见票：补中英名，避免只显示 Yahoo 英文 shortName
+        us_cn_names.clear()
+        us_cn_names.update(
+            {sym: name for pairs in (sector_pairs, theme_pairs, mega_pairs) for sym, name in pairs}
+        )
+        us_cn_names.update(
+            {
+                "AMD": "超威 (AMD)",
+                "AVGO": "博通 (AVGO)",
+                "INTC": "英特尔 (INTC)",
+                "NFLX": "奈飞 (NFLX)",
+                "CRM": "Salesforce (CRM)",
+                "ORCL": "甲骨文 (ORCL)",
+                "BABA": "阿里巴巴 (BABA)",
+                "PDD": "拼多多 (PDD)",
+                "JD": "京东 (JD)",
+                "NIO": "蔚来 (NIO)",
+                "XPEV": "小鹏 (XPEV)",
+                "LI": "理想 (LI)",
+                "COIN": "Coinbase (COIN)",
+                "PLTR": "Palantir (PLTR)",
+                "SOFI": "SoFi (SOFI)",
+                "RIVN": "Rivian (RIVN)",
+                "UBER": "优步 (UBER)",
+                "ABNB": "爱彼迎 (ABNB)",
+            }
+        )
 
         def _sort_by_chg(items: list[dict]) -> list[dict]:
             items.sort(
@@ -1334,7 +1400,12 @@ def create_app() -> FastAPI:
         return result
 
     def _fetch_lhb() -> list[dict]:
-        """龙虎榜（最近一个交易日）。"""
+        """龙虎榜（最近一个交易日）。
+
+        东财明细无「所属行业」字段；右侧行业由 ulist 批量补齐。
+        ``comment`` 为东财「解读」（如「4家机构买入，成功率15%」）；
+        ``net_buy`` 为龙虎榜净买额（元）。
+        """
         import datetime
 
         result: list[dict] = []
@@ -1359,6 +1430,7 @@ def create_app() -> FastAPI:
                                 "code": str(row.get("代码", "")),
                                 "name": str(row.get("名称", "")),
                                 "change_pct": row.get("涨跌幅"),
+                                "price": row.get("收盘价"),
                                 "net_buy": row.get("龙虎榜净买额"),
                                 "reason": str(row.get("上榜原因", "")),
                                 "comment": str(row.get("解读", "")),
@@ -1368,7 +1440,142 @@ def create_app() -> FastAPI:
                     break
             except Exception:
                 continue
+
+        if result:
+            codes = [str(it.get("code") or "") for it in result]
+            industries = _batch_stock_industry_em(codes)
+            for it in result:
+                code = str(it.get("code") or "").zfill(6)
+                it["industry"] = industries.get(code, "") or industries.get(
+                    str(it.get("code") or ""), ""
+                )
         return result
+
+    def _fetch_tech_stocks() -> dict:
+        """科技股面板：在半导体/软件等科技行业中取当日最强板块的成分涨幅榜。
+
+        返回 ``{"board": "半导体设备", "items": [...]}``。
+        走 push2delay + curl_cffi / trust_env=False，避开系统代理。
+        """
+        from urllib.parse import urlencode
+
+        hosts = (
+            "https://push2delay.eastmoney.com/api/qt/clist/get",
+            "https://push2.eastmoney.com/api/qt/clist/get",
+            "https://88.push2.eastmoney.com/api/qt/clist/get",
+        )
+        tech_keywords = (
+            "半导",
+            "软件",
+            "计算机",
+            "通信",
+            "电子",
+            "消费电子",
+            "互联网",
+            "元件",
+            "光学光电子",
+            "自动化设备",
+        )
+
+        def _clist(fs: str, *, pz: int = 50, fields: str = "f12,f14,f2,f3") -> list[dict]:
+            params = {
+                "pn": "1",
+                "pz": str(pz),
+                "po": "1",
+                "np": "1",
+                "fltt": "2",
+                "invt": "2",
+                "fid": "f3",
+                "fs": fs,
+                "fields": fields,
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            }
+            try:
+                from curl_cffi import requests as curl_requests
+
+                qs = urlencode(params)
+                for base in hosts:
+                    try:
+                        resp = curl_requests.get(
+                            f"{base}?{qs}", impersonate="chrome", timeout=10
+                        )
+                        if resp.status_code != 200:
+                            continue
+                        diff = (resp.json().get("data") or {}).get("diff") or []
+                        if diff:
+                            return diff
+                    except Exception:
+                        continue
+            except ImportError:
+                pass
+
+            import requests
+
+            sess = requests.Session()
+            sess.trust_env = False
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://quote.eastmoney.com/",
+                }
+                for base in hosts:
+                    try:
+                        r = sess.get(base, params=params, timeout=8, headers=headers)
+                        diff = (r.json().get("data") or {}).get("diff") or []
+                        if diff:
+                            return diff
+                    except Exception:
+                        continue
+            finally:
+                sess.close()
+            return []
+
+        boards = _clist("m:90+t:2", pz=80, fields="f12,f14,f3")
+        tech_boards = [
+            b
+            for b in boards
+            if any(k in str(b.get("f14") or "") for k in tech_keywords)
+        ]
+        if not tech_boards:
+            # 兜底：半导体板块
+            tech_boards = [{"f12": "BK1036", "f14": "半导体", "f3": 0}]
+
+        def _chg(b: dict) -> float:
+            try:
+                return float(b.get("f3") or 0)
+            except (TypeError, ValueError):
+                return -9999.0
+
+        tech_boards.sort(key=_chg, reverse=True)
+        best = tech_boards[0]
+        bk = str(best.get("f12") or "BK1036")
+        board_name = str(best.get("f14") or "半导体")
+        cons = _clist(f"b:{bk}", pz=12, fields="f12,f14,f2,f3")
+        items: list[dict] = []
+        for it in cons[:10]:
+            code = str(it.get("f12") or "")
+            name = str(it.get("f14") or "")
+            if not code or not name:
+                continue
+            items.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "price": it.get("f2"),
+                    "change_pct": it.get("f3"),
+                    "industry": "",
+                }
+            )
+        if items:
+            industries = _batch_stock_industry_em([str(it["code"]) for it in items])
+            for it in items:
+                code = str(it.get("code") or "").zfill(6)
+                it["industry"] = (
+                    industries.get(code, "")
+                    or industries.get(str(it.get("code") or ""), "")
+                    or board_name
+                )
+        return {"board": board_name, "items": items}
 
     def _fetch_market_status() -> dict:
         """获取市场状态。"""
