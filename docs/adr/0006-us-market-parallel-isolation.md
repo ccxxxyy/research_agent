@@ -53,6 +53,7 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 - `us_data_server`（yfinance）暴露 `us_*` 工具；
 - `us_data_expert` 挂入 research supervisor roster；
 - 判定为 US 时路由至美股行情专家，**禁止**用 A 股 `fin_*` / `news_*` 查美股。
+- **实现演进（非多供应商）**：报价优先 Yahoo Chart HTTP，失败再 yfinance；舆情新闻优先 Yahoo Search HTTP。详见 [数据来源说明](../data-sources.md)。
 
 ### 5b. P4-ETF 行为（已落地）
 

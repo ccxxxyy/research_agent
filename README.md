@@ -698,6 +698,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 |---|---|
 | [系统架构设计](docs/architecture.md) | 全景图、核心设计决策矩阵、数据流详解、可靠性设计、安全层、可扩展性 |
 | [故障模式分析](docs/failure-modes.md) | 12+ 种故障模式矩阵、三级降级策略、可观测性信号、灾难恢复 |
+| [数据来源说明](docs/data-sources.md) | A/美股数据源、Yahoo 主备、与 Finnhub 等多源及通用搜索的区别 |
 | [ADR-0001: FAISS > Chroma](docs/adr/0001-faiss-over-chroma.md) | 向量存储选型 |
 | [ADR-0002: Knowledge in-process](docs/adr/0002-knowledge-server-inprocess.md) | MCP stdio 死锁规避 |
 | [ADR-0003: Reflection Loop](docs/adr/0003-reflection-loop.md) | 反思循环设计 |

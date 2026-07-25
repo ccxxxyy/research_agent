@@ -355,46 +355,116 @@ def _normalize_news_item(raw: Any) -> dict[str, Any] | None:
     }
 
 
+def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]]:
+    """Yahoo search news HTTP（休市也可用），避开 yfinance.news 挂起。"""
+    from urllib.parse import quote
+
+    ticker = _normalize_ticker(symbol)
+    url = (
+        "https://query1.finance.yahoo.com/v1/finance/search"
+        f"?q={quote(ticker)}&quotesCount=0&newsCount={max(limit, 8)}&listsCount=0"
+    )
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    payload: dict[str, Any] | None = None
+    try:
+        from curl_cffi import requests as curl_requests
+
+        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=10)
+        if resp.status_code == 200:
+            payload = resp.json()
+    except Exception:  # noqa: BLE001
+        payload = None
+    if payload is None:
+        try:
+            import requests
+
+            sess = requests.Session()
+            sess.trust_env = False
+            try:
+                resp = sess.get(url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    payload = resp.json()
+            finally:
+                sess.close()
+        except Exception:  # noqa: BLE001
+            return []
+    out: list[dict[str, Any]] = []
+    for raw in (payload or {}).get("news") or []:
+        title = raw.get("title") or ""
+        if not title:
+            continue
+        pub = ""
+        provider = ""
+        if isinstance(raw.get("publisher"), str):
+            provider = raw["publisher"]
+        link = ""
+        for key in ("link", "url"):
+            if isinstance(raw.get(key), str) and raw[key]:
+                link = raw[key]
+                break
+        out.append(
+            {
+                "title": title,
+                "summary": "",
+                "publisher": provider or pub,
+                "published_at": str(raw.get("publishTime") or raw.get("providerPublishTime") or ""),
+                "url": link,
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], list[str]]:
     import logging
 
-    import yfinance as yf
-
-    # 压低 yfinance 在限流时的刷屏，避免干扰排障
-    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-
     ticker = _normalize_ticker(symbol)
     logger.info("fetching sentiment news for %s limit=%s", ticker, limit)
-    try:
-        raw_list = yf.Ticker(ticker).news or []
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("yfinance.news failed for %s: %s", ticker, exc)
-        raw_list = []
+
+    news_list = _fetch_news_via_yahoo_search(ticker, limit)
+    source = "yahoo_search"
+
+    if not news_list:
+        # 回退 yfinance（可能慢）
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+        try:
+            import yfinance as yf
+
+            raw_list = yf.Ticker(ticker).news or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("yfinance.news failed for %s: %s", ticker, exc)
+            raw_list = []
+        news_list = []
+        for raw in raw_list:
+            news = _normalize_news_item(raw)
+            if news:
+                news_list.append(news)
+            if len(news_list) >= limit:
+                break
+        source = "yfinance"
+
     items: list[dict[str, Any]] = []
     texts: list[str] = []
-    for raw in raw_list:
-        news = _normalize_news_item(raw)
-        if not news:
-            continue
+    for news in news_list[:limit]:
         combined = news["title"]
-        if news["summary"]:
+        if news.get("summary"):
             combined = f"{news['title']}. {news['summary']}"
         texts.append(combined)
         scored = _score_single(combined)
         scored.update(
             {
                 "title": news["title"],
-                "content_preview": (news["summary"] or "")[:200],
-                "publish_time": news["published_at"],
-                "source_site": news["publisher"],
-                "news_url": news["url"],
+                "content_preview": (news.get("summary") or "")[:200],
+                "publish_time": news.get("published_at") or "",
+                "source_site": news.get("publisher") or "",
+                "news_url": news.get("url") or "",
                 "text_fingerprint": _text_fingerprint(combined),
+                "fetch_source": source,
             }
         )
         items.append(scored)
-        if len(items) >= limit:
-            break
-    logger.info("sentiment news ready for %s: %s items", ticker, len(items))
+    logger.info("sentiment news ready for %s: %s items via %s", ticker, len(items), source)
     return items, texts
 
 
@@ -461,6 +531,7 @@ async def get_ticker_sentiment_report(symbol: str, limit: int = 20) -> dict:
 
     def _work() -> dict[str, Any]:
         items, texts = _fetch_scored_news(ticker, limit)
+        fetch_src = (items[0].get("fetch_source") if items else None) or "yahoo_search"
         return {
             "symbol": ticker,
             "model_version": _MODEL_VERSION,
@@ -468,13 +539,14 @@ async def get_ticker_sentiment_report(symbol: str, limit: int = 20) -> dict:
             "items": items,
             "aggregate": _aggregate_scores(items),
             "hot_words": _extract_hot_words(texts),
-            "source": "yfinance",
+            "source": fetch_src,
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/news",
             "language": "en",
+            "available_off_hours": True,
         }
 
     try:
-        return await asyncio.wait_for(asyncio.to_thread(_work), timeout=45.0)
+        return await asyncio.wait_for(asyncio.to_thread(_work), timeout=25.0)
     except TimeoutError:
         return {
             "error": "TimeoutError: Yahoo 舆情拉取超过 45s",

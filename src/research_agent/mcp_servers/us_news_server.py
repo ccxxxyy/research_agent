@@ -4,14 +4,14 @@
 
 工具
 ----
-1. ``get_ticker_news`` — 个股 / ETF 近期新闻（yfinance）
+1. ``get_ticker_news`` — 个股 / ETF 近期新闻（Search HTTP → yfinance）
 2. ``get_market_news`` — 主要美股指数相关新闻（标普/纳指/道指/VIX）
 3. ``get_etf_news`` — 常见 ETF 新闻（SPY/QQQ/IWM/…）
 4. ``get_recent_8k_headlines`` — 近期 8-K 标题（SEC submissions，事件向）
 
 设计说明
 --------
-- 新闻主路径为 ``yfinance.Ticker.news``（免费 PoC，可后续换 Finnhub/NewsAPI）。
+- 新闻优先 Yahoo Search HTTP（与 ``us_sentiment_server`` 对齐，休市更稳），失败再回退 ``yfinance.Ticker.news``。
 - 错误返回 ``{"error": "...", "context": "..."}``。
 - 工具结果走 ``cached_tool``（namespace=``us_news``）。
 """
@@ -156,19 +156,89 @@ def _normalize_news_item(raw: Any) -> dict[str, Any] | None:
     }
 
 
-def _fetch_ticker_news(symbol: str, limit: int) -> list[dict[str, Any]]:
-    import yfinance as yf
+def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]]:
+    """Yahoo Search HTTP 新闻（与舆情侧同源快路径）。"""
+    from urllib.parse import quote
 
     ticker = _normalize_ticker(symbol)
-    raw_list = yf.Ticker(ticker).news or []
-    items: list[dict[str, Any]] = []
+    url = (
+        "https://query1.finance.yahoo.com/v1/finance/search"
+        f"?q={quote(ticker)}&quotesCount=0&newsCount={max(limit, 8)}&listsCount=0"
+    )
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    payload: dict[str, Any] | None = None
+    try:
+        from curl_cffi import requests as curl_requests
+
+        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=10)
+        if resp.status_code == 200:
+            payload = resp.json()
+    except Exception:  # noqa: BLE001
+        payload = None
+    if payload is None:
+        try:
+            import requests
+
+            sess = requests.Session()
+            sess.trust_env = False
+            try:
+                resp = sess.get(url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    payload = resp.json()
+            finally:
+                sess.close()
+        except Exception:  # noqa: BLE001
+            return []
+
+    out: list[dict[str, Any]] = []
+    for raw in (payload or {}).get("news") or []:
+        title = raw.get("title") or ""
+        if not title:
+            continue
+        provider = raw["publisher"] if isinstance(raw.get("publisher"), str) else ""
+        link = ""
+        for key in ("link", "url"):
+            if isinstance(raw.get(key), str) and raw[key]:
+                link = raw[key]
+                break
+        out.append(
+            {
+                "title": str(title),
+                "summary": "",
+                "publisher": provider,
+                "published_at": str(raw.get("publishTime") or raw.get("providerPublishTime") or ""),
+                "url": link,
+                "source": "yahoo_search",
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _fetch_ticker_news(symbol: str, limit: int) -> list[dict[str, Any]]:
+    """优先 Search HTTP，失败再 yfinance.news（与舆情侧对齐）。"""
+    items = _fetch_news_via_yahoo_search(symbol, limit)
+    if items:
+        return items
+
+    import yfinance as yf
+
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+    ticker = _normalize_ticker(symbol)
+    try:
+        raw_list = yf.Ticker(ticker).news or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("yfinance.news failed for %s: %s", ticker, exc)
+        return []
+    out: list[dict[str, Any]] = []
     for raw in raw_list:
         item = _normalize_news_item(raw)
         if item:
-            items.append(item)
-        if len(items) >= limit:
+            out.append(item)
+        if len(out) >= limit:
             break
-    return items
+    return out
 
 
 async def _http_get_json(url: str) -> Any:
@@ -200,7 +270,7 @@ async def _load_ticker_map() -> dict[str, dict[str, str]]:
 @mcp.tool()
 @cached_tool(ttl=TTL_SHORT, namespace="us_news")
 async def get_ticker_news(symbol: str, limit: int = 15) -> dict:
-    """获取美股个股 / ETF 近期新闻标题（Yahoo Finance via yfinance）。
+    """获取美股个股 / ETF 近期新闻标题（Yahoo Search HTTP，失败回退 yfinance）。
 
     Args:
         symbol: ticker，如 ``AAPL``、``TSLA``、``SPY``。
@@ -213,12 +283,20 @@ async def get_ticker_news(symbol: str, limit: int = 15) -> dict:
 
     def _call() -> dict[str, Any]:
         items = _fetch_ticker_news(ticker, limit)
+        src = "yahoo_search"
+        if items and items[0].get("source") == "yfinance":
+            src = "yfinance"
+        elif items and items[0].get("source") == "yahoo_search":
+            src = "yahoo_search"
+        elif not items:
+            src = "yahoo_search+yfinance"
         return {
             "symbol": ticker,
             "news": items,
             "count": len(items),
-            "source": "yfinance",
+            "source": src,
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/news",
+            "available_off_hours": True,
         }
 
     return await _news_call(_call, context=f"get_ticker_news({symbol!r})")

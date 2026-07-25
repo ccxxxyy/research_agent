@@ -83,13 +83,17 @@ class TestIsPostgresReachable:
         assert is_postgres_reachable(uri, timeout_s=0.5) is False
 
     def test_unroutable_address_times_out_quickly(self) -> None:
-        """RFC-5737 文档块 192.0.2.0/24 保证不会在公网路由。
-        探针应在配置的超时时间内返回 False，证明调用者所依赖的快速失败行为。"""
+        """超时路径必须快速返回 False（不依赖真实路由；部分 Windows/VPN 会“假接通” TEST-NET）。"""
         import time
+        from unittest.mock import MagicMock, patch
 
         uri = "postgresql://u:p@192.0.2.1:5432/x"
+        mock_sock = MagicMock()
+        mock_sock.connect.side_effect = TimeoutError("timed out")
+
         start = time.monotonic()
-        result = is_postgres_reachable(uri, timeout_s=0.3)
+        with patch("research_agent.memory._pg_reachability.socket.socket", return_value=mock_sock):
+            result = is_postgres_reachable(uri, timeout_s=0.3)
         elapsed = time.monotonic() - start
 
         assert result is False
