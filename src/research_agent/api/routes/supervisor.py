@@ -417,6 +417,36 @@ def _clean_markdown(text: str) -> str:
     return result.strip()
 
 
+# Supervisor 路由阶段的「请稍候」类过渡话，绝不能当成 FINAL 发给前端。
+_INTERIM_SUPERVISOR_RE = re.compile(
+    r"(请稍候|请稍等|稍等一下|正在查询|正在获取|数据正在获取|"
+    r"已将.*交给|交给.*专家|任务已移交|马上为您|结果出来后|"
+    r"我会立即|稍后呈现|正在分析中)",
+    re.IGNORECASE,
+)
+_REAL_SYNTHESIS_RE = re.compile(
+    r"(\d+\.?\d*\s*%|[+\-−]\s*\d+\.?\d*\s*%|##\s|数据来源|涨跌幅|收盘|点位)",
+)
+
+
+def _looks_like_interim_supervisor_text(text: str) -> bool:
+    """判断是否为移交前的占位话（不应作为最终回答）。"""
+    t = (text or "").strip()
+    if not t:
+        return True
+    return bool(_INTERIM_SUPERVISOR_RE.search(t))
+
+
+def _looks_like_real_synthesis(text: str) -> bool:
+    """判断是否像带数据的综合分析（可安全作为 FINAL）。"""
+    t = (text or "").strip()
+    if len(t) < 40:
+        return False
+    if _INTERIM_SUPERVISOR_RE.search(t):
+        return False
+    return bool(_REAL_SYNTHESIS_RE.search(t))
+
+
 def _extract_update_snippet(node_update: dict) -> tuple[str, str]:
     """从 ``stream_mode='updates'`` 的载荷中提取有用的``(last_tool_call_name, text_snippet)`` 对。
 
@@ -495,16 +525,43 @@ def _emit_specialist_internal(
 ) -> None:
     """为专家的内部步骤推送 SSE 帧。
 
-    仅展示工具调用（``TOOL_CALL`` 阶段）以保持流的简洁。原始``ToolMessage`` 结果被跳过 —— 它们通常是冗长的 JSON 载荷，
+    展示 ``TOOL_CALL``；工具返回时发 ``TOOL_DONE``（不推送冗长 JSON 正文），避免最后一次调用（如 QQQ）在 UI 上一直转圈。
     """
     msgs = node_update.get("messages") or []
     if not msgs:
         return
     last = msgs[-1]
+    if isinstance(last, ToolMessage):
+        tool_name = str(getattr(last, "name", "") or "")
+        frames.put_nowait(
+            _format_sse(
+                ResearchSupervisorSSEEvent(
+                    phase=ResearchSupervisorSSEPhase.TOOL_DONE,
+                    node=specialist,
+                    content=tool_name or "done",
+                    metadata={
+                        "specialist": specialist,
+                        "tool": tool_name,
+                    },
+                )
+            )
+        )
+        return
     if not isinstance(last, AIMessage):
         return
     tool_calls = getattr(last, "tool_calls", None) or []
     if not tool_calls:
+        # 专家已开始写结论：清掉仍挂着的工具转圈
+        frames.put_nowait(
+            _format_sse(
+                ResearchSupervisorSSEEvent(
+                    phase=ResearchSupervisorSSEPhase.TOOL_DONE,
+                    node=specialist,
+                    content="specialist_text",
+                    metadata={"specialist": specialist, "tool": ""},
+                )
+            )
+        )
         return
     for tc in tool_calls:
         name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "") or ""
@@ -632,8 +689,11 @@ async def _research_event_stream(
             _sup_pending: list[str] = []
             _sup_flushing = False
             _sup_flush_threshold = 120
+            handoff_count = 0
 
             try:
+                logger.info("Research graph astream starting: thread={}", thread_id)
+                _first_graph_event = True
                 async for event in graph.astream(
                     {"messages": messages},
                     config=cfg,
@@ -644,6 +704,14 @@ async def _research_event_stream(
                     # subgraphs=False or test fakes  → 2-tuple: (mode, data)
                     if not isinstance(event, tuple) or len(event) < 2:
                         continue
+                    if _first_graph_event:
+                        _first_graph_event = False
+                        _mode0 = event[1] if len(event) == 3 else event[0]
+                        logger.info(
+                            "Research graph first event: thread={} mode={}",
+                            thread_id,
+                            _mode0,
+                        )
 
                     if len(event) == 3:
                         namespace_raw, mode, data = event
@@ -694,7 +762,13 @@ async def _research_event_stream(
                                 )
                             else:
                                 _sup_pending.append(chunk_text)
-                                total_pending = sum(len(c) for c in _sup_pending)
+                                pending_text = "".join(_sup_pending)
+                                total_pending = len(pending_text)
+                                # 「请稍候/已交给专家」类过渡话再长也不能刷成最终回答
+                                if _looks_like_interim_supervisor_text(pending_text):
+                                    if total_pending > 2000:
+                                        _sup_pending.clear()
+                                    continue
                                 if total_pending >= _sup_flush_threshold:
                                     _sup_flushing = True
                                     streaming_final = True
@@ -742,6 +816,12 @@ async def _research_event_stream(
                             tool_call_name != "transfer_to_supervisor"
                         ):
                             specialist = tool_call_name[len("transfer_to_") :]
+                            handoff_count += 1
+                            # 移交开始：丢弃路由过渡缓冲，避免误当 FINAL
+                            _sup_pending.clear()
+                            _sup_flushing = False
+                            streaming_final = False
+                            final_token_buf.clear()
                             await frames.put(
                                 _format_sse(
                                     ResearchSupervisorSSEEvent(
@@ -757,11 +837,51 @@ async def _research_event_stream(
                         if not snippet:
                             continue
 
-                        if not tool_call_name and str(node_name) in _SYNTH_NODES_FOR_HISTORY:
+                        if (
+                            not tool_call_name
+                            and str(node_name) in _SYNTH_NODES_FOR_HISTORY
+                            and not _looks_like_interim_supervisor_text(snippet)
+                        ):
                             outcome["last_plain_synthesis"] = snippet
 
                         is_supervisor_final = node_name == "supervisor" and not tool_call_name
                         if is_supervisor_final and not final_emitted_local:
+                            candidate = snippet
+                            if _sup_pending:
+                                candidate = "".join(_sup_pending) + (
+                                    snippet if snippet not in "".join(_sup_pending) else ""
+                                )
+                            if final_token_buf:
+                                candidate = "".join(final_token_buf) or candidate
+
+                            # 占位「请稍候」绝不能结束流；继续等移交后的综合回答
+                            if _looks_like_interim_supervisor_text(candidate):
+                                logger.info(
+                                    "Skip interim supervisor FINAL: thread={} chars={}",
+                                    thread_id,
+                                    len(candidate),
+                                )
+                                _sup_pending.clear()
+                                _sup_flushing = False
+                                streaming_final = False
+                                final_token_buf.clear()
+                                continue
+
+                            # 尚未移交且无实质数据时，视为路由空转，继续等待
+                            if (
+                                handoff_count == 0
+                                and available_specialists
+                                and not _looks_like_real_synthesis(candidate)
+                                and len(candidate.strip()) < 280
+                            ):
+                                logger.info(
+                                    "Skip pre-handoff weak FINAL: thread={} chars={}",
+                                    thread_id,
+                                    len(candidate),
+                                )
+                                _sup_pending.clear()
+                                continue
+
                             final_emitted_local = True
 
                             # 若 pending 缓冲中还有未发送的 token，先追加到 final buf
@@ -816,9 +936,11 @@ async def _research_event_stream(
                 outcome["graph_astream_ok"] = True
 
                 # --- HITL：检测图是否因人工审核而中断 ---
+                hitl_pending = False
                 try:
                     _state = await graph.aget_state(cfg)
                     if _state and getattr(_state, "next", None):
+                        hitl_pending = True
                         outcome["graph_astream_ok"] = False
                         draft = str(outcome.get("last_plain_synthesis") or "")
                         await frames.put(
@@ -840,6 +962,43 @@ async def _research_event_stream(
                         )
                 except Exception:  # noqa: BLE001
                     pass
+
+                # 图已结束却从未发出 FINAL：用实质综合兜底，否则报错
+                # （避免「请稍候/已交给专家」被当成回答完成）
+                if not final_emitted_local and not hitl_pending:
+                    last = str(outcome.get("last_plain_synthesis") or "").strip()
+                    if last and _looks_like_real_synthesis(last):
+                        final_emitted_local = True
+                        clean = _clean_markdown(last) + FINANCIAL_DISCLAIMER
+                        await frames.put(
+                            _format_sse(
+                                ResearchSupervisorSSEEvent(
+                                    phase=ResearchSupervisorSSEPhase.FINAL,
+                                    node="supervisor",
+                                    content=clean,
+                                )
+                            )
+                        )
+                    else:
+                        err = (
+                            "研究未完成：主管未成功移交专家或仅输出了过渡话，请重新提问一次。"
+                            if handoff_count == 0
+                            else "研究未完成：专家已执行但未生成综合分析，请重新提问一次。"
+                        )
+                        logger.warning(
+                            "Research stream ended without FINAL: thread={} handoffs={}",
+                            thread_id,
+                            handoff_count,
+                        )
+                        await frames.put(
+                            _format_sse(
+                                ResearchSupervisorSSEEvent(
+                                    phase=ResearchSupervisorSSEPhase.ERROR,
+                                    node="supervisor",
+                                    content=err,
+                                )
+                            )
+                        )
 
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Research-supervisor streaming crashed: {}", exc)
@@ -871,6 +1030,10 @@ async def _research_event_stream(
                 try:
                     item = await asyncio.wait_for(frames.get(), timeout=heartbeat_interval)
                 except TimeoutError:
+                    logger.info(
+                        "Research stream idle heartbeat: thread={} (waiting for LLM/tools)",
+                        thread_id,
+                    )
                     yield _format_sse(
                         ResearchSupervisorSSEEvent(
                             phase=(ResearchSupervisorSSEPhase.HEARTBEAT),

@@ -38,12 +38,29 @@ if not logger.handlers:
 
 mcp = FastMCP("UsNewsServer")
 
+# yfinance 新闻拉取硬超时，避免研究流永久等待
+_YF_NEWS_TIMEOUT_SECONDS = 40.0
+
 _MAJOR_INDEX_TICKERS: dict[str, str] = {
     "S&P 500": "^GSPC",
     "Dow Jones": "^DJI",
     "Nasdaq Composite": "^IXIC",
     "VIX": "^VIX",
 }
+
+
+async def _news_call(fn, *, context: str, timeout: float = _YF_NEWS_TIMEOUT_SECONDS) -> dict:
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn), timeout=timeout)
+    except TimeoutError:
+        logger.error("[%s] news fetch timed out after %.0fs", context, timeout)
+        return {
+            "error": f"TimeoutError: news fetch exceeded {timeout:.0f}s",
+            "context": context,
+        }
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=context)
+
 
 _DEFAULT_ETFS = ("SPY", "QQQ", "IWM", "DIA", "VOO", "VTI")
 
@@ -193,8 +210,9 @@ async def get_ticker_news(symbol: str, limit: int = 15) -> dict:
     ticker = _normalize_ticker(symbol)
     if not ticker:
         return {"error": "symbol 不能为空", "context": "get_ticker_news()"}
-    try:
-        items = await asyncio.to_thread(_fetch_ticker_news, ticker, limit)
+
+    def _call() -> dict[str, Any]:
+        items = _fetch_ticker_news(ticker, limit)
         return {
             "symbol": ticker,
             "news": items,
@@ -202,8 +220,8 @@ async def get_ticker_news(symbol: str, limit: int = 15) -> dict:
             "source": "yfinance",
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/news",
         }
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"get_ticker_news({symbol!r})")
+
+    return await _news_call(_call, context=f"get_ticker_news({symbol!r})")
 
 
 @mcp.tool()
@@ -217,8 +235,10 @@ async def get_market_news(limit_per_index: int = 5) -> dict:
     limit_per_index = max(1, min(int(limit_per_index), 10))
 
     def _call() -> dict[str, Any]:
+        # 只拉标普+纳指，避免 4 路 yfinance 新闻把研究流拖死
+        focus = {k: v for k, v in _MAJOR_INDEX_TICKERS.items() if v in {"^GSPC", "^IXIC"}}
         buckets = []
-        for name, sym in _MAJOR_INDEX_TICKERS.items():
+        for name, sym in focus.items():
             try:
                 news = _fetch_ticker_news(sym, limit_per_index)
                 buckets.append({"index": name, "symbol": sym, "news": news, "count": len(news)})
@@ -230,10 +250,7 @@ async def get_market_news(limit_per_index: int = 5) -> dict:
             "source_url": "https://finance.yahoo.com/topic/stock-market-news/",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context="get_market_news()")
+    return await _news_call(_call, context="get_market_news()", timeout=50.0)
 
 
 @mcp.tool()
@@ -263,10 +280,7 @@ async def get_etf_news(symbols: str = "SPY,QQQ,IWM", limit_per_etf: int = 5) -> 
             "source_url": "https://finance.yahoo.com/etfs/",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"get_etf_news({symbols!r})")
+    return await _news_call(_call, context=f"get_etf_news({symbols!r})", timeout=50.0)
 
 
 @mcp.tool()

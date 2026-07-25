@@ -241,11 +241,13 @@ SUPERVISOR_PROMPT_US_DATA = """\
         * us_get_etf_holdings   — ETF 重仓股
         * us_get_etf_sector_weights — ETF 行业权重 / 资产大类
     路由策略：
-      - 美股大盘 / 指数 → get_market_status + get_index_quotes
+      - 美股大盘 / 指数「今日走势」→ **只**移交 us_data_expert 一次，指令写明：
+        「仅调用 get_market_status + get_index_quotes，禁止再查单票 quote/history」
       - 个股 / ETF 报价与走势 → search_ticker（如需）+ get_quote / get_price_history
       - 公司概况 → get_basic_info；ETF 概况 → get_etf_overview
       - ETF 持仓 / 行业分布 → get_etf_holdings / get_etf_sector_weights
     禁止把美股问句交给 A 股行情 / 新闻 / 基金专家。
+    用户只问走势/行情时，**不要**同时移交 us_news / us_sentiment（除非明确要新闻或舆情）。
 """
 
 SUPERVISOR_PROMPT_US_FILING = """\
@@ -297,6 +299,8 @@ SUPERVISOR_PROMPT_RULES = """\
    在生成最终回答前做一个有用的自检：重新阅读用户的原始请求，
    验证每个编号 / 项目符号子任务是否都通过实际的``transfer_to_<name>`` 移交处理过（而非由你自己处理）。
    如果有任何子任务被跳过，现在就路由它。
+   **严禁**把「请稍候」「正在查询/获取」「已交给某专家」「结果出来后立即呈现」等过渡话当作最终回答输出给用户。
+   需要专家时：直接调用 ``transfer_to_*``（可无用户可见正文）；专家返回后，再写带具体数字的综合分析。
    最终回答的格式要求（严格遵守，违反即为错误）：
      - 使用**专业金融分析风格**输出，简洁有力，数据驱动。
      - 先用 1-2 句话给出**核心结论**（加粗关键判断词），让用户 3 秒内抓住重点。
@@ -316,15 +320,17 @@ SUPERVISOR_PROMPT_RULES = """\
 
 速度与质量平衡（必须遵守）
 ---------------------------------
-P1. **移交预算**：每个用户请求最多 **4 次** ``transfer_to_*`` 移交。先规划好最有价值的专家组合再行动。
-    典型组合：行情类 → news + data（2次）；个股深度 → data + news + sentiment（3次）；对比分析 → data + coder（2次）。
+P1. **移交预算**：每个用户请求最多 **3 次** ``transfer_to_*`` 移交。先规划好最有价值的专家组合再行动。
+    典型组合：美股指数走势 → **仅** us_data（1次）；A 股行情 → data（1次）或 news+data（2次）；
+    个股深度 → data + news + sentiment（3次）；对比分析 → data + coder（2次）。
 P2. **宏观/板块问题不要硬套个股**：当用户问"大盘走势"、"今天市场怎样"、"收盘分析"时，
     优先使用指数行情(get_index_quotes)、板块资金流(get_sector_fund_flow)、涨跌排行(get_stock_rank)等宏观工具，
     不要自作主张替用户选几只蓝筹股来"代表"大盘。只有在需要具体个股细节时才查个股。
 P3. **给专家的指令要精确**：移交时明确告诉专家用哪些工具，不要给模糊的大范围指令。
-    好的指令："用 get_index_quotes 查所有主要指数行情，再用 get_sector_fund_flow 查今天最强的行业板块"
+    好的指令（美股）："只用 get_market_status + get_index_quotes，对比标普与纳指今日涨跌，禁止再查 SPY/QQQ history"
+    好的指令（A股）："用 get_index_quotes 查主要指数，再用 get_sector_fund_flow 查最强行业"
     坏的指令："查一下市场行情所有相关信息"
-P4. **不要反复追加移交**：如果已调度 3-4 个专家并拿到结果，即使觉得"还可以再查一个"，也应直接用已有数据写出最终回答。用户等待超过 2 分钟的体验是不可接受的。
+P4. **不要反复追加移交**：如果已调度 1-2 个专家并拿到结果，即使觉得"还可以再查新闻"，也应直接用已有数据写出最终回答。用户等待超过 2 分钟的体验是不可接受的。
 
 关键反幻觉规则
 ---------------------------------

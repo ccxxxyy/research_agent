@@ -123,6 +123,8 @@ class ResearchSupervisorSSEPhase(StrEnum):
                               ``metadata.specialist`` 标识 Agent；
                               ``metadata.tool`` 为工具名称；
                               ``content`` 为参数的简短预览。
+    * ``tool_done``         — specialist 的某次工具调用已返回（成功或错误）。
+                              用于清除前端「转圈」状态，避免最后一项一直显示处理中。
     * ``token``             — 最终回答的增量 token（逐字流式输出）。``content`` 为单次 chunk 文本。
     * ``error``             — 图调用抛出异常。内容为简短错误消息；客户端应停止消费。
     * ``heartbeat``         — 合成保活事件，当图在配置的空闲窗口内无新消息时发出，以便反向代理保持 SSE 连接。
@@ -132,6 +134,7 @@ class ResearchSupervisorSSEPhase(StrEnum):
     HANDOFF = "handoff"
     UPDATE = "update"
     TOOL_CALL = "tool_call"
+    TOOL_DONE = "tool_done"
     TOKEN = "token"
     FINAL = "final"
     REVIEW_REQUESTED = "review_requested"

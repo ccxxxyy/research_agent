@@ -127,6 +127,7 @@ _KNOWN_US: dict[str, tuple[str, AssetClass, str]] = {
     "spx": ("^GSPC", AssetClass.INDEX, "S&P 500"),
     "纳斯达克100": ("^NDX", AssetClass.INDEX, "Nasdaq-100"),
     "ndx": ("^NDX", AssetClass.INDEX, "Nasdaq-100"),
+    "纳斯达克": ("^IXIC", AssetClass.INDEX, "Nasdaq Composite"),
     "纳指": ("^IXIC", AssetClass.INDEX, "Nasdaq Composite"),
     "道琼斯": ("^DJI", AssetClass.INDEX, "Dow Jones"),
     "道指": ("^DJI", AssetClass.INDEX, "Dow Jones"),

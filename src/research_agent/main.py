@@ -565,11 +565,12 @@ def create_app() -> FastAPI:
     # 不再做服务端 TTL 缓存：首页每次刷新都拉取最新数据，并由 fetched_at 如实标注。
 
     @app.get("/api/dashboard", tags=["dashboard"])
-    async def get_dashboard():
+    async def get_dashboard(fresh: bool = False):
         """聚合首页行情看板数据（每次实时拉取）。
 
         数据源：新浪实时指数 + EM 人气榜 + EM 涨停池 + EM 研报 + 市场状态。
         响应含 ``fetched_at``：各板块数据实际拉取完成时刻（本地 ``HH:MM:SS``）。
+        ``fresh=true`` 时跳过美股 90s 短缓存，强制重拉 Yahoo。
         """
 
         def _hms() -> str:
@@ -587,7 +588,7 @@ def create_app() -> FastAPI:
         lhb_task = asyncio.create_task(_timed_thread(_fetch_lhb))
         status_task = asyncio.create_task(_timed_thread(_fetch_market_status))
         trending_task = asyncio.create_task(get_trending(fresh=True))
-        us_task = asyncio.create_task(_timed_thread(_fetch_us_dashboard))
+        us_task = asyncio.create_task(_timed_thread(lambda: _get_us_dashboard_cached(force=fresh)))
 
         indices, indices_at = await idx_task
         zt_pool, zt_at = await zt_task
@@ -654,6 +655,10 @@ def create_app() -> FastAPI:
             "fetched_at": fetched_at,
         }
 
+    # 美股看板短缓存：避免 30s 自动刷新反复打爆 Yahoo（表现为 possibly delisted）
+    _us_dash_cache: dict = {"ts": 0.0, "data": None}
+    _us_dash_ttl = 90.0
+
     def _fetch_us_dashboard() -> dict:
         """美股首页看板聚合（yfinance，与 A 股平行、不混用）。
 
@@ -662,75 +667,141 @@ def create_app() -> FastAPI:
         行业 ETF / 主题 ETF / 小盘异动 / 七巨头 / 低估值大盘 /
         跌幅榜 / 空头最重 / 市场状态。
         """
+        import io
+        import logging
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from contextlib import redirect_stderr, redirect_stdout
+
         import yfinance as yf
+
+        # yfinance 在限流时会刷屏 "possibly delisted
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+        logging.getLogger("peewee").setLevel(logging.CRITICAL)
 
         fetched_at: dict[str, str] = {}
 
         def _stamp(key: str) -> None:
             fetched_at[key] = _time.strftime("%H:%M:%S")
 
-        def _close_series(df, symbol: str):
-            if df is None or getattr(df, "empty", True):
-                return None
+        def _quote_one(symbol: str, name: str, *, period: str = "5d") -> dict | None:
+            """未复权常规市价：优先 ``fast_info.last_price``，对齐 Yahoo 官网顶栏。
+
+            注意：``history(period='5d')`` 最新一行 Close 常为 NaN，
+            ``dropna`` 会误用前一日收盘（例如官网 7411.98，错误落到 7408.30）。
+            回退时必须先用 ``period='1d'`` 取当日/最近交易日收盘。
+            """
             try:
-                if hasattr(df.columns, "levels"):
-                    if ("Close", symbol) in df.columns:
-                        return df[("Close", symbol)].dropna()
-                    if (symbol, "Close") in df.columns:
-                        return df[(symbol, "Close")].dropna()
-                if "Close" in df.columns:
-                    col = df["Close"]
-                    if hasattr(col, "columns"):
-                        return col[symbol].dropna()
-                    return col.dropna()
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    t = yf.Ticker(symbol)
+                    price: float | None = None
+                    prev: float | None = None
+                    price_source = ""
+
+                    def _fi_get(fi: object, key: str) -> float | None:
+                        try:
+                            val = getattr(fi, key, None)
+                            if val is None and hasattr(fi, "get"):
+                                val = fi.get(key)  # type: ignore[operator]
+                            if val is None:
+                                return None
+                            fval = float(val)
+                            if fval != fval:  # NaN
+                                return None
+                            return fval
+                        except Exception:
+                            return None
+
+                    try:
+                        fi = t.fast_info
+                        if fi is not None:
+                            price = _fi_get(fi, "last_price")
+                            prev = _fi_get(fi, "previous_close") or _fi_get(
+                                fi, "regular_market_previous_close"
+                            )
+                            if price is not None:
+                                price_source = "fast_info"
+                    except Exception:
+                        pass
+
+                    # 当日未复权收盘（比 5d 末行更可靠）
+                    if price is None:
+                        h1 = t.history(period="1d", auto_adjust=False)
+                        if (
+                            h1 is not None
+                            and not getattr(h1, "empty", True)
+                            and "Close" in h1.columns
+                        ):
+                            c1 = h1["Close"].dropna()
+                            if len(c1) >= 1:
+                                price = float(c1.iloc[-1])
+                                price_source = "history_1d"
+
+                    if prev is None:
+                        hist = t.history(period=period, auto_adjust=False)
+                        if (
+                            hist is not None
+                            and not getattr(hist, "empty", True)
+                            and "Close" in hist.columns
+                        ):
+                            closes = hist["Close"].dropna()
+                            if len(closes) >= 2:
+                                # 若末值已是最新价，昨收取倒数第二；否则末值当昨收
+                                last = float(closes.iloc[-1])
+                                prev_candidate = float(closes.iloc[-2])
+                                if price is not None and abs(last - price) < 1e-6:
+                                    prev = prev_candidate
+                                elif price is not None:
+                                    prev = last
+                                else:
+                                    price = last
+                                    prev = prev_candidate
+                                    price_source = price_source or "history_5d"
+                            elif len(closes) == 1 and price is None:
+                                price = float(closes.iloc[-1])
+                                price_source = price_source or "history_5d"
+
+                if price is None:
+                    return None
+                change = (price - prev) if prev is not None else None
+                change_pct = (price - prev) / prev * 100 if prev not in (None, 0) else None
+                return {
+                    "code": symbol.lstrip("^"),
+                    "symbol": symbol,
+                    "name": name,
+                    "price": round(price, 2),
+                    "change": round(change, 2) if change is not None else None,
+                    "change_pct": round(change_pct, 2) if change_pct is not None else None,
+                    "price_source": price_source or "unknown",
+                }
             except Exception:
                 return None
-            return None
 
         def _batch_quotes(pairs: list[tuple[str, str]], *, period: str = "5d") -> list[dict]:
             if not pairs:
                 return []
-            symbols = [s for s, _ in pairs]
-            name_map = {s: n for s, n in pairs}
-            try:
-                df = yf.download(
-                    symbols,
-                    period=period,
-                    interval="1d",
-                    auto_adjust=True,
-                    progress=False,
-                    threads=True,
-                )
-            except Exception:
-                return []
             out: list[dict] = []
-            for sym in symbols:
-                series = _close_series(df, sym)
-                if series is None or len(series) < 1:
-                    continue
-                price = float(series.iloc[-1])
-                prev = float(series.iloc[-2]) if len(series) >= 2 else None
-                change = (price - prev) if prev else None
-                change_pct = ((price - prev) / prev * 100) if prev and prev else None
-                out.append(
-                    {
-                        "code": sym.lstrip("^"),
-                        "symbol": sym,
-                        "name": name_map.get(sym, sym),
-                        "price": round(price, 4) if price == price else None,
-                        "change": round(change, 4) if change is not None else None,
-                        "change_pct": round(change_pct, 2) if change_pct is not None else None,
-                    }
-                )
+            # 控制并发，避免再次触发 Yahoo 限流
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futs = {
+                    pool.submit(_quote_one, sym, name, period=period): sym for sym, name in pairs
+                }
+                for fut in as_completed(futs):
+                    item = fut.result()
+                    if item:
+                        out.append(item)
+            # 保持与输入相近的展示顺序
+            order = {sym: i for i, (sym, _) in enumerate(pairs)}
+            out.sort(key=lambda x: order.get(x.get("symbol", ""), 999))
             return out
 
         def _screen_list(preset: str, *, limit: int = 10) -> tuple[list[dict], int]:
             try:
-                raw = yf.screen(preset, count=limit)
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    raw = yf.screen(preset, count=limit)
             except Exception:
                 return [], 0
-            quotes = raw.get("quotes") or []
-            total = int(raw.get("total") or len(quotes) or 0)
+            quotes = (raw or {}).get("quotes") or []
+            total = int((raw or {}).get("total") or len(quotes) or 0)
             items: list[dict] = []
             for q in quotes[:limit]:
                 sym = q.get("symbol") or ""
@@ -768,6 +839,9 @@ def create_app() -> FastAPI:
                 "message": st.get("hint") or "",
                 "label": labels.get(st.get("status") or "", st.get("status") or ""),
                 "local_time": st.get("local_time"),
+                "local_date": st.get("local_date"),
+                "local_weekday": st.get("local_weekday"),
+                "local_display": st.get("local_display"),
                 "timezone": st.get("timezone") or "America/New_York",
             }
             try:
@@ -782,15 +856,13 @@ def create_app() -> FastAPI:
             pass
         _stamp("market_status")
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         index_pairs = [
-            ("^GSPC", "标普500"),
-            ("^DJI", "道琼斯"),
-            ("^IXIC", "纳斯达克"),
-            ("^NDX", "纳指100"),
-            ("^RUT", "罗素2000"),
-            ("^VIX", "VIX恐慌"),
+            ("^GSPC", "标普500 (S&P 500)"),
+            ("^DJI", "道琼斯 (Dow 30)"),
+            ("^IXIC", "纳斯达克 (Nasdaq)"),
+            ("^NDX", "纳指100 (Nasdaq 100)"),
+            ("^RUT", "罗素2000 (Russell 2000)"),
+            ("^VIX", "VIX恐慌 (VIX)"),
         ]
         sector_pairs = [
             ("XLK", "科技"),
@@ -850,7 +922,8 @@ def create_app() -> FastAPI:
             "shorted": lambda: _screen_list("most_shorted_stocks", limit=10),
         }
         results: dict = {}
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        # 外层并发压低：内层 _batch_quotes 已有并发，叠加易触发 Yahoo 限流
+        with ThreadPoolExecutor(max_workers=3) as pool:
             fut_map = {pool.submit(fn): key for key, fn in jobs.items()}
             for fut in as_completed(fut_map):
                 key = fut_map[fut]
@@ -917,6 +990,24 @@ def create_app() -> FastAPI:
             "shorted": shorted,
             "fetched_at": fetched_at,
         }
+
+    def _get_us_dashboard_cached(*, force: bool = False) -> dict:
+        """美股看板 90s 短缓存，避免自动刷新打爆 Yahoo、拖慢研究流。
+
+        ``force=True``（手动刷新）跳过缓存，保证拿到最新常规市价。
+        """
+        now = _time.time()
+        cached = _us_dash_cache.get("data")
+        if (
+            not force
+            and cached is not None
+            and now - float(_us_dash_cache.get("ts") or 0) < _us_dash_ttl
+        ):
+            return cached
+        data = _fetch_us_dashboard()
+        _us_dash_cache["ts"] = now
+        _us_dash_cache["data"] = data
+        return data
 
     def _fetch_indices_sina() -> list[dict]:
         """新浪批量获取 6 大指数实时行情。"""
@@ -1031,6 +1122,7 @@ def create_app() -> FastAPI:
                         "name": str(r.get("名称", "")),
                         "change_pct": r.get("涨跌幅"),
                         "price": r.get("最新价"),
+                        "industry": str(r.get("所属行业", "") or ""),
                     }
                     for r in df.head(10).to_dict("records")
                 ]
@@ -1048,6 +1140,7 @@ def create_app() -> FastAPI:
                         "name": str(r.get("名称", "")),
                         "change_pct": r.get("涨跌幅"),
                         "price": r.get("最新价"),
+                        "industry": str(r.get("所属行业", "") or ""),
                     }
                     for r in df.head(10).to_dict("records")
                 ]
@@ -1065,6 +1158,7 @@ def create_app() -> FastAPI:
                         "name": str(r.get("名称", "")),
                         "change_pct": r.get("涨跌幅"),
                         "price": r.get("最新价"),
+                        "industry": str(r.get("所属行业", "") or ""),
                     }
                     for r in df.head(10).to_dict("records")
                 ]
