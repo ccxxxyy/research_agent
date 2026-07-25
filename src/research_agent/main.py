@@ -588,9 +588,7 @@ def create_app() -> FastAPI:
         lhb_task = asyncio.create_task(_timed_thread(_fetch_lhb))
         status_task = asyncio.create_task(_timed_thread(_fetch_market_status))
         trending_task = asyncio.create_task(get_trending(fresh=True))
-        us_task = asyncio.create_task(
-            _timed_thread(lambda: _get_us_dashboard_cached(force=fresh))
-        )
+        us_task = asyncio.create_task(_timed_thread(lambda: _get_us_dashboard_cached(force=fresh)))
 
         indices, indices_at = await idx_task
         zt_pool, zt_at = await zt_task
@@ -765,9 +763,7 @@ def create_app() -> FastAPI:
                 if price is None:
                     return None
                 change = (price - prev) if prev is not None else None
-                change_pct = (
-                    (price - prev) / prev * 100 if prev not in (None, 0) else None
-                )
+                change_pct = (price - prev) / prev * 100 if prev not in (None, 0) else None
                 return {
                     "code": symbol.lstrip("^"),
                     "symbol": symbol,

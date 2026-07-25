@@ -453,8 +453,7 @@ async def get_ticker_sentiment_report(symbol: str, limit: int = 20) -> dict:
     if not _is_valid_us_ticker(ticker):
         return {
             "error": (
-                f"无效美股 ticker: {symbol!r}。"
-                "请传入如 SPY/QQQ/AAPL；不要传 A 股代码或残缺数字。"
+                f"无效美股 ticker: {symbol!r}。请传入如 SPY/QQQ/AAPL；不要传 A 股代码或残缺数字。"
             ),
             "context": "get_ticker_sentiment_report()",
             "symbol": ticker,

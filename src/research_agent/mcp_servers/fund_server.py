@@ -1009,9 +1009,9 @@ async def get_fund_daily(fund_type: str = "股票型", limit: int = 30) -> dict:
         if fund_type and fund_type not in {"全部", "all", "*"}:
             name_df = _ensure_fund_cache()
             if "基金类型" in name_df.columns:
-                typed = name_df[
-                    name_df["基金类型"].astype(str).str.contains(fund_type, na=False)
-                ]["基金代码"].astype(str)
+                typed = name_df[name_df["基金类型"].astype(str).str.contains(fund_type, na=False)][
+                    "基金代码"
+                ].astype(str)
                 before = len(df)
                 df = df[df["基金代码"].isin(set(typed))]
                 note += f"；已按类型「{fund_type}」过滤 {before}→{len(df)}"
