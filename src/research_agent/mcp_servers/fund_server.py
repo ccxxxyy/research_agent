@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import Any
 
 import pandas as pd
@@ -339,11 +340,55 @@ def _df_to_records(df: pd.DataFrame, *, limit: int | None = None) -> list[dict[s
             elif isinstance(val, pd.Timestamp | _dt):
                 rec[str(col)] = val.strftime("%Y-%m-%d")
             elif isinstance(val, int | float | str | bool):
-                rec[str(col)] = val
+                # 基金代码保持 6 位字符串，避免 018735 → 18735
+                if str(col) in {"基金代码", "代码", "symbol"} and isinstance(val, (int, float)):
+                    rec[str(col)] = str(int(val)).zfill(6)
+                elif str(col) in {"基金代码", "代码", "symbol"} and isinstance(val, str):
+                    rec[str(col)] = val.strip().zfill(6) if val.strip().isdigit() else val.strip()
+                else:
+                    rec[str(col)] = val
             else:
                 rec[str(col)] = str(val)
         records.append(rec)
     return records
+
+
+def _normalize_fund_code(symbol: str) -> str:
+    s = str(symbol or "").strip()
+    # 去掉概况接口偶发的「（前端）」后缀
+    s = re.sub(r"[（(].*?[）)]\s*$", "", s).strip()
+    if s.isdigit():
+        return s.zfill(6)
+    return s
+
+
+def _normalize_open_fund_daily_df(df: pd.DataFrame) -> pd.DataFrame:
+    """东财 ``fund_open_fund_daily_em`` 列名带日期前缀，统一为标准字段。
+
+    实际列类似 ``2026-07-24-单位净值`` / ``日增长率``，
+    没有裸 ``单位净值``，旧逻辑按固定列名取值会导致净值整列丢失。
+    """
+    out = df.copy()
+    if "基金代码" in out.columns:
+        out["基金代码"] = out["基金代码"].astype(str).map(_normalize_fund_code)
+
+    def _latest_col(suffix: str) -> str | None:
+        cols = [c for c in out.columns if str(c).endswith(suffix)]
+        if not cols:
+            return None
+        # 日期前缀字典序即可取到最新交易日列
+        return sorted(cols, key=str)[-1]
+
+    unit_col = _latest_col("单位净值")
+    acc_col = _latest_col("累计净值")
+    if unit_col and "单位净值" not in out.columns:
+        out["单位净值"] = pd.to_numeric(out[unit_col], errors="coerce")
+        out["净值日期"] = str(unit_col).replace("-单位净值", "")
+    if acc_col and "累计净值" not in out.columns:
+        out["累计净值"] = pd.to_numeric(out[acc_col], errors="coerce")
+    if "日增长率" in out.columns:
+        out["日增长率"] = pd.to_numeric(out["日增长率"], errors="coerce")
+    return out
 
 
 def _ensure_fund_cache() -> pd.DataFrame:
@@ -351,7 +396,11 @@ def _ensure_fund_cache() -> pd.DataFrame:
     if _FUND_NAME_CACHE is None:
         import akshare as ak
 
-        _FUND_NAME_CACHE = ak.fund_name_em()
+        cache = ak.fund_name_em()
+        if "基金代码" in cache.columns:
+            cache = cache.copy()
+            cache["基金代码"] = cache["基金代码"].astype(str).map(_normalize_fund_code)
+        _FUND_NAME_CACHE = cache
     return _FUND_NAME_CACHE
 
 
@@ -377,11 +426,26 @@ async def search_fund(keyword: str, limit: int = 10) -> dict:
 
     def _call() -> dict[str, Any]:
         df = _ensure_fund_cache()
-        code_mask = df["基金代码"].astype(str).str.contains(keyword, case=False, na=False)
-        name_mask = df["基金简称"].str.contains(keyword, case=False, na=False)
-        mask = code_mask | name_mask
-        matched = df[mask].head(limit)
-        cols = [c for c in ["基金代码", "基金简称", "基金类型"] if c in matched.columns]
+        kw = keyword.strip()
+        codes = df["基金代码"].astype(str)
+        names = df["基金简称"].astype(str)
+        cols = [c for c in ["基金代码", "基金简称", "基金类型"] if c in df.columns]
+
+        # 6 位代码：精确匹配，避免 contains("300") 命中一堆无关基金
+        if re.fullmatch(r"\d{1,6}", kw):
+            code = _normalize_fund_code(kw)
+            matched = df[codes == code].head(limit)
+        else:
+            exact_name = df[names == kw]
+            start_name = df[names.str.startswith(kw, na=False)]
+            contain_name = df[names.str.contains(re.escape(kw), case=False, na=False)]
+            code_hit = df[codes.str.contains(re.escape(kw), case=False, na=False)]
+            matched = (
+                pd.concat([exact_name, start_name, contain_name, code_hit], ignore_index=True)
+                .drop_duplicates(subset=["基金代码"])
+                .head(limit)
+            )
+
         return {
             "keyword": keyword,
             "funds": _df_to_records(matched[cols] if cols else matched),
@@ -415,9 +479,10 @@ async def get_fund_info(symbol: str) -> dict:
     def _call() -> dict[str, Any]:
         import akshare as ak
 
-        df = ak.fund_overview_em(symbol=symbol)
+        code = _normalize_fund_code(symbol)
+        df = ak.fund_overview_em(symbol=code)
         if df.empty:
-            raise ValueError(f"fund_overview_em 返回空数据: {symbol}")
+            raise ValueError(f"fund_overview_em 返回空数据: {code}")
         # fund_overview_em 返回 1 行 × 20 列的 DataFrame，直接转为 dict
         info: dict[str, Any] = {}
         row = df.iloc[0]
@@ -426,8 +491,11 @@ async def get_fund_info(symbol: str) -> dict:
             if pd.isna(val):
                 info[str(col)] = None
             else:
-                info[str(col)] = str(val)
-        return {"symbol": symbol, "info": info, "source": "eastmoney"}
+                text = str(val)
+                if str(col) == "基金代码":
+                    text = _normalize_fund_code(text)
+                info[str(col)] = text
+        return {"symbol": code, "info": info, "source": "eastmoney"}
 
     try:
         return await asyncio.to_thread(_call)
@@ -457,15 +525,24 @@ async def get_fund_nav(symbol: str, limit: int = 30) -> dict:
     def _call() -> dict[str, Any]:
         import akshare as ak
 
-        df = ak.fund_open_fund_info_em(symbol=symbol, indicator="单位净值走势")
+        code = _normalize_fund_code(symbol)
+        df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
         if df is None or df.empty:
-            return {"symbol": symbol, "records": [], "count": 0, "source": "eastmoney"}
+            return {"symbol": code, "records": [], "count": 0, "source": "eastmoney"}
+        if "净值日期" in df.columns:
+            df = df.copy()
+            df["净值日期"] = pd.to_datetime(df["净值日期"], errors="coerce")
+            df = df.sort_values("净值日期")
+        for col in ("单位净值", "累计净值", "日增长率"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
         df = df.tail(limit)
         return {
-            "symbol": symbol,
+            "symbol": code,
             "records": _df_to_records(df),
             "count": len(df),
             "source": "eastmoney",
+            "note": "日增长率为百分比数值（如 -3.63 表示 -3.63%），勿再乘 100",
         }
 
     try:
@@ -925,16 +1002,27 @@ async def get_fund_daily(fund_type: str = "股票型", limit: int = 30) -> dict:
     def _call() -> dict[str, Any]:
         import akshare as ak
 
-        df = ak.fund_open_fund_daily_em()
-        if "基金类型" in df.columns:
-            df = df[df["基金类型"].str.contains(fund_type, na=False)]
+        raw = ak.fund_open_fund_daily_em()
+        df = _normalize_open_fund_daily_df(raw)
+        # 该接口本身无「基金类型」列；若用户指定类型，用名称库联表过滤
+        note = "日增长率为百分比数值（如 3.73 表示 +3.73%）"
+        if fund_type and fund_type not in {"全部", "all", "*"}:
+            name_df = _ensure_fund_cache()
+            if "基金类型" in name_df.columns:
+                typed = name_df[
+                    name_df["基金类型"].astype(str).str.contains(fund_type, na=False)
+                ]["基金代码"].astype(str)
+                before = len(df)
+                df = df[df["基金代码"].isin(set(typed))]
+                note += f"；已按类型「{fund_type}」过滤 {before}→{len(df)}"
+            else:
+                note += f"；上游无类型字段，未能按「{fund_type}」过滤"
         if "日增长率" in df.columns:
-            df["日增长率"] = pd.to_numeric(df["日增长率"], errors="coerce")
             df = df.sort_values("日增长率", ascending=False)
         df = df.head(limit)
         cols = [
             c
-            for c in ["基金代码", "基金简称", "单位净值", "累计净值", "日增长率"]
+            for c in ["基金代码", "基金简称", "净值日期", "单位净值", "累计净值", "日增长率"]
             if c in df.columns
         ]
         return {
@@ -943,6 +1031,7 @@ async def get_fund_daily(fund_type: str = "股票型", limit: int = 30) -> dict:
             "count": len(df),
             "source": "eastmoney",
             "source_url": "https://fund.eastmoney.com/fund.html",
+            "note": note,
         }
 
     try:

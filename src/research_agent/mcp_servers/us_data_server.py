@@ -47,19 +47,40 @@ if not logger.handlers:
     logger.addHandler(_handler)
     logger.setLevel(logging.INFO)
 
+# Yahoo 限流时 yfinance 会刷 "possibly delisted"（多为假阳性），压低噪音
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("peewee").setLevel(logging.CRITICAL)
+
 mcp = FastMCP("UsEquityData")
 
 _ET = ZoneInfo("America/New_York")
 
-# 主要指数：显示名 → yfinance 符号
+# 单次 yfinance 同步调用硬超时，避免 Yahoo 挂起导致研究流永久「处理中」
+_YF_CALL_TIMEOUT_SECONDS = 45.0
+
+# 主要指数：显示名（中英） → yfinance 符号
 _MAJOR_INDICES: dict[str, str] = {
-    "S&P 500": "^GSPC",
-    "Dow Jones": "^DJI",
-    "Nasdaq Composite": "^IXIC",
-    "Nasdaq-100": "^NDX",
-    "Russell 2000": "^RUT",
-    "VIX": "^VIX",
+    "标普500 (S&P 500)": "^GSPC",
+    "道琼斯 (Dow 30)": "^DJI",
+    "纳斯达克 (Nasdaq)": "^IXIC",
+    "纳指100 (Nasdaq 100)": "^NDX",
+    "罗素2000 (Russell 2000)": "^RUT",
+    "VIX恐慌 (VIX)": "^VIX",
 }
+
+
+async def _yf_call(fn, *, context: str, timeout: float = _YF_CALL_TIMEOUT_SECONDS) -> dict:
+    """在线程池跑同步 yfinance，带超时；超时返回 error dict 而非挂死。"""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn), timeout=timeout)
+    except TimeoutError:
+        logger.error("[%s] yfinance call timed out after %.0fs", context, timeout)
+        return {
+            "error": f"TimeoutError: yfinance call exceeded {timeout:.0f}s",
+            "context": context,
+        }
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=context)
 
 
 def _fmt_error(exc: Exception, *, context: str) -> dict[str, Any]:
@@ -175,6 +196,9 @@ def _serialize_weight_map(raw: Any) -> list[dict[str, Any]]:
     return items
 
 
+_WEEKDAYS_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
 def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
     """美东交易时段判定（简化：不区分假日日历，仅周末 + 钟点）。"""
     ts = now or datetime.now(tz=_ET)
@@ -183,6 +207,9 @@ def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
     t = local.time()
     date_str = local.strftime("%Y-%m-%d")
     clock = local.strftime("%H:%M")
+    weekday_cn = _WEEKDAYS_CN[weekday]
+    # 如 2026-07-25 周六 02:41
+    local_display = f"{date_str} {weekday_cn} {clock}"
 
     if weekday >= 5:
         return {
@@ -190,8 +217,10 @@ def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
             "session": "weekend",
             "local_date": date_str,
             "local_time": clock,
+            "local_weekday": weekday_cn,
+            "local_display": local_display,
             "timezone": "America/New_York",
-            "hint": f"周末休市；请使用上一交易日收盘数据（本地 {date_str} {clock} ET）。",
+            "hint": f"周末休市；请使用上一交易日收盘数据（美东 {local_display}）。",
             "source": "us_session_clock",
         }
 
@@ -202,25 +231,25 @@ def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
         status, session, hint = (
             "pre_market",
             "pre",
-            f"盘前（{clock} ET）；报价可能为盘前价，请标注时段。",
+            f"盘前（美东 {local_display}）；报价可能为盘前价，请标注时段。",
         )
     elif regular_open <= t < regular_close:
         status, session, hint = (
             "open",
             "regular",
-            f"常规交易中（截至 {clock} ET 的实时/近实时数据）。",
+            f"常规交易中（截至美东 {local_display} 的实时/近实时数据）。",
         )
     elif regular_close <= t < after_close:
         status, session, hint = (
             "after_hours",
             "post",
-            f"盘后（{clock} ET）；请标注盘后价与今日收盘价的区别。",
+            f"盘后（美东 {local_display}）；请标注盘后价与今日收盘价的区别。",
         )
     else:
         status, session, hint = (
             "closed",
             "overnight",
-            f"已收盘（{clock} ET）；请使用最近一笔收盘数据并写明日期。",
+            f"已收盘（美东 {local_display}）；请使用最近一笔收盘数据并写明日期。",
         )
 
     return {
@@ -228,6 +257,8 @@ def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
         "session": session,
         "local_date": date_str,
         "local_time": clock,
+        "local_weekday": weekday_cn,
+        "local_display": local_display,
         "timezone": "America/New_York",
         "hint": hint,
         "source": "us_session_clock",
@@ -255,26 +286,76 @@ def _history_records(df: Any, *, limit: int) -> list[dict[str, Any]]:
 
 
 def _quote_from_ticker(symbol: str) -> dict[str, Any]:
+    """未复权常规市价：优先 ``fast_info.last_price``，对齐 Yahoo 官网。
+
+    ``history(5d)`` 最新 Close 常为 NaN，不能直接 ``dropna`` 当最新价。
+    避免 ``Ticker.info``（Yahoo 慢/挂起是研究流卡死主因）。
+    """
     import yfinance as yf
 
     ticker = _normalize_ticker(symbol)
     t = yf.Ticker(ticker)
-    info = t.info or {}
-    # fast_info 在部分版本更稳
-    fast: dict[str, Any] = {}
+    price: Any = None
+    prev: Any = None
+
+    def _num(val: Any) -> float | None:
+        if val is None:
+            return None
+        try:
+            fval = float(val)
+        except (TypeError, ValueError):
+            return None
+        if fval != fval:  # NaN
+            return None
+        return fval
+
     try:
         fi = t.fast_info
-        fast = dict(fi) if fi is not None else {}
+        if fi is not None:
+            try:
+                price = _num(getattr(fi, "last_price", None))
+                prev = _num(getattr(fi, "previous_close", None)) or _num(
+                    getattr(fi, "regular_market_previous_close", None)
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            if price is None:
+                try:
+                    fi_map = dict(fi)
+                    price = _num(fi_map.get("last_price"))
+                    prev = _num(fi_map.get("previous_close")) or prev
+                except Exception:  # noqa: BLE001
+                    pass
     except Exception:  # noqa: BLE001
-        fast = {}
+        pass
 
-    price = (
-        fast.get("last_price")
-        or info.get("currentPrice")
-        or info.get("regularMarketPrice")
-        or info.get("previousClose")
-    )
-    prev = fast.get("previous_close") or info.get("previousClose")
+    if price is None:
+        try:
+            h1 = t.history(period="1d", auto_adjust=False)
+            if h1 is not None and not h1.empty and "Close" in h1.columns:
+                c1 = h1["Close"].dropna()
+                if len(c1) >= 1:
+                    price = float(c1.iloc[-1])
+        except Exception:  # noqa: BLE001
+            pass
+
+    if prev is None:
+        try:
+            hist = t.history(period="5d", auto_adjust=False)
+            if hist is not None and not hist.empty and "Close" in hist.columns:
+                closes = hist["Close"].dropna()
+                if len(closes) >= 2:
+                    last = float(closes.iloc[-1])
+                    prev_candidate = float(closes.iloc[-2])
+                    if price is not None and abs(last - float(price)) < 1e-6:
+                        prev = prev_candidate
+                    else:
+                        prev = last
+                elif len(closes) == 1 and price is None:
+                    price = float(closes.iloc[-1])
+        except Exception:  # noqa: BLE001
+            pass
+
     change_pct = None
     if price is not None and prev not in (None, 0):
         try:
@@ -282,16 +363,25 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
         except (TypeError, ValueError, ZeroDivisionError):
             change_pct = None
 
+    display = {
+        "^GSPC": "标普500 (S&P 500)",
+        "^DJI": "道琼斯 (Dow 30)",
+        "^IXIC": "纳斯达克 (Nasdaq)",
+        "^NDX": "纳指100 (Nasdaq 100)",
+        "^RUT": "罗素2000 (Russell 2000)",
+        "^VIX": "VIX恐慌 (VIX)",
+    }
+
     return {
         "symbol": ticker,
-        "name": info.get("shortName") or info.get("longName") or ticker,
+        "name": display.get(ticker, ticker),
         "price": _json_safe(price),
         "previous_close": _json_safe(prev),
         "change_percent": change_pct,
-        "currency": info.get("currency") or fast.get("currency") or "USD",
-        "exchange": info.get("exchange") or info.get("fullExchangeName") or "",
-        "quote_type": info.get("quoteType") or "",
-        "market_cap": _json_safe(info.get("marketCap")),
+        "currency": "USD",
+        "exchange": "",
+        "quote_type": "INDEX" if ticker.startswith("^") else "",
+        "market_cap": None,
         "source": "yfinance",
         "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
     }
@@ -310,10 +400,7 @@ async def get_market_status() -> dict:
     状态：``open`` / ``pre_market`` / ``after_hours`` / ``closed``。
     回答含"今天/实时/收盘"时必须先调本工具，并按 ``hint`` 标注数据时点。
     """
-    try:
-        return await asyncio.to_thread(_session_status)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context="get_market_status()")
+    return await _yf_call(_session_status, context="get_market_status()", timeout=10.0)
 
 
 @mcp.tool()
@@ -385,10 +472,7 @@ async def search_ticker(query: str, limit: int = 8) -> dict:
             "source": "yfinance",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"search_ticker({query!r})")
+    return await _yf_call(_call, context=f"search_ticker({query!r})")
 
 
 @mcp.tool()
@@ -399,10 +483,10 @@ async def get_quote(symbol: str) -> dict:
     Args:
         symbol: Yahoo Finance ticker，如 ``AAPL``、``SPY``、``^GSPC``。
     """
-    try:
-        return await asyncio.to_thread(_quote_from_ticker, symbol)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"get_quote({symbol!r})")
+    return await _yf_call(
+        lambda: _quote_from_ticker(symbol),
+        context=f"get_quote({symbol!r})",
+    )
 
 
 @mcp.tool()
@@ -452,10 +536,7 @@ async def get_price_history(symbol: str, period: str = "1mo", interval: str = "1
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/history",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"get_price_history({symbol!r})")
+    return await _yf_call(_call, context=f"get_price_history({symbol!r})")
 
 
 @mcp.tool()
@@ -509,10 +590,7 @@ async def get_basic_info(symbol: str) -> dict:
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"get_basic_info({symbol!r})")
+    return await _yf_call(_call, context=f"get_basic_info({symbol!r})", timeout=60.0)
 
 
 @mcp.tool()
@@ -521,21 +599,32 @@ async def get_index_quotes() -> dict:
     """返回主要美股指数最新报价（标普、道指、纳指、纳斯达克100、罗素2000、VIX）。"""
 
     def _call() -> dict[str, Any]:
-        indices = []
-        for name, sym in _MAJOR_INDICES.items():
-            try:
-                q = _quote_from_ticker(sym)
-                indices.append(
-                    {
-                        "name": name,
-                        "symbol": sym,
-                        "price": q.get("price"),
-                        "previous_close": q.get("previous_close"),
-                        "change_percent": q.get("change_percent"),
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001
-                indices.append({"name": name, "symbol": sym, "error": str(exc)})
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        indices: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futs = {
+                pool.submit(_quote_from_ticker, sym): (name, sym)
+                for name, sym in _MAJOR_INDICES.items()
+            }
+            for fut in as_completed(futs):
+                name, sym = futs[fut]
+                try:
+                    q = fut.result()
+                    indices.append(
+                        {
+                            "name": name,
+                            "symbol": sym,
+                            "price": q.get("price"),
+                            "previous_close": q.get("previous_close"),
+                            "change_percent": q.get("change_percent"),
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    indices.append({"name": name, "symbol": sym, "error": str(exc)})
+        # 保持主要指数展示顺序
+        order = {sym: i for i, sym in enumerate(_MAJOR_INDICES.values())}
+        indices.sort(key=lambda x: order.get(x.get("symbol", ""), 999))
         return {
             "indices": indices,
             "count": len(indices),
@@ -543,10 +632,7 @@ async def get_index_quotes() -> dict:
             "source_url": "https://finance.yahoo.com/markets/stocks/",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context="get_index_quotes()")
+    return await _yf_call(_call, context="get_index_quotes()", timeout=90.0)
 
 
 @mcp.tool()
@@ -587,10 +673,7 @@ async def get_etf_overview(symbol: str) -> dict:
             "source_url": f"https://finance.yahoo.com/quote/{ticker}",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"get_etf_overview({symbol!r})")
+    return await _yf_call(_call, context=f"get_etf_overview({symbol!r})", timeout=60.0)
 
 
 @mcp.tool()
@@ -632,10 +715,7 @@ async def get_etf_holdings(symbol: str, top_n: int = 10) -> dict:
             "source_url": f"https://finance.yahoo.com/quote/{ticker}/holdings",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"get_etf_holdings({symbol!r})")
+    return await _yf_call(_call, context=f"get_etf_holdings({symbol!r})", timeout=60.0)
 
 
 @mcp.tool()
@@ -681,10 +761,7 @@ async def get_etf_sector_weights(symbol: str) -> dict:
             "source_url": f"https://finance.yahoo.com/quote/{ticker}/holdings",
         }
 
-    try:
-        return await asyncio.to_thread(_call)
-    except Exception as e:  # noqa: BLE001
-        return _fmt_error(e, context=f"get_etf_sector_weights({symbol!r})")
+    return await _yf_call(_call, context=f"get_etf_sector_weights({symbol!r})", timeout=60.0)
 
 
 if __name__ == "__main__":

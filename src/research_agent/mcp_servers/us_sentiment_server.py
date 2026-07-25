@@ -187,7 +187,18 @@ def _text_fingerprint(text: str) -> str:
 
 
 def _normalize_ticker(symbol: str) -> str:
-    return symbol.strip().upper()
+    return symbol.strip().upper().lstrip("$")
+
+
+def _is_valid_us_ticker(symbol: str) -> bool:
+    """拒绝 A 股数字代码 / 残缺参数（如 ``000``），避免 Yahoo 空转挂起。"""
+    s = _normalize_ticker(symbol)
+    if not s or len(s) > 12:
+        return False
+    if s.isdigit():
+        return False
+    # 允许 ^GSPC、BRK.B、BRK-B、SPY
+    return bool(re.fullmatch(r"\^?[A-Z][A-Z0-9.\-]{0,11}", s))
 
 
 def _score_single(text: str) -> dict[str, Any]:
@@ -345,10 +356,20 @@ def _normalize_news_item(raw: Any) -> dict[str, Any] | None:
 
 
 def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], list[str]]:
+    import logging
+
     import yfinance as yf
 
+    # 压低 yfinance 在限流时的刷屏，避免干扰排障
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
     ticker = _normalize_ticker(symbol)
-    raw_list = yf.Ticker(ticker).news or []
+    logger.info("fetching sentiment news for %s limit=%s", ticker, limit)
+    try:
+        raw_list = yf.Ticker(ticker).news or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("yfinance.news failed for %s: %s", ticker, exc)
+        raw_list = []
     items: list[dict[str, Any]] = []
     texts: list[str] = []
     for raw in raw_list:
@@ -373,6 +394,7 @@ def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], l
         items.append(scored)
         if len(items) >= limit:
             break
+    logger.info("sentiment news ready for %s: %s items", ticker, len(items))
     return items, texts
 
 
@@ -420,13 +442,23 @@ async def get_ticker_sentiment_report(symbol: str, limit: int = 20) -> dict:
     """一站式美股 ticker 舆情报告：Yahoo 新闻 → 逐条打分 → 聚合。
 
     Args:
-        symbol: 如 ``AAPL``、``TSLA``、``NVDA``。
+        symbol: 美股 ticker，如 ``AAPL``、``TSLA``、``SPY``、``QQQ``。
+            **禁止** A 股数字代码或残缺参数（如 ``000``、``000001``）。
         limit: 新闻条数上限（1–40）。
     """
     limit = max(1, min(int(limit), MAX_LIMIT))
     ticker = _normalize_ticker(symbol)
     if not ticker:
         return {"error": "symbol 不能为空", "context": "get_ticker_sentiment_report()"}
+    if not _is_valid_us_ticker(ticker):
+        return {
+            "error": (
+                f"无效美股 ticker: {symbol!r}。"
+                "请传入如 SPY/QQQ/AAPL；不要传 A 股代码或残缺数字。"
+            ),
+            "context": "get_ticker_sentiment_report()",
+            "symbol": ticker,
+        }
 
     def _work() -> dict[str, Any]:
         items, texts = _fetch_scored_news(ticker, limit)
@@ -443,7 +475,13 @@ async def get_ticker_sentiment_report(symbol: str, limit: int = 20) -> dict:
         }
 
     try:
-        return await asyncio.to_thread(_work)
+        return await asyncio.wait_for(asyncio.to_thread(_work), timeout=45.0)
+    except TimeoutError:
+        return {
+            "error": "TimeoutError: Yahoo 舆情拉取超过 45s",
+            "context": f"get_ticker_sentiment_report(symbol={symbol!r})",
+            "symbol": ticker,
+        }
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,
