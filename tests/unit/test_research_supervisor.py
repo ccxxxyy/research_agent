@@ -556,6 +556,21 @@ class TestSupervisorPrompt:
         )
         assert "自检" in prompt or "重新阅读" in prompt
 
+    def test_evidence_anchored_advice_rules_in_prompt(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=True,
+            has_report=False,
+            has_coder=False,
+            has_knowledge=False,
+            has_news=True,
+            has_sentiment=True,
+            has_us_sentiment=True,
+        )
+        assert "依据锚定" in prompt
+        assert "不构成买卖指令" in prompt
+        assert "无依据不下单话术" in prompt
+        assert "禁止私自联网" in prompt
+
 
 # ---------------------------------------------------------------------------
 # 图构建器

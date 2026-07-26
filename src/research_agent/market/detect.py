@@ -112,6 +112,14 @@ _KNOWN_US: dict[str, tuple[str, AssetClass, str]] = {
     "奈飞": ("NFLX", AssetClass.EQUITY, "Netflix"),
     "netflix": ("NFLX", AssetClass.EQUITY, "Netflix"),
     "amd": ("AMD", AssetClass.EQUITY, "AMD"),
+    "超威半导体": ("AMD", AssetClass.EQUITY, "AMD"),
+    "超威": ("AMD", AssetClass.EQUITY, "AMD"),
+    "台积电": ("TSM", AssetClass.EQUITY, "TSMC"),
+    "tsmc": ("TSM", AssetClass.EQUITY, "TSMC"),
+    "tsm": ("TSM", AssetClass.EQUITY, "TSMC"),
+    "拉姆研究": ("LRCX", AssetClass.EQUITY, "Lam Research"),
+    "lam research": ("LRCX", AssetClass.EQUITY, "Lam Research"),
+    "lrcx": ("LRCX", AssetClass.EQUITY, "Lam Research"),
     "博通": ("AVGO", AssetClass.EQUITY, "Broadcom"),
     "costco": ("COST", AssetClass.EQUITY, "Costco"),
     "可口可乐": ("KO", AssetClass.EQUITY, "Coca-Cola"),
@@ -136,6 +144,9 @@ _KNOWN_US: dict[str, tuple[str, AssetClass, str]] = {
 
 _KNOWN_CN: dict[str, tuple[str, AssetClass, str]] = {
     "宁德时代": ("300750", AssetClass.EQUITY, "宁德时代"),
+    "中际旭创": ("300308", AssetClass.EQUITY, "中际旭创"),
+    "寒武纪": ("688256", AssetClass.EQUITY, "寒武纪"),
+    "澜起科技": ("688008", AssetClass.EQUITY, "澜起科技"),
     "贵州茅台": ("600519", AssetClass.EQUITY, "贵州茅台"),
     "茅台": ("600519", AssetClass.EQUITY, "贵州茅台"),
     "比亚迪": ("002594", AssetClass.EQUITY, "比亚迪"),
@@ -556,9 +567,22 @@ def format_market_preamble(resolution: MarketResolution, *, query: str = "") -> 
         "禁止用 fin_* / news_* / sentiment_* / 巨潮 / fund_* 查美股；"
         "MIXED → 必须按下方 MixedOrchestration 分侧移交，最终分侧陈述再综合。"
     )
+    lines.append(
+        "[RoutingAutonomy] MarketResolution/symbols 只是启发式加速（常见别名+代码正则），"
+        "不是白名单。问句中未列出的公司名须凭常识判断市场，"
+        "经已挂载侧的搜码工具（A股 fin_search_stock_by_name / 美股 us_search_ticker）解析代码后分侧移交；"
+        "专家若提示需转交另一侧，主管必须立刻 transfer，禁止只写文字。"
+    )
 
     plan = build_mixed_orchestration_plan(resolution, query)
     if plan is not None:
         lines.append(plan.format_for_prompt())
+    elif resolution.market in (Market.UNKNOWN, Market.CN_A, Market.US):
+        # 无现成 MIXED 清单时仍提醒可自拆跨市场协作
+        lines.append(
+            "[SoftOrchestration] 若问句同时涉及 A 股与美股主体（即使 symbols 未识别全），"
+            "请自拆子任务：美股 → us_* 专家；A 股 → fin_*/sentiment_*/news_* 专家；"
+            "先搜码再取数，两侧都要实际移交后再综合。"
+        )
 
     return "\n".join(lines)

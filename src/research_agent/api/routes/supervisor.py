@@ -39,6 +39,7 @@ from research_agent.api.schemas import (
     SupervisorChatResponse,
 )
 from research_agent.config import get_settings
+from research_agent.market.tool_result_source import extract_tool_result_source
 from research_agent.security.prompt_guard import PromptGuard, ThreatLevel
 
 if TYPE_CHECKING:
@@ -419,9 +420,11 @@ def _clean_markdown(text: str) -> str:
     """
     from research_agent.text.disclaimer import strip_trailing_disclaimers
     from research_agent.text.finance_signs import sanitize_signed_percents
+    from research_agent.text.urls import sanitize_markdown_links
 
     result = sanitize_signed_percents(text or "")
     result = strip_trailing_disclaimers(result)
+    result = sanitize_markdown_links(result)
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result.strip()
 
@@ -549,16 +552,22 @@ def _emit_specialist_internal(
     last = msgs[-1]
     if isinstance(last, ToolMessage):
         tool_name = str(getattr(last, "name", "") or "")
+        src, src_url = extract_tool_result_source(getattr(last, "content", None))
+        meta: dict[str, Any] = {
+            "specialist": specialist,
+            "tool": tool_name,
+        }
+        if src:
+            meta["source"] = src
+        if src_url:
+            meta["source_url"] = src_url
         frames.put_nowait(
             _format_sse(
                 ResearchSupervisorSSEEvent(
                     phase=ResearchSupervisorSSEPhase.TOOL_DONE,
                     node=specialist,
                     content=tool_name or "done",
-                    metadata={
-                        "specialist": specialist,
-                        "tool": tool_name,
-                    },
+                    metadata=meta,
                 )
             )
         )

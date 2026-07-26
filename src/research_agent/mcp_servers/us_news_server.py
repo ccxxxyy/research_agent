@@ -146,12 +146,14 @@ def _normalize_news_item(raw: Any) -> dict[str, Any] | None:
             link = val
         if link:
             break
+    from research_agent.text.urls import sanitize_http_url
+
     return {
         "title": str(title),
         "summary": str(summary)[:500] if summary else "",
         "publisher": provider,
         "published_at": str(pub),
-        "url": link,
+        "url": sanitize_http_url(link),
         "source": "yfinance",
     }
 
@@ -201,13 +203,15 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
             if isinstance(raw.get(key), str) and raw[key]:
                 link = raw[key]
                 break
+        from research_agent.text.urls import sanitize_http_url
+
         out.append(
             {
                 "title": str(title),
                 "summary": "",
                 "publisher": provider,
                 "published_at": str(raw.get("publishTime") or raw.get("providerPublishTime") or ""),
-                "url": link,
+                "url": sanitize_http_url(link),
                 "source": "yahoo_search",
             }
         )

@@ -43,3 +43,14 @@ def test_build_plan_filing_intent() -> None:
     plan = build_mixed_orchestration_plan(r, q)
     assert plan is not None
     assert any(t.intent == "filing" for t in plan.subtasks)
+
+
+def test_build_plan_sentiment_requires_both_side_transfers() -> None:
+    q = "分析台积电、超威半导体、拉姆研究、中际旭创舆情"
+    r = detect_market_from_query(q)
+    plan = build_mixed_orchestration_plan(r, q)
+    assert plan is not None
+    text = plan.format_for_prompt()
+    assert "sentiment_expert" in text
+    assert "us_sentiment_expert" in text
+    assert "严禁只写" in text or "强制" in text
