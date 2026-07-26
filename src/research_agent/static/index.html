@@ -636,18 +636,24 @@ const SOURCE_RULES = {
   fund_get_fund_rating:         {label:'天天基金·评级',fn:()=>'https://fund.eastmoney.com/data/fundrating.html'},
   fund_get_fund_rank:           {label:'天天基金·排行',fn:()=>'https://fund.eastmoney.com/data/fundranking.html'},
   fund_get_fund_daily:          {label:'天天基金·净值',fn:()=>'https://fund.eastmoney.com/fund.html'},
-  // 美股工具（东财 / Yahoo）
-  us_get_quote:                 {label:'东方财富·美股行情',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://quote.eastmoney.com/us/${String(s).replace('^','')}.html`:'https://quote.eastmoney.com/center/gridlist.html#us_stocks'}},
-  us_get_index_quotes:          {label:'东方财富·美股指数',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#us_stocks'},
-  us_get_price_history:         {label:'东方财富·美股行情',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://quote.eastmoney.com/us/${String(s).replace('^','')}.html`:'https://quote.eastmoney.com/center/gridlist.html#us_stocks'}},
-  us_get_basic_info:            {label:'东方财富·美股',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://quote.eastmoney.com/us/${String(s).replace('^','')}.html`:'https://quote.eastmoney.com/center/gridlist.html#us_stocks'}},
-  us_get_market_status:         {label:'美股交易时段',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#us_stocks'},
+  // 美股工具来源标签须与真实主路径一致（勿把舆情/新闻误标成东财）
+  us_get_quote:                 {label:'美股行情·Yahoo/东财',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${String(s).replace('^','%5E')}`:'https://finance.yahoo.com/markets/stocks/'}},
+  us_get_index_quotes:          {label:'美股指数·Yahoo/东财',fn:()=>'https://finance.yahoo.com/markets/stocks/'},
+  us_get_price_history:         {label:'美股行情·Yahoo',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${String(s).replace('^','%5E')}/history`:'https://finance.yahoo.com/markets/stocks/'}},
+  us_get_basic_info:            {label:'美股概况·Yahoo',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}`:'https://finance.yahoo.com/markets/stocks/'}},
+  us_get_market_status:         {label:'美股交易时段',fn:()=>'https://finance.yahoo.com/'},
   us_get_etf_overview:          {label:'Yahoo·ETF',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}`:'https://finance.yahoo.com/etfs/'}},
   us_get_etf_holdings:          {label:'Yahoo·ETF持仓',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}/holdings`:'https://finance.yahoo.com/etfs/'}},
   us_get_etf_sector_weights:    {label:'Yahoo·ETF行业',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}/holdings`:'https://finance.yahoo.com/etfs/'}},
   us_news_get_market_news:      {label:'Yahoo·美股新闻',fn:()=>'https://finance.yahoo.com/topic/stock-market-news/'},
   us_news_get_ticker_news:      {label:'Yahoo·个股新闻',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}/news`:'https://finance.yahoo.com/topic/stock-market-news/'}},
   us_news_get_etf_news:         {label:'Yahoo·ETF新闻',fn:()=>'https://finance.yahoo.com/etfs/'},
+  us_sentiment_get_ticker_sentiment_report: {label:'Yahoo·舆情新闻',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}/news`:'https://finance.yahoo.com/topic/stock-market-news/'}},
+  us_sentiment_analyze_text_sentiment: {label:'本地VADER打分',fn:()=>null},
+  us_filing_search_filings:     {label:'SEC·EDGAR',fn:()=>'https://www.sec.gov/edgar/searchedgar/companysearch'},
+  us_filing_resolve_cik:        {label:'SEC·EDGAR',fn:()=>'https://www.sec.gov/edgar/searchedgar/companysearch'},
+  us_filing_download_filing:    {label:'SEC·EDGAR',fn:()=>'https://www.sec.gov/edgar/searchedgar/companysearch'},
+  us_filing_extract_filing_text:{label:'SEC·EDGAR',fn:()=>'https://www.sec.gov/edgar/searchedgar/companysearch'},
 };
 
 function _sourceLink(toolName, callContent) {
@@ -660,12 +666,16 @@ function _sourceLink(toolName, callContent) {
 function _resolveToolSource(toolName, callContent) {
   const r = SOURCE_RULES[toolName];
   if (r) return { label: r.label, url: r.fn(callContent || '') };
-  // 未登记的美股工具：东财列表兜底（国内常见 fallback）
-  if (/^us_(get_|news_|filing_|sentiment_)/i.test(toolName || '')) {
-    return {
-      label: '东方财富·美股行情',
-      url: 'https://quote.eastmoney.com/center/gridlist.html#us_stocks',
-    };
+  const name = String(toolName || '');
+  // 未登记工具按前缀推断真实主源，禁止一律标东财
+  if (/^us_sentiment_/i.test(name) || /^us_news_/i.test(name)) {
+    return { label: 'Yahoo·美股新闻', url: 'https://finance.yahoo.com/topic/stock-market-news/' };
+  }
+  if (/^us_filing_/i.test(name)) {
+    return { label: 'SEC·EDGAR', url: 'https://www.sec.gov/edgar/searchedgar/companysearch' };
+  }
+  if (/^us_get_/i.test(name)) {
+    return { label: '美股行情·Yahoo/东财', url: 'https://finance.yahoo.com/markets/stocks/' };
   }
   return null;
 }
@@ -683,7 +693,7 @@ function _ensureSourceFooter(contentEl, text, usedSources, market) {
   }
   const m = String(market || '').toUpperCase();
   if (seen.size === 0 && (m === 'US' || m === 'MIXED')) {
-    seen.set('东方财富·美股行情', 'https://quote.eastmoney.com/center/gridlist.html#us_stocks');
+    seen.set('Yahoo Finance', 'https://finance.yahoo.com/');
   }
   if (seen.size === 0) return;
 

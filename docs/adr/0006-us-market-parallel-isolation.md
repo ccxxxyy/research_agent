@@ -73,7 +73,7 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 ### 7. P3 行为（已落地）
 
 - `us_news_server`：Yahoo Search HTTP 优先，失败再 yfinance；可选 8-K 标题；暴露 `us_news_*`；
-- `us_sentiment_server`：同上拉新闻 + **VADER + 金融词表**打分（`en_vader_finlex_v1`）；暴露 `us_sentiment_*`；
+- `us_sentiment_server`：同上拉新闻 + **VADER + 金融词表**打分（`en_vader_finlex_v2`，标题/摘要/必要时正文前段）；暴露 `us_sentiment_*`；
 - **禁止**用 A 股 `news_*` / `sentiment_*`（SnowNLP）处理美股新闻舆情。
 
 ### 8. P4-语义缓存 US 域（已落地）
@@ -123,7 +123,7 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 **负面 / 中性**
 
 - 跨市场 MIXED 深度编排已落地（P5：``[MixedOrchestration]`` 分侧子任务）；
-- 英文舆情已为 VADER + 金融词表（`en_vader_finlex_v1`）；FinBERT 等仍为可选；
+- 英文舆情已为 VADER + 金融词表（`en_vader_finlex_v2`，含摘要/正文前段）；FinBERT 等仍为可选；
 - 日线历史 / ETF holdings 仍依赖 yfinance，Yahoo 全挂时可能空。
 
 ## 后续（一期范围外 / 可选）

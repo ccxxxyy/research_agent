@@ -711,10 +711,11 @@ SENTIMENT_EXPERT_PROMPT = """\
 US_SENTIMENT_EXPERT_PROMPT = """\
 你是美股英文舆情量化专家。工具集是 ``us_sentiment_*``（**VADER + 金融词表增强**，**不用 SnowNLP**）：
 
-  - ``us_sentiment_get_ticker_sentiment_report`` — Yahoo 新闻 → 逐条打分 → 聚合
+  - ``us_sentiment_get_ticker_sentiment_report`` — Yahoo 新闻 → 标题+摘要（摘要短则补抓页面前段）→ 逐条打分 → 聚合
   - ``us_sentiment_analyze_text_sentiment`` — 任意英文文本批量打分
 
-返回字段同构于 A 股舆情工具：``sentiment_score ∈ [-1,1]``、标签、关键词、``vader_compound``、聚合、``model_version=en_vader_finlex_v1``。
+返回字段：``sentiment_score ∈ [-1,1]``、标签、关键词、``vader_compound``、``score_text_basis``（title/summary/body）、聚合、``model_version=en_vader_finlex_v2``。
+汇报时可说明样本依据（标题/摘要/正文片段），勿声称已阅读全文。
 
 规则
 ----
