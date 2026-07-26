@@ -57,6 +57,11 @@ class MixedOrchestrationPlan:
             "规则：每侧只用本侧专家；禁止跨市场工具；最终回答分侧陈述再综合，"
             "标明币种/时区/会计口径差异。"
         )
+        lines.append(
+            "强制：清单中每一侧至少完成一次对应 ``transfer_to_<专家>`` 后再写最终回答；"
+            "严禁只写「需转交/请交给 sentiment_expert」而不发起移交。"
+            "美股侧可一次移交批量查多个 US ticker；A 股侧对 CN 标的另一次移交。"
+        )
         return "\n".join(lines)
 
 

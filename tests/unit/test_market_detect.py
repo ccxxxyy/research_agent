@@ -64,6 +64,28 @@ def test_detect_mixed() -> None:
     assert r.market == Market.MIXED
 
 
+def test_detect_mixed_semiconductor_sentiment_aliases() -> None:
+    q = "分析台积电、超威半导体、拉姆研究、中际旭创舆情"
+    r = detect_market_from_query(q)
+    assert r.market == Market.MIXED
+    tickers = {s.ticker for s in r.symbols}
+    assert {"TSM", "AMD", "LRCX", "300308"} <= tickers
+    plan = build_mixed_orchestration_plan(r, q)
+    assert plan is not None
+    assert any(t.intent == "sentiment" for t in plan.subtasks)
+    assert "transfer_to_" in plan.format_for_prompt()
+    sides = {t.side for t in plan.subtasks}
+    assert Market.CN_A in sides and Market.US in sides
+
+
+def test_detect_mixed_google_nvidia_cambricon() -> None:
+    q = "分析谷歌，英伟达，寒武纪，澜起科技的舆情"
+    r = detect_market_from_query(q)
+    assert r.market == Market.MIXED
+    tickers = {s.ticker for s in r.symbols}
+    assert {"GOOGL", "NVDA", "688256", "688008"} <= tickers
+
+
 def test_detect_unknown_without_signal() -> None:
     r = detect_market_from_query("今天天气怎么样")
     assert r.market == Market.UNKNOWN
@@ -150,6 +172,15 @@ def test_format_preamble_contains_routing_constraint() -> None:
     assert "MarketResolution" in text
     assert "禁止" in text
     assert "US" in text
+    assert "RoutingAutonomy" in text
+    assert "不是白名单" in text
+
+
+def test_format_preamble_unknown_still_allows_soft_orchestration() -> None:
+    r = detect_market_from_query("今天天气怎么样")
+    text = format_market_preamble(r, query="今天天气怎么样")
+    assert "RoutingAutonomy" in text
+    assert "SoftOrchestration" in text
 
 
 def test_parse_market_override_accepts_mixed() -> None:
