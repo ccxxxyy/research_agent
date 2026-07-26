@@ -53,6 +53,7 @@ dependencies = [
     "requests>=2.33.1",
     "urllib3>=2.6.3",
     "yfinance>=1.5.1",
+    "vadersentiment>=3.3.2",
 ]
 
 [project.optional-dependencies]

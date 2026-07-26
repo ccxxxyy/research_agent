@@ -43,7 +43,7 @@ Agent 通过``langchain_mcp_adapters.client.MultiServerMCPClient`` 发现并调�
     接入 ``us_news_expert``。
 
 ``us_sentiment_server``
-    美股英文舆情量化（金融关键词词典，不用 SnowNLP）。
+    美股英文舆情量化（VADER + 金融词表增强，不用 SnowNLP）。
     工具：``analyze_text_sentiment``、``get_ticker_sentiment_report``（前缀 ``us_sentiment_``）。
     接入 ``us_sentiment_expert``。
 

@@ -73,7 +73,7 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 ### 7. P3 行为（已落地）
 
 - `us_news_server`：Yahoo Search HTTP 优先，失败再 yfinance；可选 8-K 标题；暴露 `us_news_*`；
-- `us_sentiment_server`：同上拉新闻 + 英文金融关键词词典打分；暴露 `us_sentiment_*`；
+- `us_sentiment_server`：同上拉新闻 + **VADER + 金融词表**打分（`en_vader_finlex_v1`）；暴露 `us_sentiment_*`；
 - **禁止**用 A 股 `news_*` / `sentiment_*`（SnowNLP）处理美股新闻舆情。
 
 ### 8. P4-语义缓存 US 域（已落地）
@@ -123,26 +123,14 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 **负面 / 中性**
 
 - 跨市场 MIXED 深度编排已落地（P5：``[MixedOrchestration]`` 分侧子任务）；
-- 英文舆情仍为关键词词典 PoC（可换 VADER / 专用模型）；
+- 英文舆情已为 VADER + 金融词表（`en_vader_finlex_v1`）；FinBERT 等仍为可选；
 - 日线历史 / ETF holdings 仍依赖 yfinance，Yahoo 全挂时可能空。
 
 ## 后续（一期范围外 / 可选）
 
-一期 P0～P5 **已全部完成**。
-- **P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` + 接入 supervisor roster
-- **P2（已完成）**：EDGAR `us_filing_server` + `us_filing_expert`
-- **P3（已完成）**：`us_news` / `us_sentiment`
-- **P4**（已完成）：
-  - ETF 深化
-  - 语义缓存 US 域
-  - Eval（美股路由 / 隔离评估）
-  - UI 市场徽章
-- **P5（已完成）**：跨市场 MIXED 深度编排（`[MixedOrchestration]` 分侧子任务 + 评估集）
-
-
-可选增强见 [数据来源说明 §8](../data-sources.md)：
+一期 P0～P5 **已全部完成**。可选增强见 [数据来源说明 §8](../data-sources.md)：
 
 - Finnhub / Polygon 等多供应商行情（真·多源）
 - 美股共同基金 / 期权（明确不在一期）
-- 英文舆情模型升级（VADER / 专用模型）
+- 英文舆情再升级 FinBERT / 专用模型（当前 VADER+finlex 已够用）
 - 通用联网搜索（非核心；不能替代行情 API）

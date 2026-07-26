@@ -176,7 +176,7 @@ async def load_us_news_server_tools() -> list[BaseTool]:
 async def load_us_sentiment_server_tools() -> list[BaseTool]:
     """通过 stdio 启动 ``us_sentiment_server`` 并返回其工具列表。
 
-    暴露美股英文舆情工具，前缀 ``us_sentiment_``：
+    暴露美股英文舆情工具（VADER + 金融词表），前缀 ``us_sentiment_``：
 
     - ``us_sentiment_analyze_text_sentiment``
     - ``us_sentiment_get_ticker_sentiment_report``
