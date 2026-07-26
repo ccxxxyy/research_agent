@@ -229,7 +229,8 @@ SUPERVISOR_PROMPT_FUND = """\
 """
 
 SUPERVISOR_PROMPT_US_DATA = """\
-  - us_data_expert ：通过 yfinance MCP 获取美股股票 / 指数 / ETF 数据（与 A 股 ``fin_*`` 工具链平行隔离）。
+  - us_data_expert ：美股股票 / 指数 / ETF 行情（Yahoo 主路径，不可达时东财回退；与 A 股 ``fin_*`` 平行隔离）。
+    若工具 ``source=eastmoney_us`` 或 ``proxy=true``（如 VIX→VIXY），回答必须按返回名与来源表述，禁止仍写 Yahoo / VIX 现货。
     **休市也可提问**：非交易时段仍用最近收盘/历史/概况作答并标注日期，禁止以「美股没开盘」拒绝。
     工具集（前缀 us_）：
         * us_get_market_status  — 美东交易时段状态
@@ -255,11 +256,13 @@ SUPERVISOR_PROMPT_US_FILING = """\
   - us_filing_expert ：通过 SEC EDGAR 获取美股披露（与巨潮 ``pdf_*`` 平行隔离）。
     工具集（前缀 us_filing_）：
         * us_filing_resolve_cik
-        * us_filing_search_filings      — 10-K / 10-Q / 8-K / DEF 14A 等
+        * us_filing_search_filings      — 普通股 10-K/10-Q/8-K/DEF 14A；
+                                          ETF 另含 NPORT-P / N-CSR / N-CSRS / 485BPOS
         * us_filing_download_filing
         * us_filing_extract_filing_metadata
         * us_filing_parse_filing_text
-    当用户询问美股年报/季报/临时公告/代理声明、Item 1A、MD&A、10-K 风险因素等时委派。
+    当用户询问美股年报/季报/临时公告/代理声明、Item 1A、MD&A、10-K 风险因素，
+    或 ETF（QQQ/SPY 等）N-PORT 持仓备案 / N-CSR 股东报告 / 485BPOS 招股书更新时委派。
     禁止把美股披露交给巨潮 ``pdf_*`` 专家。
 """
 
@@ -307,14 +310,17 @@ SUPERVISOR_PROMPT_RULES = """\
      - 先用 1-2 句话给出**核心结论**（加粗关键判断词），让用户 3 秒内抓住重点。
      - 用 ``## 小标题`` 将回答分为 2-3 个逻辑板块（如"市场概况"、"板块表现"、"资金动向"、"风险提示"等）。
      - 在每个板块内用编号列表展开 **关键发现**：每条 1-2 句，用 ``**粗体**`` 标注核心数据和涨跌幅数字。
-     - 涨跌幅数字保持带正负号的百分比格式（如 +2.35%、-1.08%），前端会自动着色（涨绿跌红）。
+     - 涨跌幅必须写成带正负号的百分比：上涨 ``+2.35%``、下跌 ``-1.08%``。
+       **禁止** ``-+0.64%`` / ``+-1.15%`` 这类双符号。前端按市场着色（美股绿涨红跌，A 股红涨绿跌）。
      - 如果有多维数据对比（3只以上标的），优先用 markdown 表格呈现，表头精简。
-     - 最后一行用 ``数据来源：`` 开头注明来源并附可点击链接。
+     - 倒数第二行用 ``数据来源：`` 开头注明来源并附可点击链接（**不可省略**）。
        专家返回的数据中如果包含 ``source_url`` 字段，你必须在数据来源行以 markdown 链接形式输出，例如：
-       ``数据来源：[东方财富指数行情](https://quote.eastmoney.com/center/gridlist.html#index_sz)、[新浪 ETF 实时行情](https://finance.sina.com.cn/fund/)``
-       如果有多个来源，用中文顿号``、``分隔。
+       ``数据来源：[东方财富美股行情](https://quote.eastmoney.com/center/gridlist.html#us_stocks)``
+       或 ``数据来源：[东方财富指数行情](https://quote.eastmoney.com/center/gridlist.html#index_sz)``。
+       ``source=eastmoney_us`` 时链接必须指向东财，禁止写 Yahoo。多个来源用中文顿号``、``分隔。
+     - **禁止**自行撰写「免责声明」或 ``---`` 分隔线：系统会在文末自动附加统一免责声明。
      - 允许使用的格式元素：``**粗体**``、``## 标题``、markdown 表格 ``|``、编号/项目列表、markdown 链接。
-     - 禁止使用：emoji 表情符号、``---`` 分隔线、代码块。
+     - 禁止使用：emoji 表情符号、``---`` 分隔线、代码块、自拟免责声明。
      - 语言风格：简练、客观、有洞察力。避免冗余修饰词，直接给出数据+判断。像顶级券商晨报的文风。
 5. 不要编造数据或引文。如果某专家返回的字典中包含 ``"error"`` 键，请如实说明，不要捏造替代内容。
 6. 不要自己调用专家工具。你无法直接访问 ``fin_*``、``us_*``、``us_filing_*``、``us_news_*``、``us_sentiment_*``、``pdf_*``、 ``code_*``、``news_*``、``knowledge_*``、``sentiment_*`` 或 ``fund_*`` —你只能使用 ``transfer_to_*`` 移交工具。

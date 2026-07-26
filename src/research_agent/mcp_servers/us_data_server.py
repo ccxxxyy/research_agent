@@ -395,8 +395,145 @@ def _quote_via_yahoo_chart(symbol: str) -> dict[str, Any] | None:
         return None
 
 
+# 东财美股/指数 secid：Yahoo 在国内常 403/限流时的稳定回退。
+# 100=全球指数；105=NASDAQ；106=NYSE；107=AMEX。
+# 注意：100.NDX=纳斯达克综合，100.NDX100=纳斯达克100，二者不可混用。
+_EM_US_FIXED_SECIDS: dict[str, str] = {
+    "^GSPC": "100.SPX",
+    "^DJI": "100.DJIA",
+    "^IXIC": "100.NDX",
+    "^NDX": "100.NDX100",
+    "^RUT": "107.IWM",  # 东财无罗素2000指数，用 IWM ETF 代理
+    "^VIX": "107.VIXY",  # 东财无 VIX 现货，用 VIXY ETF 代理
+}
+# 代理标的展示名 / 实际成交代码（避免把 ETF 价标成指数名）
+_EM_US_PROXY_LABELS: dict[str, str] = {
+    "^RUT": "罗素2000ETF (IWM)",
+    "^VIX": "VIX短期期货ETF (VIXY)",
+}
+_EM_US_PROXY_INSTRUMENTS: dict[str, str] = {
+    "^RUT": "IWM",
+    "^VIX": "VIXY",
+}
+_EM_US_SECID_CACHE: dict[str, str] = dict(_EM_US_FIXED_SECIDS)
+
+
+def _em_us_ulist(secids: list[str]) -> list[dict[str, Any]]:
+    """东财 ulist 批量行情；``secids`` 如 ``105.AAPL,107.SPY``。"""
+    from urllib.parse import urlencode
+
+    if not secids:
+        return []
+    params = {
+        "fltt": "2",
+        "secids": ",".join(secids),
+        "fields": "f12,f14,f2,f3,f4,f18",
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+    }
+    hosts = (
+        "https://push2delay.eastmoney.com/api/qt/ulist.np/get",
+        "https://push2.eastmoney.com/api/qt/ulist.np/get",
+        "https://88.push2.eastmoney.com/api/qt/ulist.np/get",
+    )
+    try:
+        from curl_cffi import requests as curl_requests
+
+        qs = urlencode(params)
+        for base in hosts:
+            try:
+                resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=8)
+                if resp.status_code != 200:
+                    continue
+                diff = ((resp.json().get("data") or {}).get("diff")) or []
+                if diff:
+                    return diff
+            except Exception:  # noqa: BLE001
+                continue
+    except ImportError:
+        pass
+    try:
+        import requests
+
+        sess = requests.Session()
+        sess.trust_env = False
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://quote.eastmoney.com/",
+            }
+            for base in hosts:
+                try:
+                    r = sess.get(base, params=params, timeout=8, headers=headers)
+                    diff = ((r.json().get("data") or {}).get("diff")) or []
+                    if diff:
+                        return diff
+                except Exception:  # noqa: BLE001
+                    continue
+        finally:
+            sess.close()
+    except Exception:  # noqa: BLE001
+        return []
+    return []
+
+
+def _resolve_eastmoney_us_secid(symbol: str) -> str | None:
+    """解析东财美股 secid；命中后写入进程缓存。"""
+    ticker = _normalize_ticker(symbol)
+    if ticker in _EM_US_SECID_CACHE:
+        return _EM_US_SECID_CACHE[ticker]
+    bare = ticker.lstrip("^")
+    if not bare or not bare.replace(".", "").isalnum():
+        return None
+    # 常见 ETF 在 AMEX(107)；个股多在 NASDAQ(105)/NYSE(106)
+    for mkt in ("105", "107", "106"):
+        secid = f"{mkt}.{bare}"
+        diff = _em_us_ulist([secid])
+        if not diff:
+            continue
+        price = _num_or_none(diff[0].get("f2"))
+        if price is None:
+            continue
+        _EM_US_SECID_CACHE[ticker] = secid
+        return secid
+    return None
+
+
+def _quote_via_eastmoney_us(symbol: str) -> dict[str, Any] | None:
+    """东财美股/指数报价（Yahoo 403 或限流时的国内可达回退）。"""
+    ticker = _normalize_ticker(symbol)
+    secid = _resolve_eastmoney_us_secid(ticker)
+    if not secid:
+        return None
+    diff = _em_us_ulist([secid])
+    if not diff:
+        return None
+    row = diff[0]
+    price = _num_or_none(row.get("f2"))
+    if price is None:
+        return None
+    prev = _num_or_none(row.get("f18"))
+    change = _num_or_none(row.get("f4"))
+    change_pct = _num_or_none(row.get("f3"))
+    if change is None and price is not None and prev is not None:
+        change = float(price) - float(prev)
+    if change_pct is None and price is not None and prev not in (None, 0):
+        change_pct = round((float(price) - float(prev)) / float(prev) * 100, 4)
+    return {
+        "symbol": ticker,
+        "price": price,
+        "previous_close": prev,
+        "change": round(float(change), 4) if change is not None else None,
+        "change_percent": round(float(change_pct), 4) if change_pct is not None else None,
+        "name_cn": str(row.get("f14") or "").strip() or None,
+        "source": "eastmoney_us",
+    }
+
+
 def _quote_from_ticker(symbol: str) -> dict[str, Any]:
-    """报价：优先 Yahoo chart HTTP（休市可用），失败再回退 yfinance。"""
+    """报价：Yahoo Chart → 东财美股 → yfinance。
+
+    国内网络下 Yahoo 常返回 403 / ``Too Many Requests``；东财 ulist 作稳定回退。
+    """
     ticker = _normalize_ticker(symbol)
     display = {
         "^GSPC": "标普500 (S&P 500)",
@@ -414,28 +551,79 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
         "closed": "非交易时段：一般为最近一笔常规收盘价",
     }.get(session.get("status") or "", "最近可得报价")
 
-    chart = _quote_via_yahoo_chart(ticker)
-    if chart and chart.get("price") is not None:
-        return {
+    def _pack(
+        q: dict[str, Any],
+        *,
+        source_url: str,
+        name: str | None = None,
+        note: str | None = None,
+        proxy: bool = False,
+        proxy_of: str | None = None,
+        quoted_instrument: str | None = None,
+    ) -> dict[str, Any]:
+        out: dict[str, Any] = {
             "symbol": ticker,
-            "name": display.get(ticker, ticker),
-            "price": _json_safe(chart.get("price")),
-            "previous_close": _json_safe(chart.get("previous_close")),
-            "change_percent": chart.get("change_percent"),
+            "name": name or display.get(ticker, ticker),
+            "price": _json_safe(q.get("price")),
+            "previous_close": _json_safe(q.get("previous_close")),
+            "change": _json_safe(q.get("change")),
+            "change_percent": q.get("change_percent"),
             "currency": "USD",
             "exchange": "",
             "quote_type": "INDEX" if ticker.startswith("^") else "",
             "market_cap": None,
             "market_status": session.get("status"),
             "session": session.get("session"),
-            "as_of_note": as_of_note,
+            "as_of_note": note or as_of_note,
             "local_display": session.get("local_display"),
             "available_off_hours": True,
-            "source": chart.get("source") or "yahoo_chart",
-            "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
+            "source": q.get("source") or "unknown",
+            "source_url": source_url,
+            "proxy": proxy,
         }
+        if proxy:
+            out["proxy_of"] = proxy_of or ticker
+            out["quoted_instrument"] = quoted_instrument or ""
+            out["warning"] = (
+                f"非 {ticker} 指数现货：东财无该指数码，当前价为代理 "
+                f"{quoted_instrument or 'ETF'} 行情，不可写作「{display.get(ticker, ticker)}」收盘价。"
+            )
+        return out
 
-    # 回退 yfinance（可能慢/限流）
+    chart = _quote_via_yahoo_chart(ticker)
+    if chart and chart.get("price") is not None:
+        return _pack(
+            chart,
+            source_url=f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
+        )
+
+    em = _quote_via_eastmoney_us(ticker)
+    if em and em.get("price") is not None:
+        proxy_name = _EM_US_PROXY_LABELS.get(ticker)
+        proxy_inst = _EM_US_PROXY_INSTRUMENTS.get(ticker)
+        packed = _pack(
+            em,
+            source_url=(
+                f"https://quote.eastmoney.com/us/{proxy_inst}.html"
+                if proxy_inst
+                else f"https://quote.eastmoney.com/us/{ticker.lstrip('^')}.html"
+            ),
+            name=proxy_name,
+            note=(
+                f"{as_of_note}；东财无 {ticker} 指数现货，已用 {proxy_inst} ETF 代理；"
+                f"**禁止**称为 {display.get(ticker, ticker)} 收盘价"
+                if proxy_name
+                else as_of_note
+            ),
+            proxy=bool(proxy_name),
+            proxy_of=ticker if proxy_name else None,
+            quoted_instrument=proxy_inst,
+        )
+        if not ticker.startswith("^") and em.get("name_cn"):
+            packed["name_em"] = em["name_cn"]
+        return packed
+
+    # 回退 yfinance（可能慢/限流；国内常与 Chart 一同失败）
     import yfinance as yf
 
     t = yf.Ticker(ticker)
@@ -477,30 +665,24 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
             pass
 
     change_pct = None
+    change = None
     if price is not None and prev not in (None, 0):
         try:
-            change_pct = round((float(price) - float(prev)) / float(prev) * 100, 4)
+            change = float(price) - float(prev)
+            change_pct = round(change / float(prev) * 100, 4)
         except (TypeError, ValueError, ZeroDivisionError):
             change_pct = None
 
-    return {
-        "symbol": ticker,
-        "name": display.get(ticker, ticker),
-        "price": _json_safe(price),
-        "previous_close": _json_safe(prev),
-        "change_percent": change_pct,
-        "currency": "USD",
-        "exchange": "",
-        "quote_type": "INDEX" if ticker.startswith("^") else "",
-        "market_cap": None,
-        "market_status": session.get("status"),
-        "session": session.get("session"),
-        "as_of_note": as_of_note,
-        "local_display": session.get("local_display"),
-        "available_off_hours": True,
-        "source": "yfinance",
-        "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
-    }
+    return _pack(
+        {
+            "price": price,
+            "previous_close": prev,
+            "change": round(change, 4) if change is not None else None,
+            "change_percent": change_pct,
+            "source": "yfinance",
+        },
+        source_url=f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
+    )
 
 
 # ---------------------------------------------------------------------
@@ -718,37 +900,62 @@ async def get_basic_info(symbol: str) -> dict:
 async def get_index_quotes() -> dict:
     """返回主要美股指数最新报价（标普、道指、纳指、纳斯达克100、罗素2000、VIX）。
 
-    优先 Yahoo chart HTTP（休市可用）；单票失败不影响其余。
+    主路径 Yahoo Chart；失败回退东财。若某项 ``proxy=true``（如 VIX→VIXY），展示名与价均为代理 ETF，**不是**指数现货。
     """
 
     def _call() -> dict[str, Any]:
         indices: list[dict[str, Any]] = []
         sources: set[str] = set()
+        proxies: list[str] = []
         for name, sym in _MAJOR_INDICES.items():
             try:
                 q = _quote_from_ticker(sym)
-                sources.add(str(q.get("source") or "unknown"))
+                src = str(q.get("source") or "unknown")
+                sources.add(src)
+                is_proxy = bool(q.get("proxy"))
+                if is_proxy:
+                    proxies.append(sym)
                 indices.append(
                     {
-                        "name": name,
+                        # 代理时必须用工具返回名（VIXY/IWM），禁止沿用「VIX恐慌/罗素2000」
+                        "name": q.get("name") or name,
                         "symbol": sym,
                         "price": q.get("price"),
                         "previous_close": q.get("previous_close"),
                         "change_percent": q.get("change_percent"),
                         "as_of_note": q.get("as_of_note"),
                         "market_status": q.get("market_status"),
+                        "source": src,
+                        "proxy": is_proxy,
+                        "proxy_of": q.get("proxy_of"),
+                        "quoted_instrument": q.get("quoted_instrument"),
+                        "warning": q.get("warning"),
                     }
                 )
             except Exception as exc:  # noqa: BLE001
                 indices.append({"name": name, "symbol": sym, "error": str(exc)})
         ok = sum(1 for x in indices if x.get("price") is not None)
+        src_joined = "+".join(sorted(sources)) or "unknown"
+        if sources == {"eastmoney_us"}:
+            source_url = "https://quote.eastmoney.com/center/gridlist.html#us_stocks"
+        elif "eastmoney_us" in sources:
+            # 混合来源时只给一个可点击主链（东财美股列表）；Yahoo 另可由个股 source_url 给出
+            source_url = "https://quote.eastmoney.com/center/gridlist.html#us_stocks"
+        else:
+            source_url = "https://finance.yahoo.com/markets/stocks/"
         return {
             "indices": indices,
             "count": len(indices),
             "ok_count": ok,
             "market_status": _session_status(),
-            "source": "+".join(sorted(sources)) or "yahoo_chart",
-            "source_url": "https://finance.yahoo.com/markets/stocks/",
+            "source": src_joined,
+            "source_url": source_url,
+            "proxy_symbols": proxies,
+            "disclaimer": (
+                "含代理 ETF（非指数现货），回答时必须按 name/warning 表述，禁止写成 VIX/罗素指数收盘价。"
+                if proxies
+                else None
+            ),
         }
 
     # chart HTTP 很快；给足余量但远低于旧的 90s yfinance 并发

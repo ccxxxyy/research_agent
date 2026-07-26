@@ -419,13 +419,16 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 ## 七、架构决策记录（ADR）
 
-载入项目的非显然决策都写成了 ADR，存放于 [`docs/adr/`](docs/adr/)。
+载入项目的非显然决策都写成了 ADR，存放于 [`docs/adr/`](docs/adr/)。完整索引见 [`docs/adr/README.md`](docs/adr/README.md)。
 
 | # | 决定 | 何时该读 |
 |---|---|---|
 | [0001](docs/adr/0001-faiss-over-chroma.md) | 向量库从 ChromaDB 迁到 FAISS | "为什么不用 Chroma" |
 | [0002](docs/adr/0002-knowledge-server-inprocess.md) | knowledge_expert 走 in-process 不走 MCP-stdio | "为什么 6 个 server 里偏偏这一个不走子进程" |
 | [0003](docs/adr/0003-reflection-loop.md) | Reflection 作为子图挂 supervisor 后面 | "为什么不把反思放 supervisor prompt 里" |
+| [0004](docs/adr/0004-guardrails-security-layers.md) | 多层 Guardrails | "输入/输出怎么防注入与泄密" |
+| [0005](docs/adr/0005-pgvector-migration-path.md) | pgvector 迁移路径 | "何时从 FAISS 迁到 Postgres ANN" |
+| [0006](docs/adr/0006-us-market-parallel-isolation.md) | A 股 / 美股平行隔离 | "为什么不在 fin_* 上加 market=US" |
 
 ---
 
@@ -659,8 +662,9 @@ benchmark_results/        # 性能基准测试报告输出目录
 docs/
 ├── architecture.md       # 系统架构设计文档
 ├── failure-modes.md      # 故障模式分析
-└── adr/                  # 架构决策记录（4 篇）
-tests/                    # unit（346 passing）+ integration
+├── data-sources.md       # A/美股数据源与主备（Yahoo / 东财 / EDGAR）
+└── adr/                  # 架构决策记录（0001～0006）
+tests/                    # unit + integration
 ```
 
 ---
@@ -698,22 +702,30 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 |---|---|
 | [系统架构设计](docs/architecture.md) | 全景图、核心设计决策矩阵、数据流详解、可靠性设计、安全层、可扩展性 |
 | [故障模式分析](docs/failure-modes.md) | 12+ 种故障模式矩阵、三级降级策略、可观测性信号、灾难恢复 |
-| [数据来源说明](docs/data-sources.md) | A/美股数据源、Yahoo 主备、与 Finnhub 等多源及通用搜索的区别 |
+| [数据来源说明](docs/data-sources.md) | A/美股数据源、Yahoo→东财→yfinance 主备、与 Finnhub 等多源及通用搜索的区别 |
 | [ADR-0001: FAISS > Chroma](docs/adr/0001-faiss-over-chroma.md) | 向量存储选型 |
 | [ADR-0002: Knowledge in-process](docs/adr/0002-knowledge-server-inprocess.md) | MCP stdio 死锁规避 |
 | [ADR-0003: Reflection Loop](docs/adr/0003-reflection-loop.md) | 反思循环设计 |
 | [ADR-0004: Guardrails](docs/adr/0004-guardrails-security-layers.md) | 多层安全防御体系 |
+| [ADR-0005: pgvector](docs/adr/0005-pgvector-migration-path.md) | Postgres ANN 迁移路径 |
+| [ADR-0006: 美股隔离](docs/adr/0006-us-market-parallel-isolation.md) | A/美股平行专家与市场判定 |
 
-## 十四、Roadmap（待做）
+## 十四、Roadmap
 
-- **美股 P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` 已挂载（股票/指数/ETF）— 见 [ADR-0006](docs/adr/0006-us-market-parallel-isolation.md)
-- **美股 P2（已完成）**：`us_filing_server`（EDGAR）+ `us_filing_expert`（10-K/10-Q/8-K/DEF 14A）
-- **美股 P3（已完成）**：`us_news_server` + `us_sentiment_server`（Yahoo 新闻 / 英文舆情）
-- **美股 P4-ETF（已完成）**：`us_get_etf_holdings` / `us_get_etf_sector_weights`（并入 `us_data_expert`）
-- **美股 P4-语义缓存（已完成）**：种子 `market=CN_A|US|SHARED` + 按解析市场过滤
-- **美股 P4-Eval（已完成）**：`us_market_routing` 样本 + `market_routing_accuracy` / `market_isolation`
-- **美股 P4-UI（已完成）**：研究页市场徽章 + 市场覆盖选择 + `us_*` 专家列表
-- **美股 P5（已完成）**：MIXED 分侧编排计划 `[MixedOrchestration]` + `mixed_market_routing` 评估集
-- 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权）
+### 美股一期（P0～P5，已完成）
+
+详见 [ADR-0006](docs/adr/0006-us-market-parallel-isolation.md) 与 [数据来源说明](docs/data-sources.md)。
+
+- **P1**：`us_data_server` + `us_data_expert`（股票/指数/ETF；报价 Chart→东财→yfinance）
+- **P2**：`us_filing_server` + `us_filing_expert`（普通股 10-K/10-Q/8-K/DEF 14A；ETF：NPORT-P/N-CSR/485BPOS）
+- **P3**：`us_news_server` + `us_sentiment_server`（Yahoo Search HTTP / 英文词典舆情）
+- **P4**：ETF 持仓工具、语义缓存 US 域、路由 Eval、UI 市场徽章
+- **P5**：MIXED `[MixedOrchestration]` + `mixed_market_routing` 评估集
+
+### 待做 / 可选
+
+- 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权；美股期权不在一期）
+- Finnhub / Polygon 等真·多源行情（可选；见 data-sources §5/§8）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）
+- 通用联网搜索（可选辅助，**不能**替代行情 API；当前未挂载）

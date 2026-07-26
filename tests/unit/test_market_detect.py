@@ -115,6 +115,35 @@ async def test_resolve_default_cn_a() -> None:
     assert r.source == "default"
 
 
+@pytest.mark.asyncio
+async def test_resolve_thread_sticky_beats_default() -> None:
+    r = await resolve_market("预测下周情况 不同情况发生的概率", sticky_market="US")
+    assert r.market == Market.US
+    assert r.source == "thread_sticky"
+
+
+@pytest.mark.asyncio
+async def test_resolve_query_beats_thread_sticky() -> None:
+    r = await resolve_market("贵州茅台今天怎么样", sticky_market="US")
+    assert r.market == Market.CN_A
+    assert r.source == "query_signal"
+
+
+@pytest.mark.asyncio
+async def test_resolve_thread_sticky_beats_preference() -> None:
+    store = InMemoryStore()
+    memory = MemoryManager(store)
+    await set_user_preferred_market(memory, "u1", Market.CN_A)
+    r = await resolve_market(
+        "每一种情况都仔细分析前因后果",
+        memory=memory,
+        user_id="u1",
+        sticky_market="US",
+    )
+    assert r.market == Market.US
+    assert r.source == "thread_sticky"
+
+
 def test_format_preamble_contains_routing_constraint() -> None:
     r = detect_market_from_query("AAPL")
     text = format_market_preamble(r)

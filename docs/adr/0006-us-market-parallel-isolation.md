@@ -5,9 +5,9 @@
 系统现有工具链（akshare、巨潮、东财、雪球、SnowNLP）全部面向 **A 股**。
 产品需要拓展美股，同时要求：
 
-1. PoC 接受 **yfinance**；
+1. 一期可接受 Yahoo 生态（yfinance + Chart/Search HTTP），并允许东财美股作报价兜底（非「真·多源」配置项）；
 2. 一期范围仅 **美股股票 + 指数 + ETF**（不含共同基金 / 期权）；
-3. 默认市场跟 **用户 memory 偏好**；用户提问时会说公司/基金名字，**按名字判断市场**；
+3. 默认市场：问句信号 → 会话粘性 → 用户 memory 偏好 → 产品默认 `CN_A`；用户常说公司/基金名字，**按名字判断市场**；
 4. **A 股与美股必须分开**，不能把 `market=` 参数硬塞进现有 `fin_*` / `news_*`。
 
 若在现有 `data_expert` 上增加 `market=US`，会导致：prompt 膨胀、工具幻觉、 交易日历/披露体系缠死、故障难归因。
@@ -29,14 +29,15 @@
 
 1. API 显式 `market` 覆盖（非 `auto`）
 2. 问句硬信号：6 位 A 股代码、知名中英文名、市场关键词、白名单内美股 ticker
-3. 用户偏好 key：`preferred_market` ∈ {`CN_A`,`US`}
-4. 产品默认：`CN_A`（当前已上线工具全集）
+3. 同会话粘性 `thread_market`（问句无信号时沿用上一轮；见请求字段 / `resolve_market(sticky_market=…)`）
+4. 用户偏好 key：`preferred_market` ∈ {`CN_A`,`US`}
+5. 产品默认：`CN_A`（当前已上线工具全集）
 
-### 3. 平行专家团队（后续阶段落地，本 ADR 锁定边界）
+### 3. 平行专家团队（P1～P5 已全部落地）
 
 ```
 CN_A: data / fund / report / news / sentiment / knowledge / coder
-US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment / knowledge / coder
+US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / knowledge / coder
 ```
 
 共享层仅限：supervisor 编排、HITL、reflection、RAG **引擎**、tool TTL / semantic cache **框架**、coder。
@@ -50,10 +51,12 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 
 ### 5. P1 行为（已落地）
 
-- `us_data_server`（yfinance）暴露 `us_*` 工具；
+- `us_data_server` 暴露 `us_*` 工具；
 - `us_data_expert` 挂入 research supervisor roster；
 - 判定为 US 时路由至美股行情专家，**禁止**用 A 股 `fin_*` / `news_*` 查美股。
-- **实现演进（非多供应商）**：报价优先 Yahoo Chart HTTP，失败再 yfinance；舆情新闻优先 Yahoo Search HTTP。详见 [数据来源说明](../data-sources.md)。
+- **报价主备（非多供应商配置项）**：Yahoo Chart HTTP → **东财美股 ulist** → yfinance；
+  东财无 VIX/罗素现货时用 VIXY/IWM 代理并改展示名（`proxy` / `warning`）。
+  详见 [数据来源说明](../data-sources.md)。
 
 ### 5b. P4-ETF 行为（已落地）
 
@@ -65,12 +68,12 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 
 - `us_filing_server`（SEC EDGAR）暴露 `us_filing_*` 工具；
 - `us_filing_expert` 挂入 research supervisor roster；
-- 美股 10-K / 10-Q / 8-K / DEF 14A 走 EDGAR，**禁止**用巨潮 `pdf_*` 查美股披露。
+- 美股披露走 EDGAR（普通股 10-K / 10-Q / 8-K / DEF 14A；ETF 另含 NPORT-P / N-CSR / N-CSRS / 485BPOS），**禁止**用巨潮 `pdf_*` 查美股披露。
 
 ### 7. P3 行为（已落地）
 
-- `us_news_server`（yfinance Yahoo 新闻 + 可选 8-K 标题）暴露 `us_news_*`；
-- `us_sentiment_server`（英文金融关键词词典）暴露 `us_sentiment_*`；
+- `us_news_server`：Yahoo Search HTTP 优先，失败再 yfinance；可选 8-K 标题；暴露 `us_news_*`；
+- `us_sentiment_server`：同上拉新闻 + 英文金融关键词词典打分；暴露 `us_sentiment_*`；
 - **禁止**用 A 股 `news_*` / `sentiment_*`（SnowNLP）处理美股新闻舆情。
 
 ### 8. P4-语义缓存 US 域（已落地）
@@ -113,22 +116,33 @@ US:   us_data / us_etf(可并入 us_data) / us_filing / us_news / us_sentiment /
 
 **正面**
 
-- 后续 P1+ 可按市场平行加 MCP，不改判定契约；
-- 评估集可按 `market` 维度标注误路由。
+- P1～P5 已按市场平行加 MCP，判定契约保持稳定；
+- 评估集可按 `market` 维度标注误路由；
+- 国内 Yahoo 不可达时，东财报价兜底保证看板与问答可用（需遵守 proxy 诚实表述）。
 
 **负面 / 中性**
 
 - 跨市场 MIXED 深度编排已落地（P5：``[MixedOrchestration]`` 分侧子任务）；
-- 英文舆情为关键词词典 PoC（可换 VADER / 专用模型）。
+- 英文舆情仍为关键词词典 PoC（可换 VADER / 专用模型）；
+- 日线历史 / ETF holdings 仍依赖 yfinance，Yahoo 全挂时可能空。
 
-## 后续
+## 后续（一期范围外 / 可选）
 
+一期 P0～P5 **已全部完成**。
 - **P1（已完成）**：`us_data_server`（yfinance）+ `us_data_expert` + 接入 supervisor roster
 - **P2（已完成）**：EDGAR `us_filing_server` + `us_filing_expert`
 - **P3（已完成）**：`us_news` / `us_sentiment`
-- **P4**（四块并行，完成一块勾一块）：
-  - ETF 深化 — **已完成**
-  - 语义缓存 US 域 — **已完成**
-  - Eval（美股路由 / 隔离评估）— **已完成**
-  - UI 市场徽章 — **已完成**
+- **P4**（已完成）：
+  - ETF 深化
+  - 语义缓存 US 域
+  - Eval（美股路由 / 隔离评估）
+  - UI 市场徽章
 - **P5（已完成）**：跨市场 MIXED 深度编排（`[MixedOrchestration]` 分侧子任务 + 评估集）
+
+
+可选增强见 [数据来源说明 §8](../data-sources.md)：
+
+- Finnhub / Polygon 等多供应商行情（真·多源）
+- 美股共同基金 / 期权（明确不在一期）
+- 英文舆情模型升级（VADER / 专用模型）
+- 通用联网搜索（非核心；不能替代行情 API）
