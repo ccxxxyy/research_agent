@@ -2,10 +2,12 @@
 
 **不使用 SnowNLP**（中文模型）。主路径为 **VADER** compound 分 + 金融关键词增强，可复现、无 GPU。
 
+打分文本优先 ``标题 + 摘要``；摘要过短且有 URL 时，再抓取页面 meta/正文前段（非全文）。
+
 工具
 ----
 1. ``analyze_text_sentiment`` — 任意英文文本批量打分
-2. ``get_ticker_sentiment_report`` — 拉取 Yahoo 新闻 → 逐条打分 → 聚合报告
+2. ``get_ticker_sentiment_report`` — 拉取 Yahoo 新闻 →（可选正文片段）→ 逐条打分 → 聚合报告
 
 返回结构与 A 股 sentiment 工具同构：``sentiment_score ∈ [-1,1]``、标签、关键词、聚合统计、模型版本。
 """
@@ -17,6 +19,7 @@ import hashlib
 import logging
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any
 
@@ -34,8 +37,13 @@ if not logger.handlers:
 
 mcp = FastMCP("UsSentimentServer")
 
-_MODEL_VERSION = "en_vader_finlex_v1"
+_MODEL_VERSION = "en_vader_finlex_v2"
 MAX_LIMIT = 60
+# 摘要短于此则尝试抓取页面片段，减轻「标题党」偏差
+_THIN_SUMMARY_CHARS = 80
+_BODY_SNIPPET_CHARS = 900
+_BODY_FETCH_TIMEOUT = 4.0
+_BODY_FETCH_WORKERS = 4
 
 _POSITIVE_THRESHOLD = 0.15
 _NEGATIVE_THRESHOLD = -0.15
@@ -350,7 +358,16 @@ def _normalize_news_item(raw: Any) -> dict[str, Any] | None:
     title = content.get("title") or raw.get("title") or ""
     if not title:
         return None
-    summary = content.get("summary") or content.get("description") or ""
+    summary = (
+        content.get("summary")
+        or content.get("description")
+        or content.get("content")
+        or raw.get("summary")
+        or raw.get("description")
+        or ""
+    )
+    if isinstance(summary, dict):
+        summary = summary.get("description") or summary.get("summary") or ""
     provider = ""
     prov = content.get("provider") or raw.get("provider")
     if isinstance(prov, dict):
@@ -376,11 +393,140 @@ def _normalize_news_item(raw: Any) -> dict[str, Any] | None:
             break
     return {
         "title": str(title),
-        "summary": str(summary),
+        "summary": str(summary).strip(),
         "publisher": provider,
         "published_at": str(pub),
         "url": link,
     }
+
+
+def _http_get_bytes(url: str, *, timeout: float = _BODY_FETCH_TIMEOUT) -> bytes | None:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+    }
+    try:
+        from curl_cffi import requests as curl_requests
+
+        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=timeout)
+        if resp.status_code == 200 and resp.content:
+            return bytes(resp.content)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import requests
+
+        sess = requests.Session()
+        sess.trust_env = False
+        try:
+            resp = sess.get(url, headers=headers, timeout=timeout)
+            if resp.status_code == 200 and resp.content:
+                return resp.content
+        finally:
+            sess.close()
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _extract_meta_description(html: str) -> str:
+    patterns = [
+        r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']description["\']',
+    ]
+    for pat in patterns:
+        m = re.search(pat, html, flags=re.IGNORECASE)
+        if m:
+            return re.sub(r"\s+", " ", m.group(1)).strip()
+    return ""
+
+
+def _html_to_text_snippet(html: str, *, max_chars: int = _BODY_SNIPPET_CHARS) -> str:
+    """粗提取正文前段：去 script/style/标签，不做完整 DOM 解析。"""
+    cleaned = re.sub(
+        r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>",
+        " ",
+        html,
+    )
+    cleaned = re.sub(r"(?is)<!--.*?-->", " ", cleaned)
+    cleaned = re.sub(r"(?is)<br\s*/?>", "\n", cleaned)
+    cleaned = re.sub(r"(?is)</p\s*>", "\n", cleaned)
+    cleaned = re.sub(r"(?is)<[^>]+>", " ", cleaned)
+    cleaned = re.sub(r"&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:max_chars]
+
+
+def _fetch_article_snippet(url: str) -> str:
+    """抓取新闻页 meta description 或正文前段；失败返回空串。"""
+    if not url or not url.startswith("http"):
+        return ""
+    raw = _http_get_bytes(url)
+    if not raw:
+        return ""
+    try:
+        html = raw.decode("utf-8", errors="ignore")
+    except Exception:  # noqa: BLE001
+        return ""
+    meta = _extract_meta_description(html)
+    if len(meta) >= 40:
+        return meta[:_BODY_SNIPPET_CHARS]
+    body = _html_to_text_snippet(html)
+    # 过滤过短/导航垃圾
+    if len(body) < 40:
+        return meta or ""
+    return body
+
+
+def _build_score_text(title: str, summary: str, body: str) -> tuple[str, str]:
+    """组装打分文本，并返回依据标签。"""
+    parts = [title.strip()] if title.strip() else []
+    basis = ["title"]
+    if summary and summary.strip():
+        parts.append(summary.strip())
+        basis.append("summary")
+    # body 与 summary 重复时不再叠一段
+    if body and body.strip():
+        b = body.strip()
+        if not summary or b[:80].lower() not in summary.lower():
+            parts.append(b)
+            basis.append("body")
+    text = ". ".join(parts)
+    return text, "+".join(basis) if basis else "title"
+
+
+def _enrich_thin_summaries(news_list: list[dict[str, Any]]) -> None:
+    """对摘要过短且带 URL 的条目并行抓取页面片段，写入 ``body_snippet``。"""
+    need: list[tuple[int, str]] = []
+    for i, news in enumerate(news_list):
+        summary = (news.get("summary") or "").strip()
+        url = (news.get("url") or "").strip()
+        if url and len(summary) < _THIN_SUMMARY_CHARS:
+            need.append((i, url))
+    if not need:
+        return
+
+    def _one(url: str) -> str:
+        try:
+            return _fetch_article_snippet(url)
+        except Exception:  # noqa: BLE001
+            return ""
+
+    with ThreadPoolExecutor(max_workers=_BODY_FETCH_WORKERS) as pool:
+        futures = {pool.submit(_one, url): idx for idx, url in need}
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            try:
+                snippet = fut.result()
+            except Exception:  # noqa: BLE001
+                snippet = ""
+            if snippet:
+                news_list[idx]["body_snippet"] = snippet
 
 
 def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]]:
@@ -421,7 +567,6 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
         title = raw.get("title") or ""
         if not title:
             continue
-        pub = ""
         provider = ""
         if isinstance(raw.get("publisher"), str):
             provider = raw["publisher"]
@@ -430,11 +575,22 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
             if isinstance(raw.get(key), str) and raw[key]:
                 link = raw[key]
                 break
+        summary = ""
+        for key in ("summary", "description", "body", "content"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip():
+                summary = val.strip()
+                break
+            if isinstance(val, dict):
+                inner = val.get("description") or val.get("summary") or ""
+                if isinstance(inner, str) and inner.strip():
+                    summary = inner.strip()
+                    break
         out.append(
             {
                 "title": title,
-                "summary": "",
-                "publisher": provider or pub,
+                "summary": summary,
+                "publisher": provider,
                 "published_at": str(raw.get("publishTime") or raw.get("providerPublishTime") or ""),
                 "url": link,
             }
@@ -472,23 +628,37 @@ def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], l
                 break
         source = "yfinance"
 
+    news_list = news_list[:limit]
+    # 摘要过短时补抓页面 meta/正文前段，缓解标题夸大
+    _enrich_thin_summaries(news_list)
+    body_hits = sum(1 for n in news_list if n.get("body_snippet"))
+    if body_hits:
+        logger.info(
+            "enriched %s/%s news items with article snippets for %s",
+            body_hits,
+            len(news_list),
+            ticker,
+        )
+
     items: list[dict[str, Any]] = []
     texts: list[str] = []
-    for news in news_list[:limit]:
-        combined = news["title"]
-        if news.get("summary"):
-            combined = f"{news['title']}. {news['summary']}"
+    for news in news_list:
+        summary = (news.get("summary") or "").strip()
+        body = (news.get("body_snippet") or "").strip()
+        combined, basis = _build_score_text(news["title"], summary, body)
         texts.append(combined)
         scored = _score_single(combined)
+        preview = summary or body
         scored.update(
             {
                 "title": news["title"],
-                "content_preview": (news.get("summary") or "")[:200],
+                "content_preview": preview[:240],
                 "publish_time": news.get("published_at") or "",
                 "source_site": news.get("publisher") or "",
                 "news_url": news.get("url") or "",
                 "text_fingerprint": _text_fingerprint(combined),
                 "fetch_source": source,
+                "score_text_basis": basis,
             }
         )
         items.append(scored)
