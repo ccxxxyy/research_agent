@@ -4,8 +4,9 @@
 ----------------
 1. 请求显式覆盖（API ``market`` 字段）
 2. 问句内硬信号（6 位 A 股代码 / 美股 ticker / 市场关键词 / 知名中英文名）
-3. 用户 memory 中的 ``preferred_market``
-4. 产品默认 ``CN_A``（与现有 A 股工具全集对齐；无信号时不默认美股）
+3. 同会话粘性（API ``thread_market`` / ``sticky_market``；跟进句无信号时沿用上一轮）
+4. 用户 memory 中的 ``preferred_market``
+5. 产品默认 ``CN_A``（与现有 A 股工具全集对齐；无信号时不默认美股）
 
 名字判断
 --------
@@ -439,8 +440,9 @@ async def resolve_market(
     memory: MemoryManager | None = None,
     user_id: str = "anonymous",
     override: Market | str | None = None,
+    sticky_market: Market | str | None = None,
 ) -> MarketResolution:
-    """完整市场解析：覆盖 → 问句 → 偏好 → 产品默认。"""
+    """完整市场解析：覆盖 → 问句 → 会话粘性 → 偏好 → 产品默认。"""
     if override is not None:
         ov = override if isinstance(override, Market) else parse_market_override(str(override))
         if ov is not None and ov in (Market.CN_A, Market.US, Market.MIXED):
@@ -472,6 +474,31 @@ async def resolve_market(
             reasons=detected.reasons,
             preferred_market=preferred,
             notes=detected.notes,
+        )
+
+    sticky: Market | None = None
+    if sticky_market is not None:
+        sticky = (
+            sticky_market
+            if isinstance(sticky_market, Market)
+            else parse_market_override(str(sticky_market))
+        )
+        if sticky not in (Market.CN_A, Market.US, Market.MIXED):
+            sticky = None
+
+    if sticky is not None:
+        return MarketResolution(
+            market=sticky,
+            source="thread_sticky",
+            confidence=0.55,
+            symbols=detected.symbols,
+            reasons=("fallback_thread_sticky",),
+            preferred_market=preferred,
+            notes=(
+                "问句无明确市场信号，沿用同会话上一轮市场。"
+                + (" 应继续使用美股专家（us_*）。" if sticky == Market.US else "")
+                + (" 跨市场子任务见 MixedOrchestration。" if sticky == Market.MIXED else "")
+            ),
         )
 
     if preferred is not None:

@@ -41,12 +41,19 @@ def test_document_url():
 
 
 def test_form_matches():
-    from research_agent.mcp_servers.us_filing_server import _form_matches
+    from research_agent.mcp_servers.us_filing_server import _expand_wanted_forms, _form_matches
 
     wanted = {"10-K", "10-Q"}
     assert _form_matches("10-K", wanted)
     assert _form_matches("10-K/A", wanted)
     assert not _form_matches("8-K", wanted)
+
+    etf_wanted = _expand_wanted_forms({"N-PORT", "N-CSR", "485BPOS"})
+    assert _form_matches("NPORT-P", etf_wanted)
+    assert _form_matches("NPORT-P/A", etf_wanted)
+    assert _form_matches("N-CSRS", etf_wanted)
+    assert _form_matches("485APOS", etf_wanted)
+    assert not _form_matches("10-K", etf_wanted)
 
 
 def test_html_to_text():
@@ -114,6 +121,50 @@ async def test_search_filings_mocked():
     assert result["count"] == 1
     assert result["filings"][0]["form"] == "10-K"
     assert "document_url" in result["filings"][0]
+
+
+@pytest.mark.asyncio
+async def test_search_filings_etf_defaults_include_nport():
+    """默认 forms 须能命中 ETF 的 NPORT-P / N-CSR（不再只靠 10-K 过滤）。"""
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    submissions = {
+        "name": "Invesco QQQ Trust, Series 1",
+        "tickers": ["QQQ"],
+        "filings": {
+            "recent": {
+                "accessionNumber": [
+                    "0001411573-24-000111",
+                    "0001411573-24-000100",
+                    "0001411573-24-000090",
+                ],
+                "filingDate": ["2024-06-28", "2024-05-30", "2024-03-01"],
+                "form": ["NPORT-P", "N-CSR", "485BPOS"],
+                "primaryDocument": ["primary_doc.xml", "ncsr.htm", "485bpos.htm"],
+                "primaryDocDescription": ["NPORT-P", "N-CSR", "485BPOS"],
+                "reportDate": ["2024-05-31", "2024-04-30", "2024-02-28"],
+            }
+        },
+    }
+
+    async def fake_json(url: str):
+        if "company_tickers" in url:
+            return {"0": {"cik_str": 1067839, "ticker": "QQQ", "title": "Invesco QQQ Trust"}}
+        if "submissions" in url:
+            return submissions
+        raise AssertionError(url)
+
+    with patch.object(mod, "_http_get_json", new=AsyncMock(side_effect=fake_json)):
+        # 不传 forms → 使用 DEFAULT_FORMS（含 ETF 表单）
+        result = await mod.search_filings("QQQ", limit=10)
+        # 口语别名 N-PORT 也应命中 EDGAR 的 NPORT-P
+        alias = await mod.search_filings("QQQ", forms="N-PORT", limit=5)
+
+    assert "error" not in result
+    assert result["count"] == 3
+    assert {f["form"] for f in result["filings"]} == {"NPORT-P", "N-CSR", "485BPOS"}
+    assert alias["count"] == 1
+    assert alias["filings"][0]["form"] == "NPORT-P"
 
 
 @pytest.mark.asyncio

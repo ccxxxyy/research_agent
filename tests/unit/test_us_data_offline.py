@@ -72,9 +72,10 @@ async def test_get_quote_mocked():
     mock_ticker = MagicMock()
     mock_ticker.fast_info = mock_fi
 
-    # 强制走 yfinance 回退，避免本机可达时 Yahoo Chart HTTP 抢先返回真实行情
+    # 强制走 yfinance：关掉 Chart + 东财，避免本机网络抢先返回真实行情
     with (
         patch.object(mod, "_quote_via_yahoo_chart", return_value=None),
+        patch.object(mod, "_quote_via_eastmoney_us", return_value=None),
         patch("yfinance.Ticker", return_value=mock_ticker),
     ):
         result = await mod.get_quote("aapl")
@@ -105,6 +106,30 @@ async def test_get_quote_via_yahoo_chart_mocked():
     assert result["price"] == 200.0
     assert result["change_percent"] == pytest.approx(5.2632)
     assert result["source"] == "yahoo_chart"
+
+
+@pytest.mark.asyncio
+async def test_get_quote_via_eastmoney_us_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    em = {
+        "symbol": "AAPL",
+        "price": 333.02,
+        "previous_close": 321.66,
+        "change": 11.36,
+        "change_percent": 3.53,
+        "source": "eastmoney_us",
+    }
+    with (
+        patch.object(mod, "_quote_via_yahoo_chart", return_value=None),
+        patch.object(mod, "_quote_via_eastmoney_us", return_value=em),
+    ):
+        result = await mod.get_quote("aapl")
+
+    assert "error" not in result
+    assert result["price"] == 333.02
+    assert result["change_percent"] == pytest.approx(3.53)
+    assert result["source"] == "eastmoney_us"
 
 
 @pytest.mark.asyncio

@@ -25,9 +25,9 @@
 ```
 CN_A（A 股）                                  US（美股）
 ─────────────────                        ─────────────────
-akshare → 东财/新浪/雪球等            Yahoo 体系（yfinance + Chart/Search HTTP）
-巨潮 cninfo（披露 PDF）               SEC EDGAR（10-K/10-Q/8-K 等）
-东财/财联社/雪球（新闻）               Yahoo 新闻（yfinance / Search HTTP）
+akshare → 东财/新浪/雪球等            报价：Yahoo Chart → 东财 ulist → yfinance
+巨潮 cninfo（披露 PDF）               SEC EDGAR（10-K… + ETF: NPORT-P/N-CSR/485BPOS）
+东财/财联社/雪球（新闻）               新闻：Yahoo Search HTTP → yfinance
 SnowNLP（中文舆情）                   英文关键词词典（本地打分）
 知识库 FAISS（跨市场共享引擎）         同上（共享 RAG 引擎，内容按集合隔离）
 ```
@@ -68,7 +68,7 @@ A 股侧目前也是「**一个接入层（akshare）+ 多家底层站点**」�
 
 ### 4.2 现在的主备逻辑（实现细节）
 
-**没有**在 `.env` / settings 里配置「多供应商开关」。主备写在代码分支里，且 **Chart / Search 与 yfinance 仍同属 Yahoo**。
+**没有**在 `.env` / settings 里配置「多供应商开关」。主备写在代码分支里。
 
 #### 报价 / 指数（`us_data_server`）
 
@@ -80,13 +80,28 @@ get_quote / get_index_quotes / _quote_from_ticker
     │     （curl_cffi 或 requests(trust_env=False)，约数秒）
     │     昨收：日线倒数第二根 Close（勿用易偏离的 chartPreviousClose）
     │
-    └─② 失败再：yfinance（fast_info → history）
+    ├─② 失败再：东财美股 ulist（国内可达；Yahoo 403/限流时看板主力）push2delay.eastmoney.com/api/qt/ulist.np/get
+    │     指数：100.SPX / 100.DJIA / 100.NDX(综指) / 100.NDX100(纳指100)
+    │     罗素/VIX 无现货码时用 IWM / VIXY 代理并改展示名
+    │     个股/ETF：105/106/107.{ticker}
+    │
+    └─③ 再失败：yfinance（fast_info → history；国内常与①一同失败）
 ```
 
-看板美股指数（`main.py` → `_quote_one`）**复用**同一 `_quote_from_ticker`，避免问答与看板涨跌幅口径不一致。
+看板美股（`main.py` → `_quote_one` / 筛选榜）**复用** `_quote_from_ticker`；Yahoo `yf.screen` 失败时涨跌/活跃榜回退东财 `clist`（`m:105,m:106`）。
+
+东财回退下的三类报价（通用，不只 VIX）：
+
+| 类型 | 含义 | 例子 | 回答要求 |
+|------|------|------|----------|
+| **直连** | 东财有同标的代码 | `^GSPC→100.SPX`、`AAPL`、`SPY` | 可按指数/个股表述；`source=eastmoney_us` |
+| **代理** | 东财无指数现货，用 ETF 近似 | `^VIX→VIXY`、`^RUT→IWM` | 必须写代理名；`proxy=true` + `warning` |
+| **不可用** | 东财/Yahoo 皆无 | 部分冷门期权等 | 承认缺失，禁止编造 |
+
+诚实性校验：`research_agent.market.us_source_honesty.find_us_quote_misstatements`（单测覆盖全部代理表项）。
 
 - `get_market_status`：**本地美东时钟**，不请求外网（避免被挂起的 yfinance 占满线程池导致误超时）。
-- 日线历史、公司概况、ETF holdings / sector weights：仍以 **yfinance** 为主。
+- 日线历史、公司概况、ETF holdings / sector weights：仍以 **yfinance** 为主（Yahoo 不可达时可能空）。
 
 #### 舆情新闻（`us_sentiment_server`）
 
@@ -193,12 +208,15 @@ FINNHUB_API_KEY=...
 
 | 主题 | 路径 |
 |------|------|
-| 美股报价主备 | `mcp_servers/us_data_server.py`（`_quote_via_yahoo_chart`、`_quote_from_ticker`） |
+| 美股报价主备 | `mcp_servers/us_data_server.py`（Chart → 东财 → yfinance） |
+| 代理/来源诚实性 | `market/us_source_honesty.py` |
 | 美股舆情新闻主备 | `mcp_servers/us_sentiment_server.py`（`_fetch_news_via_yahoo_search`） |
-| 美股新闻主备（已与舆情对齐） | `mcp_servers/us_news_server.py`（`_fetch_news_via_yahoo_search` → yfinance） |
+| 美股新闻主备（已与舆情对齐） | `mcp_servers/us_news_server.py`（Search HTTP → yfinance） |
 | 美股披露 | `mcp_servers/us_filing_server.py` |
 | A 股行情 | `mcp_servers/fin_data_server.py` |
 | 市场隔离 ADR | `docs/adr/0006-us-market-parallel-isolation.md` |
+| 会话粘性市场 | `market/detect.py`（`sticky_market`）+ API `thread_market` |
+| 免责去重 / 正负号清洗 | `text/disclaimer.py`、`text/finance_signs.py` |
 | 未落地的 web_search 文案 | `agents/retriever.py` |
 
 ---
@@ -207,16 +225,28 @@ FINNHUB_API_KEY=...
 
 | 项 | 现状 |
 |----|------|
-| 通用联网搜索（Tavily 等） | 未挂载；仅有 `retriever.py` 文案 |
+| 通用联网搜索（Tavily 等） | 未挂载；仅有 `retriever.py` 文案；**不应用作行情主源** |
 | 美股共同基金 / 期权 | 明确不在一期范围 |
-| ETF 专属 EDGAR 表单（N-PORT / N-CSR / 485BPOS） | `us_filing_*` 默认不含 |
 | Finnhub / Polygon 等多供应商 | 未接入 |
+| 英文舆情换 VADER / 专用模型 | 仍为关键词词典 PoC |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
 | 左侧知识库栏按「当前集合」过滤显示 | 无；列出该用户全部集合的 PDF |
 
-## 9. 变更记录
+## 9. 产品侧已落地（非数据源，但影响美股体验）
+
+| 项 | 说明 |
+|----|------|
+| 会话市场粘性 | 跟进句无市场信号时沿用上一轮 `US`/`CN_A`/`MIXED`，避免默认成 A 股 |
+| 免责声明去重 | 剥掉模型自写免责后只附加系统一条 |
+| 数据来源可点 | 正文 `数据来源：` 自动链东财/Yahoo；缺省时按 `us_*` 工具或美股市场兜底 |
+| 涨跌着色 | 美股绿涨红跌；清洗 `-+0.64%` 误号 |
+| 对话滚动位置 | 返回看板再进同一会话时恢复离开时的滚动位置 |
+
+## 10. 变更记录
 
 | 说明 |
 |------|
 | 初版：记录 Yahoo 单栈、Chart/Search 快路径、与真·多源及通用搜索的区别 |
 | `us_news_*` 与舆情对齐：Search HTTP 优先；§4.1 标明为历史 PoC；代码索引去掉「仍偏 yfinance」 |
+| `us_filing_*` 默认纳入 ETF 表单 `NPORT-P` / `N-CSR` / `N-CSRS` / `485BPOS`（`N-PORT` 别名可匹配） |
+| 报价链写入东财 ulist；代理诚实性；文档与 ADR-0006 / README 漂移对齐（粘性市场、免责去重、来源链接等） |

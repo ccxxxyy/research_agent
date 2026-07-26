@@ -303,6 +303,14 @@ def create_app() -> FastAPI:
         allow_credentials=origins != ["*"],
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=[
+            "X-Thread-ID",
+            "X-User-ID",
+            "X-Market",
+            "X-Market-Source",
+            "X-Cache-Hit",
+            "X-Cache-Domain",
+        ],
     )
 
     from research_agent.api.middleware import (
@@ -654,6 +662,64 @@ def create_app() -> FastAPI:
                 out[code] = industry
         return out
 
+    # 涨停池「所属行业」常见截断 → 完整东财行业名（f100 / 板块表失败时兜底）
+    industry_prefix_fix: dict[str, str] = {
+        "房地产开": "房地产开发",
+        "互联网服": "互联网服务",
+    }
+    board_industry_names_cache: list[str] | None = None
+
+    def _industry_board_names() -> list[str]:
+        """东财行业板块全名列表。"""
+        nonlocal board_industry_names_cache
+        if board_industry_names_cache is not None:
+            return board_industry_names_cache
+        names: list[str] = []
+        try:
+            import akshare as ak
+
+            df = ak.stock_board_industry_name_em()
+            if df is not None and not df.empty:
+                col = "板块名称" if "板块名称" in df.columns else str(df.columns[0])
+                names = [str(x).strip() for x in df[col].tolist() if str(x).strip()]
+        except Exception:
+            names = []
+        for v in industry_prefix_fix.values():
+            if v and v not in names:
+                names.append(v)
+        board_industry_names_cache = names
+        return names
+
+    def _expand_truncated_industry(name: str) -> str:
+        cur = (name or "").strip()
+        if not cur:
+            return ""
+        fixed = industry_prefix_fix.get(cur)
+        if fixed:
+            return fixed
+        boards = _industry_board_names()
+        if cur in boards:
+            return cur
+        hits = [b for b in boards if b.startswith(cur) and len(b) > len(cur)]
+        if not hits:
+            return cur
+        hits.sort(key=len)
+        return hits[0]
+
+    def _enrich_pool_industries(items: list[dict]) -> None:
+        """覆盖涨停池截断行业：优先 ulist f100，其次板块名前缀补全。"""
+        if not items:
+            return
+        codes = [str(it.get("code") or "") for it in items]
+        industries = _batch_stock_industry_em(codes)
+        for it in items:
+            code = str(it.get("code") or "").zfill(6)
+            full = ""
+            if industries:
+                full = industries.get(code, "") or industries.get(str(it.get("code") or ""), "")
+            cur = str(it.get("industry") or "").strip()
+            it["industry"] = (full or _expand_truncated_industry(cur) or cur).strip()
+
     # --- 行情看板 API ---
     # 不再做服务端 TTL 缓存：首页每次刷新都拉取最新数据，并由 fetched_at 如实标注。
 
@@ -755,6 +821,9 @@ def create_app() -> FastAPI:
     # 美股看板短缓存：避免 30s 自动刷新反复打爆 Yahoo（表现为 possibly delisted）
     _us_dash_cache: dict = {"ts": 0.0, "data": None}
     _us_dash_ttl = 90.0
+    # 东财美股涨跌家数全量扫描较慢，单独短缓存，避免每次刷新打满 clist
+    _us_breadth_cache: dict = {"ts": 0.0, "data": None}
+    _us_breadth_ttl = 300.0
 
     def _fetch_us_dashboard() -> dict:
         """美股首页看板聚合（yfinance，与 A 股平行、不混用）。
@@ -799,14 +868,17 @@ def create_app() -> FastAPI:
                 if change is None and price is not None and prev is not None:
                     change = float(price) - float(prev)
                 change_pct = q.get("change_percent")
+                # 东财代理 ETF（IWM/VIXY）时用返回名，避免仍显示「罗素2000/VIX」
+                display_name = str(q.get("name") or name) if q.get("proxy") else name
                 return {
                     "code": symbol.lstrip("^"),
                     "symbol": symbol,
-                    "name": name,
+                    "name": display_name,
                     "price": round(float(price), 2),
                     "change": round(float(change), 2) if change is not None else None,
                     "change_pct": round(float(change_pct), 2) if change_pct is not None else None,
                     "price_source": str(q.get("source") or "us_data_server"),
+                    "proxy": bool(q.get("proxy")),
                 }
             except Exception:
                 return None
@@ -832,33 +904,266 @@ def create_app() -> FastAPI:
             out.sort(key=lambda x: order.get(x.get("symbol", ""), 999))
             return out
 
+        def _screen_list_eastmoney(
+            *,
+            sort: str,
+            reverse: bool = True,
+            limit: int = 10,
+        ) -> tuple[list[dict], int]:
+            """Yahoo screen 失败时：东财美股榜（NASDAQ+NYSE）按涨跌幅/成交额排序。"""
+            from urllib.parse import urlencode
+
+            # f3=涨跌幅 f5=成交量 f6=成交额
+            fid = {"change": "f3", "volume": "f5", "amount": "f6"}.get(sort, "f3")
+            po = "1" if reverse else "0"
+            params = {
+                "pn": "1",
+                "pz": "80",
+                "po": po,
+                "np": "1",
+                "fltt": "2",
+                "invt": "2",
+                "fid": fid,
+                "fs": "m:105,m:106",
+                "fields": "f12,f14,f2,f3,f4,f5,f6,f18",
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            }
+            hosts = (
+                "https://push2delay.eastmoney.com/api/qt/clist/get",
+                "https://push2.eastmoney.com/api/qt/clist/get",
+            )
+            diff: list = []
+            try:
+                from curl_cffi import requests as curl_requests
+
+                qs = urlencode(params)
+                for base in hosts:
+                    try:
+                        resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=10)
+                        if resp.status_code != 200:
+                            continue
+                        data = resp.json().get("data") or {}
+                        diff = data.get("diff") or []
+                        if diff:
+                            break
+                    except Exception:
+                        continue
+            except ImportError:
+                pass
+            items: list[dict] = []
+            for row in diff:
+                sym = str(row.get("f12") or "").strip().upper()
+                if not sym or "_" in sym or sym.endswith("W") or len(sym) > 5:
+                    continue
+                try:
+                    price = float(row.get("f2"))
+                    chg = float(row.get("f3"))
+                except (TypeError, ValueError):
+                    continue
+                if price < 1.0:  # 过滤仙股/权证噪声
+                    continue
+                items.append(
+                    {
+                        "code": sym,
+                        "symbol": sym,
+                        "name": us_cn_names.get(sym) or str(row.get("f14") or sym),
+                        "price": price,
+                        "change": row.get("f4"),
+                        "change_pct": chg,
+                        "volume": row.get("f5"),
+                        "market_cap": None,
+                        "price_source": "eastmoney_us",
+                    }
+                )
+                if len(items) >= limit:
+                    break
+            return items, len(items)
+
+        def _eastmoney_us_breadth() -> dict:
+            """全量统计东财美股普通股涨/跌/平家数。
+
+            对 ``m:105+t:1,m:106+t:1``（NASDAQ/NYSE 普通股）并行翻完所有页再计数。
+            """
+            from math import ceil
+            from urllib.parse import urlencode
+
+            now = _time.time()
+            cached = _us_breadth_cache.get("data")
+            if (
+                cached is not None
+                and now - float(_us_breadth_cache.get("ts") or 0) < _us_breadth_ttl
+            ):
+                return cached
+
+            hosts = (
+                "https://push2delay.eastmoney.com/api/qt/clist/get",
+                "https://push2.eastmoney.com/api/qt/clist/get",
+            )
+            try:
+                from curl_cffi import requests as curl_requests
+            except ImportError:
+                return {"up": 0, "down": 0, "flat": 0, "scanned": 0, "universe": 0}
+
+            def _fetch_page(pn: int) -> tuple[int, list]:
+                params = {
+                    "pn": str(pn),
+                    "pz": "100",
+                    "po": "0",
+                    "np": "1",
+                    "fltt": "2",
+                    "invt": "2",
+                    "fid": "f12",
+                    # 只要普通股，排除权证/结构化噪音
+                    "fs": "m:105+t:1,m:106+t:1",
+                    "fields": "f12,f2,f3",
+                    "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                }
+                qs = urlencode(params)
+                for base in hosts:
+                    try:
+                        resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=12)
+                        if resp.status_code != 200:
+                            continue
+                        data = resp.json().get("data") or {}
+                        diff = data.get("diff") or []
+                        total = int(data.get("total") or 0)
+                        if diff or total:
+                            return total, diff
+                    except Exception:
+                        continue
+                return 0, []
+
+            universe, first_diff = _fetch_page(1)
+            if not first_diff and universe <= 0:
+                return {"up": 0, "down": 0, "flat": 0, "scanned": 0, "universe": 0}
+
+            page_count = max(1, ceil(universe / 100)) if universe else 1
+            # 安全上限，防止异常 total 打爆
+            page_count = min(page_count, 80)
+            pages: dict[int, list] = {1: first_diff}
+            if page_count > 1:
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    futs = {pool.submit(_fetch_page, pn): pn for pn in range(2, page_count + 1)}
+                    for fut in as_completed(futs):
+                        pn = futs[fut]
+                        try:
+                            _, diff = fut.result()
+                            pages[pn] = diff
+                        except Exception:
+                            pages[pn] = []
+
+            up = down = flat = 0
+            for pn in range(1, page_count + 1):
+                for row in pages.get(pn) or []:
+                    sym = str(row.get("f12") or "").strip().upper()
+                    if not sym or "_" in sym or len(sym) > 5:
+                        continue
+                    try:
+                        price = float(row.get("f2"))
+                        chg = float(row.get("f3"))
+                    except (TypeError, ValueError):
+                        continue
+                    if price < 1.0:
+                        continue
+                    if chg > 0:
+                        up += 1
+                    elif chg < 0:
+                        down += 1
+                    else:
+                        flat += 1
+
+            result = {
+                "up": up,
+                "down": down,
+                "flat": flat,
+                "scanned": up + down + flat,
+                "universe": universe,
+            }
+            # 结果明显异常（例如涨跌完全相同且等于扫描数的一半）时不缓存，便于下次重试
+            if up + down > 100 and up != down:
+                _us_breadth_cache["ts"] = now
+                _us_breadth_cache["data"] = result
+            return result
+
+        def _shorted_watchlist_em(*, limit: int = 10) -> list[dict]:
+            """Yahoo 空头榜不可用时：常见高空头关注标的 + 东财报价（非官方 short interest）。
+
+            顺序拉取，避免嵌套 ThreadPool（外层 jobs 已在线程池中）死锁。
+            """
+            watch = [
+                ("GME", "GameStop (GME)"),
+                ("AMC", "AMC (AMC)"),
+                ("BYND", "Beyond Meat (BYND)"),
+                ("CVNA", "Carvana (CVNA)"),
+                ("UPST", "Upstart (UPST)"),
+                ("SOFI", "SoFi (SOFI)"),
+                ("PLUG", "Plug Power (PLUG)"),
+                ("RIOT", "Riot (RIOT)"),
+                ("MARA", "Marathon (MARA)"),
+                ("HOOD", "Robinhood (HOOD)"),
+                ("SNAP", "Snap (SNAP)"),
+                ("DKNG", "DraftKings (DKNG)"),
+            ]
+            items: list[dict] = []
+            for sym, name in watch:
+                item = _quote_one(sym, name)
+                if not item:
+                    continue
+                item["price_source"] = "eastmoney_us"
+                item["note"] = "常见高空头关注标的（Yahoo 空头榜不可用）"
+                items.append(item)
+            items.sort(
+                key=lambda x: abs(x["change_pct"] if x.get("change_pct") is not None else 0),
+                reverse=True,
+            )
+            return items[:limit]
+
         def _screen_list(preset: str, *, limit: int = 10) -> tuple[list[dict], int]:
             try:
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     raw = yf.screen(preset, count=limit)
             except Exception:
-                return [], 0
+                raw = None
             quotes = (raw or {}).get("quotes") or []
-            total = int((raw or {}).get("total") or len(quotes) or 0)
-            items: list[dict] = []
-            for q in quotes[:limit]:
-                sym = q.get("symbol") or ""
-                if not sym:
-                    continue
-                en = q.get("shortName") or q.get("longName") or sym
-                items.append(
-                    {
-                        "code": sym,
-                        "symbol": sym,
-                        "name": us_cn_names.get(sym) or en,
-                        "price": q.get("regularMarketPrice"),
-                        "change": q.get("regularMarketChange"),
-                        "change_pct": q.get("regularMarketChangePercent"),
-                        "volume": q.get("regularMarketVolume"),
-                        "market_cap": q.get("marketCap"),
-                    }
-                )
-            return items, total
+            if quotes:
+                total = int((raw or {}).get("total") or len(quotes) or 0)
+                items: list[dict] = []
+                for q in quotes[:limit]:
+                    sym = q.get("symbol") or ""
+                    if not sym:
+                        continue
+                    en = q.get("shortName") or q.get("longName") or sym
+                    items.append(
+                        {
+                            "code": sym,
+                            "symbol": sym,
+                            "name": us_cn_names.get(sym) or en,
+                            "price": q.get("regularMarketPrice"),
+                            "change": q.get("regularMarketChange"),
+                            "change_pct": q.get("regularMarketChangePercent"),
+                            "volume": q.get("regularMarketVolume"),
+                            "market_cap": q.get("marketCap"),
+                            "price_source": "yahoo_screen",
+                        }
+                    )
+                return items, total
+
+            # Yahoo screen 被 403/限流：东财美股榜 / 空头关注列表兜底
+            if preset == "most_shorted_stocks":
+                items = _shorted_watchlist_em(limit=limit)
+                return items, len(items)
+            em_map = {
+                "day_gainers": ("change", True),
+                "day_losers": ("change", False),
+                "most_actives": ("amount", True),
+                "growth_technology_stocks": ("change", True),
+                "small_cap_gainers": ("change", True),
+                "undervalued_large_caps": ("change", True),
+            }
+            if preset not in em_map:
+                return [], 0
+            sort_key, reverse = em_map[preset]
+            return _screen_list_eastmoney(sort=sort_key, reverse=reverse, limit=limit)
 
         # --- 市场状态 ---
         market_status: dict = {"status": "unknown", "message": "美股状态获取失败"}
@@ -1030,15 +1335,51 @@ def create_app() -> FastAPI:
         small_gainers, _ = _unpack_screen("small_gainers")
         undervalued, _ = _unpack_screen("undervalued")
         shorted, _ = _unpack_screen("shorted")
-        breadth = {
-            "up": gainers_total or len(gainers),
-            "down": losers_total or len(losers),
-            "flat": 0,
-            "gainers_shown": len(gainers),
-            "losers_shown": len(losers),
-            "note": "Yahoo 筛选器统计（涨幅榜/跌幅榜命中总数，非全市场家数）",
-        }
+        used_em = any(
+            (x or {}).get("price_source") == "eastmoney_us"
+            for lst in (indices, sectors, theme_etfs, mega, gainers, losers, actives, shorted)
+            for x in (lst or [])
+        )
+        if used_em:
+            em_br = _eastmoney_us_breadth()
+            breadth = {
+                "up": int(em_br.get("up") or 0),
+                "down": int(em_br.get("down") or 0),
+                "flat": int(em_br.get("flat") or 0),
+                "gainers_shown": len(gainers),
+                "losers_shown": len(losers),
+                "note": (
+                    f"东财美股普通股全量统计（有效 {em_br.get('scanned') or 0}/"
+                    f"列表 {em_br.get('universe') or 0}；Yahoo 不可达时的回退）"
+                ),
+            }
+        else:
+            # Yahoo screen 的 total 才是「上涨/下跌命中家数」
+            up_n = int(gainers_total or 0)
+            down_n = int(losers_total or 0)
+            if up_n <= 0 and down_n <= 0:
+                up_n, down_n = len(gainers), len(losers)
+            breadth = {
+                "up": up_n,
+                "down": down_n,
+                "flat": 0,
+                "gainers_shown": len(gainers),
+                "losers_shown": len(losers),
+                "note": "Yahoo 筛选器统计（涨幅榜/跌幅榜命中总数，非全市场家数）",
+            }
         _stamp("breadth")
+
+        if used_em:
+            market_status = {
+                **market_status,
+                "data_source": "eastmoney_us",
+                "yahoo_message": (
+                    market_status.get("yahoo_message")
+                    or "Yahoo 不可达（403/限流），已切换东财美股行情"
+                ),
+            }
+            if not market_status.get("message"):
+                market_status["message"] = "Yahoo 不可达，已用东财美股数据填充看板"
 
         return {
             "market_status": market_status,
@@ -1147,7 +1488,7 @@ def create_app() -> FastAPI:
             if df is None or df.empty:
                 return []
             rows = df.head(15).to_dict("records")
-            return [
+            items = [
                 {
                     "code": str(r.get("代码", "")),
                     "name": str(r.get("名称", "")),
@@ -1163,6 +1504,8 @@ def create_app() -> FastAPI:
                 }
                 for r in rows
             ]
+            _enrich_pool_industries(items)
+            return items
         except Exception:
             return []
 
@@ -1192,6 +1535,7 @@ def create_app() -> FastAPI:
                     }
                     for r in df.head(10).to_dict("records")
                 ]
+                _enrich_pool_industries(result["strong"])
         except Exception:
             pass
 
@@ -1210,6 +1554,7 @@ def create_app() -> FastAPI:
                     }
                     for r in df.head(10).to_dict("records")
                 ]
+                _enrich_pool_industries(result["previous"])
         except Exception:
             pass
 
@@ -1228,6 +1573,7 @@ def create_app() -> FastAPI:
                     }
                     for r in df.head(10).to_dict("records")
                 ]
+                _enrich_pool_industries(result["zbgc"])
         except Exception:
             pass
 

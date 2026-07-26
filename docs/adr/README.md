@@ -32,7 +32,7 @@
 | 0005 | [pgvector 迁移路径](0005-pgvector-migration-path.md) | Accepted | — |
 | 0006 | [A 股 / 美股平行隔离与市场判定契约（P0）](0006-us-market-parallel-isolation.md) | Accepted | US-P0 |
 
-相关运维/实现说明（非 ADR）：[数据来源说明](../data-sources.md)（Yahoo / yfinance / Chart·Search 主备、与真·多源对比）。
+相关运维/实现说明（非 ADR）：[数据来源说明](../data-sources.md)（Yahoo Chart / **东财美股** / yfinance 报价主备、Search HTTP 新闻、与真·多源及通用搜索对比）。
 
 ## 何时编写新的 ADR
 

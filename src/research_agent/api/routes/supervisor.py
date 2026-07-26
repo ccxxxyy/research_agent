@@ -39,7 +39,7 @@ from research_agent.api.schemas import (
     SupervisorChatResponse,
 )
 from research_agent.config import get_settings
-from research_agent.security.prompt_guard import FINANCIAL_DISCLAIMER, PromptGuard, ThreatLevel
+from research_agent.security.prompt_guard import PromptGuard, ThreatLevel
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -158,6 +158,7 @@ async def _build_user_context_messages(
     query: str,
     *,
     market_override: str | None = None,
+    thread_market: str | None = None,
 ) -> tuple[list[BaseMessage], MarketResolution]:
     """构建包含可选长期上下文的图输入消息列表。
 
@@ -166,7 +167,7 @@ async def _build_user_context_messages(
     有上下文时返回 ``[SystemMessage, HumanMessage]``，
     匿名 / 无上下文用户至少也有 MarketResolution 前导。
 
-    同时解析市场（问句信号 → 用户偏好 → 默认），写入 SystemMessage，
+    同时解析市场（问句信号 → 会话粘性 → 用户偏好 → 默认），写入 SystemMessage，
     并返回 ``MarketResolution`` 供响应头 / JSON 字段使用。
     """
     from research_agent.market import format_market_preamble, resolve_market
@@ -179,6 +180,7 @@ async def _build_user_context_messages(
         memory=memory if user_id != "anonymous" else None,
         user_id=user_id,
         override=override,
+        sticky_market=thread_market,
     )
 
     messages: list[BaseMessage] = []
@@ -306,10 +308,11 @@ async def supervisor_research(
         override=(
             None if (not request.market or request.market.lower() == "auto") else request.market
         ),
+        sticky_market=request.thread_market,
     )
     cache_hit = await _try_semantic_knowledge_cache(request.query, market=resolution.market.value)
     if cache_hit is not None:
-        reply = _clean_markdown(cache_hit.answer) + FINANCIAL_DISCLAIMER
+        reply = _finalize_reply(cache_hit.answer)
         logger.info(
             "Research short-circuited by semantic_cache: domain={}, market={}, exact={}, user={}, thread={}",
             cache_hit.cache_domain,
@@ -339,6 +342,7 @@ async def supervisor_research(
         user_id,
         request.query,
         market_override=request.market,
+        thread_market=request.thread_market,
     )
 
     result = await graph.ainvoke(
@@ -366,8 +370,8 @@ async def supervisor_research(
             out_verdict.triggered_rules,
         )
 
-    # --- 清理 markdown 表格 + 金融免责声明 ---
-    reply = _clean_markdown(reply) + FINANCIAL_DISCLAIMER
+    # --- 清理 markdown + 统一免责声明（去重） ---
+    reply = _finalize_reply(reply)
 
     # --- 长期记忆：保存研究结果 ---
     if user_id != "anonymous" and reply:
@@ -410,11 +414,23 @@ def _format_sse(event: ResearchSupervisorSSEEvent) -> str:
 def _clean_markdown(text: str) -> str:
     """对 LLM 输出做轻量清洗，保留 markdown 格式供前端渲染。
 
-    仅执行：压缩连续空行为最多 1 个。
+    执行：归一错误正负号（``-+0.64%``→``-0.64%``）、去掉模型自写免责、压缩连续空行。
     表格、标题、粗体等 markdown 语法由前端 renderMarkdown 负责渲染。
     """
-    result = re.sub(r"\n{3,}", "\n\n", text)
+    from research_agent.text.disclaimer import strip_trailing_disclaimers
+    from research_agent.text.finance_signs import sanitize_signed_percents
+
+    result = sanitize_signed_percents(text or "")
+    result = strip_trailing_disclaimers(result)
+    result = re.sub(r"\n{3,}", "\n\n", result)
     return result.strip()
+
+
+def _finalize_reply(text: str) -> str:
+    """清洗正文并只附加一条系统免责声明。"""
+    from research_agent.text.disclaimer import with_financial_disclaimer
+
+    return with_financial_disclaimer(_clean_markdown(text))
 
 
 # Supervisor 路由阶段的「请稍候」类过渡话，绝不能当成 FINAL 发给前端。
@@ -635,6 +651,7 @@ async def _research_event_stream(
     persist_original_query: str | None = None,
     available_specialists: list[str] | None = None,
     conversation_store: Any | None = None,
+    market_resolution: MarketResolution | None = None,
 ) -> AsyncIterator[str]:
     """为单次研究调用生成 SSE 帧的异步生成器。
 
@@ -663,10 +680,16 @@ async def _research_event_stream(
     cfg = _graph_config(thread_id, recursion_limit, user_id=user_id)
 
     frames: asyncio.Queue[str | None] = asyncio.Queue()
+    market_meta: dict[str, Any] = {}
+    if market_resolution is not None:
+        market_meta = {
+            "market": market_resolution.market.value,
+            "market_source": market_resolution.source,
+        }
 
     async def pump() -> None:
         try:
-            opening_meta: dict[str, Any] = {"thread_id": thread_id}
+            opening_meta: dict[str, Any] = {"thread_id": thread_id, **market_meta}
             if available_specialists is not None:
                 opening_meta["available_specialists"] = available_specialists
             await frames.put(
@@ -890,34 +913,27 @@ async def _research_event_stream(
                                 _sup_pending.clear()
 
                             if not streaming_final and not final_token_buf:
-                                clean = _clean_markdown(snippet) + FINANCIAL_DISCLAIMER
+                                clean = _finalize_reply(snippet)
                                 await frames.put(
                                     _format_sse(
                                         ResearchSupervisorSSEEvent(
                                             phase=(ResearchSupervisorSSEPhase.FINAL),
                                             node=str(node_name),
                                             content=clean,
+                                            metadata=dict(market_meta),
                                         )
                                     )
                                 )
                             else:
-                                await frames.put(
-                                    _format_sse(
-                                        ResearchSupervisorSSEEvent(
-                                            phase=ResearchSupervisorSSEPhase.TOKEN,
-                                            node="supervisor",
-                                            content=FINANCIAL_DISCLAIMER,
-                                        )
-                                    )
-                                )
-                                raw_final = "".join(final_token_buf) + FINANCIAL_DISCLAIMER
-                                clean_final = _clean_markdown(raw_final)
+                                # 免责只出现在 FINAL 一次，避免 TOKEN 再推一条造成重复
+                                clean_final = _finalize_reply("".join(final_token_buf))
                                 await frames.put(
                                     _format_sse(
                                         ResearchSupervisorSSEEvent(
                                             phase=(ResearchSupervisorSSEPhase.FINAL),
                                             node=str(node_name),
                                             content=clean_final,
+                                            metadata=dict(market_meta),
                                         )
                                     )
                                 )
@@ -969,13 +985,14 @@ async def _research_event_stream(
                     last = str(outcome.get("last_plain_synthesis") or "").strip()
                     if last and _looks_like_real_synthesis(last):
                         final_emitted_local = True
-                        clean = _clean_markdown(last) + FINANCIAL_DISCLAIMER
+                        clean = _finalize_reply(last)
                         await frames.put(
                             _format_sse(
                                 ResearchSupervisorSSEEvent(
                                     phase=ResearchSupervisorSSEPhase.FINAL,
                                     node="supervisor",
                                     content=clean,
+                                    metadata=dict(market_meta),
                                 )
                             )
                         )
@@ -1130,10 +1147,11 @@ async def supervisor_research_stream(
         override=(
             None if (not request.market or request.market.lower() == "auto") else request.market
         ),
+        sticky_market=request.thread_market,
     )
     cache_hit = await _try_semantic_knowledge_cache(request.query, market=resolution.market.value)
     if cache_hit is not None:
-        reply = _clean_markdown(cache_hit.answer) + FINANCIAL_DISCLAIMER
+        reply = _finalize_reply(cache_hit.answer)
 
         async def _cached_event_stream() -> AsyncIterator[str]:
             yield _format_sse(
@@ -1193,6 +1211,7 @@ async def supervisor_research_stream(
         user_id,
         request.query,
         market_override=request.market,
+        thread_market=request.thread_market,
     )
 
     specialists: list[str] = getattr(raw_request.app.state, "available_specialists", None) or []
@@ -1209,6 +1228,7 @@ async def supervisor_research_stream(
             persist_original_query=request.query,
             available_specialists=specialists,
             conversation_store=conv_store,
+            market_resolution=market_resolution,
         ),
         media_type="text/event-stream",
         headers={

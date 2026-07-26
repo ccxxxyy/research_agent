@@ -72,7 +72,14 @@ class ResearchSupervisorRequest(BaseModel):
         None,
         description=(
             "可选市场覆盖：``CN_A`` / ``US`` / ``MIXED`` / ``auto``（默认）。"
-            "省略或 auto 时按问句信号 → 用户 preferred_market → 产品默认 CN_A 解析。"
+            "省略或 auto 时按问句信号 → 会话粘性 thread_market → 用户 preferred_market → 产品默认 CN_A 解析。"
+        ),
+    )
+    thread_market: str | None = Field(
+        None,
+        description=(
+            "同会话上一轮解析市场（``CN_A`` / ``US`` / ``MIXED``）。"
+            "仅当问句无明确市场信号且未设 market 覆盖时作为粘性回退，避免跟进句被默认成 A 股。"
         ),
     )
 

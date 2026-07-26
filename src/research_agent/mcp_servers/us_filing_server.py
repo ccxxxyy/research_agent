@@ -1,6 +1,10 @@
 """MCP Server — 美股 SEC EDGAR 披露（与巨潮 ``pdf_report_server`` 平行隔离）。
 
-一期表单：``10-K`` / ``10-Q`` / ``8-K`` / ``DEF 14A``（及常见修订后缀如 ``10-K/A``）。
+默认表单
+--------
+- 普通股 / ADR：``10-K`` / ``10-Q`` / ``8-K`` / ``DEF 14A``（修订件如 ``10-K/A`` 也会匹配）
+- ETF / 注册投资公司：``NPORT-P``（月度持仓）、``N-CSR`` / ``N-CSRS``（股东报告）、
+  ``485BPOS``（招股书更新；``485APOS`` 作别名匹配）
 
 工具
 ----
@@ -49,7 +53,26 @@ COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 ARCHIVES_BASE = "https://www.sec.gov/Archives/edgar/data"
 
-DEFAULT_FORMS = ("10-K", "10-Q", "8-K", "DEF 14A")
+# 普通股 + ETF/基金专属表单；查 AAPL 时 ETF 表单通常无命中，查 QQQ 时则不再「稀疏」。
+DEFAULT_FORMS = (
+    "10-K",
+    "10-Q",
+    "8-K",
+    "DEF 14A",
+    "NPORT-P",
+    "N-CSR",
+    "N-CSRS",
+    "485BPOS",
+)
+DEFAULT_FORMS_CSV = ",".join(DEFAULT_FORMS)
+
+# 用户口头名 / EDGAR 实际 form 码互认（展开进 wanted 集合后再精确/修订匹配）
+_FORM_EQUIV_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"N-PORT", "NPORT", "NPORT-P", "NPORT-EX"}),
+    frozenset({"N-CSR", "N-CSRS"}),
+    frozenset({"485BPOS", "485APOS"}),
+)
+
 MAX_PAGE_WINDOW = 20
 MAX_CHAR_WINDOW = 12_000
 DOWNLOAD_TIMEOUT_SECONDS = 60
@@ -91,11 +114,21 @@ def _normalize_form(form: str) -> str:
     return re.sub(r"\s+", " ", form.strip().upper())
 
 
+def _expand_wanted_forms(wanted: set[str]) -> set[str]:
+    """把别名组并入过滤集，例如 ``N-PORT`` → 同时接受 ``NPORT-P``。"""
+    expanded = {_normalize_form(x) for x in wanted}
+    for group in _FORM_EQUIV_GROUPS:
+        norms = {_normalize_form(x) for x in group}
+        if expanded & norms:
+            expanded |= norms
+    return expanded
+
+
 def _form_matches(actual: str, wanted: set[str]) -> bool:
     a = _normalize_form(actual)
     if a in wanted:
         return True
-    # 允许 10-K/A 命中 10-K
+    # 允许 10-K/A 命中 10-K；NPORT-P/A 命中 NPORT-P
     base = a.split("/")[0]
     return base in wanted
 
@@ -299,18 +332,20 @@ async def resolve_cik(identifier: str) -> dict:
 @cached_tool(ttl=TTL_DAILY, namespace="us_filing")
 async def search_filings(
     identifier: str,
-    forms: str = "10-K,10-Q,8-K,DEF 14A",
+    forms: str = DEFAULT_FORMS_CSV,
     limit: int = 10,
 ) -> dict:
     """按 ticker/CIK 搜索 SEC EDGAR 近期披露列表。
 
     Args:
         identifier: ticker（``AAPL``）或 CIK。
-        forms: 逗号分隔表单类型，默认 ``10-K,10-Q,8-K,DEF 14A``。
+        forms: 逗号分隔表单类型。默认含普通股 ``10-K/10-Q/8-K/DEF 14A`` 与 ETF
+            ``NPORT-P/N-CSR/N-CSRS/485BPOS``（``N-PORT`` 等别名可匹配）。
         limit: 返回条数（1–40）。
     """
     limit = max(1, min(int(limit), 40))
-    wanted = {_normalize_form(x) for x in forms.split(",") if x.strip()} or set(DEFAULT_FORMS)
+    raw_wanted = {_normalize_form(x) for x in forms.split(",") if x.strip()} or set(DEFAULT_FORMS)
+    wanted = _expand_wanted_forms(raw_wanted)
 
     try:
         resolved = await _resolve_cik_impl(identifier)

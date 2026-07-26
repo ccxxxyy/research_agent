@@ -112,8 +112,16 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .msg.assistant .content ul,.msg.assistant .content ol{padding-left:20px;margin:4px 0}
 .msg.assistant .content li{margin:2px 0;font-size:14px}
 .msg.assistant .content .fin-highlight{color:var(--accent2);font-weight:600}
-.msg.assistant .content .fin-up{color:var(--red);font-weight:600}
-.msg.assistant .content .fin-down{color:var(--green);font-weight:600}
+/* 默认 A 股习惯：红涨绿跌（须 !important，否则会被下方看板用的全局 .fin-up 盖住） */
+.msg.assistant .content .fin-up{color:var(--red)!important;font-weight:600}
+.msg.assistant .content .fin-down{color:var(--green)!important;font-weight:600}
+/* 美股 / 跨市场：绿涨红跌（与看板 usDashboard 一致） */
+.msg.assistant.mkt-us .content .fin-up,
+.msg.assistant.mkt-mixed .content .fin-up,
+.msg.assistant .content .fin-palette-us .fin-up{color:var(--green)!important;font-weight:600}
+.msg.assistant.mkt-us .content .fin-down,
+.msg.assistant.mkt-mixed .content .fin-down,
+.msg.assistant .content .fin-palette-us .fin-down{color:var(--red)!important;font-weight:600}
 .msg.assistant .content .section-title{display:block;font-weight:700;font-size:15px;color:var(--accent2);margin:10px 0 4px;padding-left:10px;border-left:3px solid var(--accent);letter-spacing:0.3px}
 .msg.assistant .content .section-title:first-child{margin-top:0}
 .msg.assistant .content .md-p{margin:0 0 4px}
@@ -250,14 +258,17 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .zt-list::-webkit-scrollbar-track{background:transparent}
 .zt-list::-webkit-scrollbar-thumb{background:transparent;border-radius:2px}
 .zt-list:hover::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12)}
-.zt-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;cursor:pointer;transition:background .12s;font-size:12px}
+.zt-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;cursor:pointer;transition:background .12s;font-size:12px;width:100%;box-sizing:border-box;min-width:0}
 .zt-item:hover{background:var(--surface2)}
 .zt-item .zt-name{flex:0 0 auto;font-weight:600;color:var(--text);white-space:nowrap;overflow:visible;text-overflow:unset;max-width:none}
 .zt-item .zt-tag{font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,113,113,0.12);color:var(--red);font-weight:700;white-space:nowrap;flex-shrink:0}
 .zt-item .zt-industry{font-size:10px;color:var(--text2);white-space:nowrap;overflow:visible;text-overflow:unset;max-width:none;flex:0 0 auto;text-align:left;margin-right:auto}
 .hot-item .zt-industry{font-size:10px;color:var(--text2);white-space:nowrap;overflow:visible;text-overflow:unset;max-width:none;flex:0 0 auto;text-align:left;margin-right:auto}
-.zt-item .zt-metrics,.zt-item .zt-right{display:flex;align-items:center;gap:6px;flex:0 0 auto;margin-left:auto}
+.zt-item .zt-metrics,.zt-item .zt-right{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:0 0 auto;margin-left:auto}
 .zt-item .zt-time{font-size:10px;color:var(--text2);font-family:monospace;flex-shrink:0}
+/* 美股列表：名称占左，最新价+涨跌幅贴右 */
+.zt-item.us-quote-item .zt-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.zt-item.us-quote-item .zt-right{flex-shrink:0}
 
 /* Hot Panel */
 .hot-tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:8px}
@@ -446,7 +457,7 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
         <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板<span class="sec-hours">交易时间 工作日 09:30–11:30 / 13:00–15:00（北京时间）</span></div>
         <div class="dash-top">
           <div class="dash-top-left">
-            <div class="dash-indices-head">主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
+            <div class="dash-indices-head">A股主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
             <div class="dash-indices" id="dashIndices"></div>
           </div>
           <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌分布<span class="panel-fetched" data-fetch="breadth"></span></div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div></div>
@@ -559,6 +570,8 @@ const SPECIALIST_GROUPS = [
 // 多会话并发核心状态
 // =====================================================================
 let currentThread = null;
+/** 看板是否正显示在消息区；为 true 时允许再次点进当前会话 */
+let viewingDashboard = false;
 let available = new Set();
 let hitlPendingThread = null;
 
@@ -623,14 +636,65 @@ const SOURCE_RULES = {
   fund_get_fund_rating:         {label:'天天基金·评级',fn:()=>'https://fund.eastmoney.com/data/fundrating.html'},
   fund_get_fund_rank:           {label:'天天基金·排行',fn:()=>'https://fund.eastmoney.com/data/fundranking.html'},
   fund_get_fund_daily:          {label:'天天基金·净值',fn:()=>'https://fund.eastmoney.com/fund.html'},
+  // 美股工具（东财 / Yahoo）
+  us_get_quote:                 {label:'东方财富·美股行情',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://quote.eastmoney.com/us/${String(s).replace('^','')}.html`:'https://quote.eastmoney.com/center/gridlist.html#us_stocks'}},
+  us_get_index_quotes:          {label:'东方财富·美股指数',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#us_stocks'},
+  us_get_price_history:         {label:'东方财富·美股行情',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://quote.eastmoney.com/us/${String(s).replace('^','')}.html`:'https://quote.eastmoney.com/center/gridlist.html#us_stocks'}},
+  us_get_basic_info:            {label:'东方财富·美股',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://quote.eastmoney.com/us/${String(s).replace('^','')}.html`:'https://quote.eastmoney.com/center/gridlist.html#us_stocks'}},
+  us_get_market_status:         {label:'美股交易时段',fn:()=>'https://quote.eastmoney.com/center/gridlist.html#us_stocks'},
+  us_get_etf_overview:          {label:'Yahoo·ETF',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}`:'https://finance.yahoo.com/etfs/'}},
+  us_get_etf_holdings:          {label:'Yahoo·ETF持仓',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}/holdings`:'https://finance.yahoo.com/etfs/'}},
+  us_get_etf_sector_weights:    {label:'Yahoo·ETF行业',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}/holdings`:'https://finance.yahoo.com/etfs/'}},
+  us_news_get_market_news:      {label:'Yahoo·美股新闻',fn:()=>'https://finance.yahoo.com/topic/stock-market-news/'},
+  us_news_get_ticker_news:      {label:'Yahoo·个股新闻',fn:c=>{const s=_parseArg(c,'symbol')||_parseArg(c,'ticker');return s?`https://finance.yahoo.com/quote/${s}/news`:'https://finance.yahoo.com/topic/stock-market-news/'}},
+  us_news_get_etf_news:         {label:'Yahoo·ETF新闻',fn:()=>'https://finance.yahoo.com/etfs/'},
 };
 
 function _sourceLink(toolName, callContent) {
-  const r = SOURCE_RULES[toolName];
+  const r = _resolveToolSource(toolName, callContent);
   if (!r) return '';
-  const url = r.fn(callContent || '');
-  if (!url) return `<span class="tc-source" style="cursor:default">${r.label}</span>`;
-  return `<a class="tc-source" href="${url}" target="_blank" rel="noopener" title="查看${r.label}数据出处">${r.label}</a>`;
+  if (!r.url) return `<span class="tc-source" style="cursor:default">${r.label}</span>`;
+  return `<a class="tc-source" href="${r.url}" target="_blank" rel="noopener" title="查看${r.label}数据出处">${r.label}</a>`;
+}
+
+function _resolveToolSource(toolName, callContent) {
+  const r = SOURCE_RULES[toolName];
+  if (r) return { label: r.label, url: r.fn(callContent || '') };
+  // 未登记的美股工具：东财列表兜底（国内常见 fallback）
+  if (/^us_(get_|news_|filing_|sentiment_)/i.test(toolName || '')) {
+    return {
+      label: '东方财富·美股行情',
+      url: 'https://quote.eastmoney.com/center/gridlist.html#us_stocks',
+    };
+  }
+  return null;
+}
+
+function _ensureSourceFooter(contentEl, text, usedSources, market) {
+  if (!contentEl) return;
+  if (contentEl.querySelector('.source-line, .source-footer')) return;
+  const hasSourceInText = /数据来源\s*[:：]/.test(String(text || ''));
+  if (hasSourceInText) return;
+
+  const seen = new Map();
+  for (const [tool, content] of usedSources || []) {
+    const r = _resolveToolSource(tool, content);
+    if (r && !seen.has(r.label)) seen.set(r.label, r.url);
+  }
+  const m = String(market || '').toUpperCase();
+  if (seen.size === 0 && (m === 'US' || m === 'MIXED')) {
+    seen.set('东方财富·美股行情', 'https://quote.eastmoney.com/center/gridlist.html#us_stocks');
+  }
+  if (seen.size === 0) return;
+
+  let html = '<div class="source-footer" style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--text2)">数据来源：';
+  const parts = [];
+  for (const [label, url] of seen) {
+    if (url) parts.push(`<a href="${url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${label}</a>`);
+    else parts.push(label);
+  }
+  html += parts.join('、') + '</div>';
+  contentEl.insertAdjacentHTML('beforeend', html);
 }
 
 function _getOrCreateThreadEl(threadId) {
@@ -638,8 +702,37 @@ function _getOrCreateThreadEl(threadId) {
   const el = document.createElement('div');
   el.className = 'thread-container';
   el.style.cssText = 'display:flex;flex-direction:column;gap:16px;min-height:100%';
-  threadData.set(threadId, { el, streaming: false });
+  threadData.set(threadId, { el, streaming: false, scrollTop: null });
   return el;
+}
+
+/** 离开会话前记下 #messages 滚动位置（按 thread 存） */
+function _saveThreadScroll(threadId) {
+  if (!threadId) return;
+  const m = document.getElementById('messages');
+  if (!m || m.querySelector('#dashboard, .dashboard')) return;
+  const td = threadData.get(threadId);
+  if (!td) return;
+  td.scrollTop = m.scrollTop;
+}
+
+/** 回到会话后恢复离开时的位置；无记录则滚到底 */
+function _restoreThreadScroll(threadId, { fallbackBottom = true } = {}) {
+  const m = document.getElementById('messages');
+  if (!m) return;
+  const saved = threadData.get(threadId)?.scrollTop;
+  const apply = () => {
+    if (typeof saved === 'number' && Number.isFinite(saved)) {
+      m.scrollTop = saved;
+    } else if (fallbackBottom) {
+      m.scrollTop = m.scrollHeight;
+    }
+  };
+  // 等容器挂上并完成一帧布局后再设，避免被后续布局冲掉
+  requestAnimationFrame(() => {
+    apply();
+    requestAnimationFrame(apply);
+  });
 }
 
 function _isCurrentThreadStreaming() {
@@ -705,6 +798,9 @@ function setResolvedMarketBadge(market, source, msgEl) {
   const label = MARKET_LABELS[m] || m;
   const css = _marketCssClass(m);
   if (msgEl) {
+    // 挂到消息根节点，供 .fin-up/.fin-down 按市场切换红绿（美股绿涨红跌）
+    msgEl.classList.remove('mkt-us', 'mkt-cn-a', 'mkt-mixed', 'mkt-unknown');
+    msgEl.classList.add('mkt-' + css);
     let chip = msgEl.querySelector('.mkt-chip');
     if (!chip) {
       chip = document.createElement('span');
@@ -793,7 +889,15 @@ function renderConvList(convs) {
 // 切换会话（核心：交换可见容器）
 // =====================================================================
 async function switchConversation(threadId) {
-  if (threadId === currentThread) return;
+  // 从看板点回「当前会话」时 currentThread 仍等于该 id，必须放行
+  if (threadId === currentThread && !viewingDashboard) return;
+
+  // 切到其他会话前先记下当前滚动；从看板回来则沿用离开时已保存的位置
+  if (!viewingDashboard && currentThread && currentThread !== threadId) {
+    _saveThreadScroll(currentThread);
+  }
+
+  viewingDashboard = false;
   currentThread = threadId;
   document.getElementById('threadDisplay').textContent = threadId.slice(0, 12) + '…';
   document.getElementById('threadDisplay').title = threadId;
@@ -818,7 +922,7 @@ async function switchConversation(threadId) {
     } else {
       clearHighlights();
     }
-    scrollToBottom();
+    _restoreThreadScroll(threadId);
     return;
   }
 
@@ -835,21 +939,30 @@ async function switchConversation(threadId) {
       showDashboard();
       return;
     }
+    let inferredMarket = null;
     msgs.forEach(m => {
       if (m.role === 'user') {
         _appendUserMsg(container, m.content);
       } else if (m.role === 'assistant') {
         const d = document.createElement('div');
         d.className = 'msg assistant';
+        if (looksLikeUsMarketText(m.content)) {
+          d.classList.add('mkt-us');
+          inferredMarket = 'US';
+        }
         d.innerHTML = '<div class="content">' + renderMarkdown(m.content) + '</div>';
         container.appendChild(d);
       }
     });
+    const tdLoad = threadData.get(threadId);
+    if (tdLoad && inferredMarket) {
+      tdLoad.market = inferredMarket;
+      tdLoad.market_source = 'history_heuristic';
+    }
     msgArea.innerHTML = '';
     msgArea.appendChild(container);
-    setResolvedMarketBadge('UNKNOWN', '');
-    scrollToBottom();
-    scrollToBottom();
+    setResolvedMarketBadge(inferredMarket || 'UNKNOWN', inferredMarket ? 'history_heuristic' : '');
+    _restoreThreadScroll(threadId);
   } catch {
     msgArea.innerHTML = '<div style="text-align:center;color:var(--red);padding:40px">加载失败</div>';
   }
@@ -879,6 +992,11 @@ let _trendingData = {};
 let _trendingActiveTab = '';
 
 function showDashboard() {
+  // 离开对话前记住滚动位置，回来时还原
+  if (!viewingDashboard && currentThread) {
+    _saveThreadScroll(currentThread);
+  }
+  viewingDashboard = true;
   const m = document.getElementById('messages');
   m.innerHTML = `<div class="dashboard" id="dashboard">${_dashboardInnerHtml()}</div>`;
   _pieChart = null;
@@ -905,7 +1023,7 @@ function _dashboardInnerHtml() {
     <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板<span class="sec-hours">交易时间 工作日 09:30–11:30 / 13:00–15:00（北京时间）</span></div>
     <div class="dash-top">
       <div class="dash-top-left">
-        <div class="dash-indices-head">主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
+        <div class="dash-indices-head">A股主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
         <div class="dash-indices" id="dashIndices"></div>
       </div>
       <div class="dash-top-right">
@@ -1047,9 +1165,15 @@ function _buildIndustryMap(data) {
   return map;
 }
 
+/** 东财涨停池行业截断兜底（后端也会补全；前端再挡一层） */
+const INDUSTRY_FIX = {
+  '房地产开': '房地产开发',
+  '互联网服': '互联网服务',
+};
 function _industryOf(s) {
   if (!s) return '';
-  return s.industry || _industryMap[String(s.code || '')] || '';
+  const raw = s.industry || _industryMap[String(s.code || '')] || '';
+  return INDUSTRY_FIX[raw] || raw;
 }
 
 function _renderDashboard() {
@@ -1172,8 +1296,8 @@ function _renderUsPieChart(breadth) {
       type:'pie', radius:['42%','72%'], center:['50%','48%'],
       label:{show:false},
       data: [
-        {value:up, name:'涨幅榜命中', itemStyle:{color:'#4ade80'}},
-        {value:down, name:'跌幅榜命中', itemStyle:{color:'#f87171'}},
+        {value:up, name:'上涨', itemStyle:{color:'#4ade80'}},
+        {value:down, name:'下跌', itemStyle:{color:'#f87171'}},
       ],
       emphasis:{scale:true,scaleSize:4}
     }],
@@ -1220,11 +1344,13 @@ function _renderUsQuoteList(elId, items, label) {
     const code = s.code || s.symbol || '';
     const name = _usDisplayName(s);
     const query = `分析美股${name}(${code})的最新行情、驱动因素和后市展望`;
-    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
-      <span class="zt-name">${escHtml(name || code)}</span>
-      <span class="hot-code">${escHtml(code)}</span>
-      ${priceText ? `<span class="hot-price" title="最新价（美元）">$${priceText}</span>` : ''}
-      <span class="hot-change ${cls}">${changeText}</span>
+    return `<li class="zt-item us-quote-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-name" title="${escHtmlAttr(name || code)}">${escHtml(name || code)}</span>
+      <span class="zt-right">
+        <span class="hot-code">${escHtml(code)}</span>
+        ${priceText ? `<span class="hot-price" title="最新价（美元）">$${priceText}</span>` : ''}
+        <span class="hot-change ${cls}">${changeText}</span>
+      </span>
     </li>`;
   }).join('');
 }
@@ -1476,12 +1602,48 @@ function escHtmlAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').
 
 function newThread() {
   currentThread = null;
+  viewingDashboard = true;
   document.getElementById('threadDisplay').textContent = '-';
   setResolvedMarketBadge('UNKNOWN', '');
   showDashboard();
   clearHighlights();
   _updateSendBtn();
   document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+}
+
+/** 同会话跟进：无手动覆盖时，把上一轮市场作为 sticky 传给后端（避免「下周呢」被默认成 A 股） */
+function getThreadMarketSticky(threadId) {
+  const m = String(threadData.get(threadId)?.market || '').toUpperCase().replace('-', '_');
+  if (m === 'US' || m === 'MIXED' || m === 'CN_A') return m;
+  return null;
+}
+
+function _msgUsedUsSpecialist(msgEl) {
+  if (!msgEl) return false;
+  if (msgEl.classList.contains('mkt-us') || msgEl.classList.contains('mkt-mixed')) return true;
+  return [...msgEl.querySelectorAll('.handoff-tag')].some(t =>
+    /^us_|us_data|us_filing|us_news|us_sentiment/i.test(t.textContent || '')
+  );
+}
+
+function applyMarketBadgeSafely(market, source, msgEl, td) {
+  const m = String(market || '').toUpperCase().replace('-', '_');
+  const src = String(source || '');
+  // 默认 A 股不能盖掉已用美股专家 / 会话粘性美股
+  if (
+    m === 'CN_A' &&
+    (src === 'default' || src === 'product_default' || src === 'product_default_cn_a') &&
+    (_msgUsedUsSpecialist(msgEl) || String(td?.market || '').toUpperCase() === 'US')
+  ) {
+    setResolvedMarketBadge('US', 'thread_sticky_ui', msgEl);
+    if (td) { td.market = 'US'; td.market_source = 'thread_sticky_ui'; }
+    return;
+  }
+  setResolvedMarketBadge(market, source, msgEl);
+  if (td && market) {
+    td.market = market;
+    td.market_source = source;
+  }
 }
 
 // =====================================================================
@@ -1546,6 +1708,7 @@ async function _runStream(query, sendThreadId, userId) {
   const abortCtrl = new AbortController();
 
   try {
+    const sticky = getThreadMarketSticky(threadId);
     const resp = await fetch('/api/supervisor/research/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -1554,6 +1717,7 @@ async function _runStream(query, sendThreadId, userId) {
         user_id: userId,
         thread_id: threadId,
         market: getMarketOverride(),
+        thread_market: sticky,
       }),
       signal: abortCtrl.signal,
     });
@@ -1587,16 +1751,14 @@ async function _runStream(query, sendThreadId, userId) {
     const typingEl = msgEl.querySelector('.typing');
 
     if (hdrMarket) {
-      setResolvedMarketBadge(hdrMarket, hdrMarketSource, msgEl);
-      const td0 = threadData.get(threadId);
-      if (td0) {
-        td0.market = hdrMarket;
-        td0.market_source = hdrMarketSource;
-      }
+      applyMarketBadgeSafely(hdrMarket, hdrMarketSource, msgEl, threadData.get(threadId));
+    } else if (sticky) {
+      applyMarketBadgeSafely(sticky, 'thread_sticky', msgEl, threadData.get(threadId));
     }
 
     // 如果发送时还在看这个线程（或是新会话），切换到它
-    if (!sendThreadId || sendThreadId === threadId || currentThread === null || currentThread === sendThreadId) {
+    if (!sendThreadId || sendThreadId === threadId || currentThread === null || currentThread === sendThreadId || viewingDashboard) {
+      viewingDashboard = false;
       currentThread = threadId;
       document.getElementById('threadDisplay').textContent = threadId.slice(0, 12) + '…';
       document.getElementById('threadDisplay').title = threadId;
@@ -1640,6 +1802,9 @@ async function _runStream(query, sendThreadId, userId) {
         switch (evt.phase) {
           case 'update':
             phaseTag.textContent = '处理中';
+            if (evt.metadata?.market) {
+              applyMarketBadgeSafely(evt.metadata.market, evt.metadata.market_source, msgEl, td);
+            }
             if (evt.metadata?.available_specialists && viewing) {
               renderSpecialists(evt.metadata.available_specialists);
             }
@@ -1653,6 +1818,10 @@ async function _runStream(query, sendThreadId, userId) {
             tag.textContent = specialist;
             handoffsEl.appendChild(tag);
             td._activeSpecialist = specialist;
+            // 美股专家接手时立即切绿涨红跌，并粘住会话市场
+            if (/^us_|us_data|us_filing|us_news|us_sentiment/i.test(String(specialist))) {
+              applyMarketBadgeSafely('US', 'specialist_handoff', msgEl, td);
+            }
             if (viewing) highlightSpecialist(specialist);
             _scrollIfViewing(threadId);
             break;
@@ -1707,7 +1876,7 @@ async function _runStream(query, sendThreadId, userId) {
               contentEl.appendChild(tokenStreamEl);
             }
             tokenBuf += evt.content || '';
-            tokenStreamEl.innerHTML = renderMarkdown(tokenBuf);
+            tokenStreamEl.innerHTML = renderMarkdown(tokenBuf, { market: td.market });
             _scrollIfViewing(threadId);
             break;
           }
@@ -1720,14 +1889,16 @@ async function _runStream(query, sendThreadId, userId) {
             });
             phaseTag.textContent = '回答完成';
             finalText = evt.content || '';
-            contentEl.innerHTML = renderMarkdown(finalText);
+            if (evt.metadata?.market) {
+              applyMarketBadgeSafely(evt.metadata.market, evt.metadata.market_source, msgEl, td);
+            } else if (looksLikeUsMarketText(finalText) && (!td.market || td.market === 'UNKNOWN')) {
+              applyMarketBadgeSafely('US', 'content_heuristic', msgEl, td);
+            } else if (_msgUsedUsSpecialist(msgEl)) {
+              applyMarketBadgeSafely('US', 'specialist_handoff', msgEl, td);
+            }
+            contentEl.innerHTML = renderMarkdown(finalText, { market: td.market });
             typingEl.style.display = 'none';
             td._activeSpecialist = null;
-            if (evt.metadata?.market) {
-              setResolvedMarketBadge(evt.metadata.market, evt.metadata.market_source, msgEl);
-              td.market = evt.metadata.market;
-              td.market_source = evt.metadata.market_source;
-            }
             if (viewing) clearHighlights();
             _scrollIfViewing(threadId);
             break;
@@ -1739,7 +1910,7 @@ async function _runStream(query, sendThreadId, userId) {
             td._activeSpecialist = null;
             if (viewing) clearHighlights();
             const draftText = evt.content || contentEl.textContent || '';
-            if (draftText) contentEl.innerHTML = renderMarkdown(draftText);
+            if (draftText) contentEl.innerHTML = renderMarkdown(draftText, { market: td.market });
             const reviewEl = document.createElement('div');
             reviewEl.className = 'review-panel';
             reviewEl.innerHTML = `
@@ -1793,24 +1964,17 @@ async function _runStream(query, sendThreadId, userId) {
       }
     }
 
-    if (finalText) contentEl.innerHTML = renderMarkdown(finalText);
+    if (finalText) {
+      if (looksLikeUsMarketText(finalText) && (!td.market || td.market === 'UNKNOWN')) {
+        setResolvedMarketBadge('US', 'content_heuristic', msgEl);
+        td.market = 'US';
+      }
+      contentEl.innerHTML = renderMarkdown(finalText, { market: td.market });
+    }
     typingEl.style.display = 'none';
 
-    if (usedSources.size > 0) {
-      const seen = new Map();
-      for (const [tool, content] of usedSources) {
-        const r = SOURCE_RULES[tool];
-        if (r && !seen.has(r.label)) seen.set(r.label, r.fn(content));
-      }
-      let html = '<div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border);font-size:11px;color:var(--text2)">数据来源：';
-      const parts = [];
-      for (const [label, url] of seen) {
-        if (url) parts.push(`<a href="${url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${label}</a>`);
-        else parts.push(label);
-      }
-      html += parts.join('、') + '</div>';
-      contentEl.insertAdjacentHTML('beforeend', html);
-    }
+    // 正文若已有「数据来源」行则只补链；否则用工具调用 / 美股默认来源兜底
+    _ensureSourceFooter(contentEl, finalText || tokenBuf, usedSources, td.market);
     refreshUsage();
 
   } catch (err) {
@@ -2096,7 +2260,23 @@ function showToast(msg) {
 // =====================================================================
 // Markdown 渲染
 // =====================================================================
-function renderMarkdown(text) {
+function sanitizeSignedPercents(text) {
+  // 与后端 research_agent.text.finance_signs 对齐：-+ / - + / 全角号 → 单一符号
+  return String(text || '')
+    .replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, '-')
+    .replace(/[\uFF0B\uFE62]/g, '+')
+    .replace(/(?:-\s*\+|\+\s*-)\s*(?=\d)/g, '-');
+}
+
+function looksLikeUsMarketText(text) {
+  return /(?:\^GSPC|\^IXIC|\^NDX|\^DJI|Nasdaq|纳斯达克|标普\s*500|S&P\s*500|道琼斯|美股|NYSE|NASDAQ|us_data)/i.test(
+    String(text || '')
+  );
+}
+
+function renderMarkdown(text, opts) {
+  const market = String(opts?.market || '').toUpperCase().replace('-', '_');
+  text = sanitizeSignedPercents(text);
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const out = [];
   let i = 0;
@@ -2131,15 +2311,30 @@ function renderMarkdown(text) {
   }
   let html = out.join('');
   html = html.replace(/((?:<li>.*?<\/li>)+)/g, '<ul>$1</ul>');
+  const useUsPalette = market === 'US' || market === 'MIXED' || looksLikeUsMarketText(text);
+  if (useUsPalette) html = `<div class="fin-palette-us">${html}</div>`;
   return html;
 }
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function applyInline(s) {
-  s = s.replace(/([+-]?\d+\.?\d*%)/g, (match) => {
-    const num = parseFloat(match);
-    if (num > 0) return `<span class="fin-up">${match.startsWith('+') ? '' : '+'}${match}</span>`;
-    if (num < 0) return `<span class="fin-down">${match}</span>`;
-    return match;
+  s = sanitizeSignedPercents(s);
+  // 百分比着色：正→fin-up，负→fin-down（颜色由 mkt-us / fin-palette-us / 默认 A 股 CSS 决定）
+  s = s.replace(/(^|[^0-9.+-])([+-]?\d+(?:\.\d+)?)\s*(%)/g, (full, pre, numStr, pct) => {
+    const num = parseFloat(numStr);
+    if (Number.isNaN(num) || num === 0) return full;
+    if (num > 0) {
+      const body = numStr.replace(/^\+/, '');
+      return `${pre}<span class="fin-up">+${body}${pct}</span>`;
+    }
+    const body = numStr.startsWith('-') ? numStr : `-${numStr}`;
+    return `${pre}<span class="fin-down">${body}${pct}</span>`;
+  });
+  // 表格里的涨跌点数（无 %）：+3.68 / -161.87
+  s = s.replace(/(^|[^0-9.+-])([+-]\d+(?:\.\d+)?)(?![0-9.%])/g, (full, pre, numStr) => {
+    const num = parseFloat(numStr);
+    if (Number.isNaN(num) || num === 0) return full;
+    const cls = num > 0 ? 'fin-up' : 'fin-down';
+    return `${pre}<span class="${cls}">${numStr}</span>`;
   });
   s = s.replace(/\*\*(.+?)\*\*/g, '<span class="fin-highlight">$1</span>');
   s = s.replace(/`([^`]+)`/g, '<code style="background:var(--surface2);padding:1px 5px;border-radius:3px;font-size:13px">$1</code>');
@@ -2160,9 +2355,33 @@ function renderLine(line) {
   s = applyInline(s);
   s = s.replace(/^\s*[-*] (.+)$/gm, '<li>$1</li>');
   s = s.replace(/^\s*(\d+)\. (.+)$/gm, '<li>$2</li>');
-  if (/^数据来源[：:]/.test(line.trim())) return `<div class="source-line">${s}</div>`;
+  if (/^数据来源[：:]/.test(line.trim())) {
+    s = linkifySourcePhrases(s);
+    return `<div class="source-line">${s}</div>`;
+  }
   if (s.startsWith('<li>')) return s;
   return `<div class="md-p">${s}</div>`;
+}
+
+/** 模型常写纯文本「东方财富美股行情」而不带 markdown 链接；在此补可点击链接 */
+function linkifySourcePhrases(html) {
+  const rules = [
+    [/东方财富美股(?:指数)?行情|东方财富美股|东财美股行情/g, 'https://quote.eastmoney.com/center/gridlist.html#us_stocks'],
+    [/东方财富(?:·)?指数行情|东方财富指数/g, 'https://quote.eastmoney.com/center/gridlist.html#index_sh'],
+    [/东方财富(?:·)?行情(?![\u4e00-\u9fff])/g, 'https://quote.eastmoney.com/center/gridlist.html#hs_a_board'],
+    [/Yahoo\s*Finance|Yahoo财经/gi, 'https://finance.yahoo.com/'],
+  ];
+  let out = String(html || '');
+  for (const [re, url] of rules) {
+    out = out.replace(re, (m, offset, full) => {
+      const before = full.slice(Math.max(0, offset - 120), offset);
+      const openA = before.lastIndexOf('<a');
+      const closeA = before.lastIndexOf('</a>');
+      if (openA > closeA) return m; // 已在锚点内
+      return `<a href="${url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${m}</a>`;
+    });
+  }
+  return out;
 }
 
 // =====================================================================
