@@ -1,6 +1,6 @@
 """MCP Server — 美股英文新闻情感量化（平行于 ``news_sentiment_server``）。
 
-**不使用 SnowNLP**（中文模型）。PoC 采用可复现的英文金融关键词词典 + 极性规则。
+**不使用 SnowNLP**（中文模型）。主路径为 **VADER** compound 分 + 金融关键词增强，可复现、无 GPU。
 
 工具
 ----
@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastmcp import FastMCP
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from research_agent.cache import TTL_SHORT, cached_tool
 
@@ -33,15 +34,23 @@ if not logger.handlers:
 
 mcp = FastMCP("UsSentimentServer")
 
-_MODEL_VERSION = "en_fin_keywords_v1"
-MAX_LIMIT = 40
+_MODEL_VERSION = "en_vader_finlex_v1"
+MAX_LIMIT = 60
 
 _POSITIVE_THRESHOLD = 0.15
 _NEGATIVE_THRESHOLD = -0.15
 _STRONG_POSITIVE = 0.45
 _STRONG_NEGATIVE = -0.45
 
-# 英文金融关键词权重（命中即加减分；可后续换 VADER）
+# 合成权重：VADER 为主，金融词表为增强。
+# 0.4×clip(lex,0.45) 在 VADER≈0 时仍可达 positive 阈值 0.15。
+_VADER_WEIGHT = 0.6
+_LEXICON_WEIGHT = 0.4
+_LEXICON_CLIP = 0.45
+
+_VADER_ANALYZER: SentimentIntensityAnalyzer | None = None
+
+# 英文金融关键词权重（命中即加减分；与 VADER 加权合成）
 _POSITIVE_KEYWORDS: dict[str, float] = {
     "beat": 0.18,
     "beats": 0.18,
@@ -201,15 +210,16 @@ def _is_valid_us_ticker(symbol: str) -> bool:
     return bool(re.fullmatch(r"\^?[A-Z][A-Z0-9.\-]{0,11}", s))
 
 
-def _score_single(text: str) -> dict[str, Any]:
-    if not text or not text.strip():
-        return {
-            "sentiment_score": 0.0,
-            "sentiment_label": "neutral",
-            "keyword_adjustment": 0.0,
-            "keywords_matched": [],
-        }
+def _get_vader() -> SentimentIntensityAnalyzer:
+    """懒加载单例，避免每条新闻重复构造 Analyzer。"""
+    global _VADER_ANALYZER
+    if _VADER_ANALYZER is None:
+        _VADER_ANALYZER = SentimentIntensityAnalyzer()
+    return _VADER_ANALYZER
 
+
+def _lexicon_adjustment(text: str) -> tuple[float, list[str]]:
+    """金融词表加减分；钳制到 ±_LEXICON_CLIP，避免淹没 VADER。"""
     lower = text.lower()
     matched: list[str] = []
     adjustment = 0.0
@@ -219,33 +229,51 @@ def _score_single(text: str) -> dict[str, Any]:
             matched.append(kw)
             adjustment += weight
 
-    # 轻度标点/叹号偏置
     if "!" in text and adjustment > 0:
         adjustment += 0.02
     if re.search(r"\b(not|no|never)\b.{0,20}\b(beat|growth|profit)\b", lower):
         adjustment -= 0.08
 
-    final = max(-1.0, min(1.0, adjustment))
-    # 无关键词时保持中性，避免空文瞎猜
-    if not matched:
-        final = 0.0
+    adjustment = max(-_LEXICON_CLIP, min(_LEXICON_CLIP, adjustment))
+    return adjustment, matched
 
+
+def _label_from_score(final: float) -> str:
     if final >= _STRONG_POSITIVE:
-        label = "strong_positive"
-    elif final >= _POSITIVE_THRESHOLD:
-        label = "positive"
-    elif final <= _STRONG_NEGATIVE:
-        label = "strong_negative"
-    elif final <= _NEGATIVE_THRESHOLD:
-        label = "negative"
-    else:
-        label = "neutral"
+        return "strong_positive"
+    if final >= _POSITIVE_THRESHOLD:
+        return "positive"
+    if final <= _STRONG_NEGATIVE:
+        return "strong_negative"
+    if final <= _NEGATIVE_THRESHOLD:
+        return "negative"
+    return "neutral"
+
+
+def _score_single(text: str) -> dict[str, Any]:
+    """VADER compound（0.6）+ 金融词表（0.4）合成到 [-1, 1]。"""
+    if not text or not text.strip():
+        return {
+            "sentiment_score": 0.0,
+            "sentiment_label": "neutral",
+            "keyword_adjustment": 0.0,
+            "keywords_matched": [],
+            "vader_compound": 0.0,
+        }
+
+    vader_compound = float(_get_vader().polarity_scores(text)["compound"])
+    adjustment, matched = _lexicon_adjustment(text)
+    final = max(
+        -1.0,
+        min(1.0, _VADER_WEIGHT * vader_compound + _LEXICON_WEIGHT * adjustment),
+    )
 
     return {
         "sentiment_score": round(final, 4),
-        "sentiment_label": label,
+        "sentiment_label": _label_from_score(final),
         "keyword_adjustment": round(adjustment, 4),
         "keywords_matched": matched,
+        "vader_compound": round(vader_compound, 4),
     }
 
 
@@ -362,7 +390,7 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
     ticker = _normalize_ticker(symbol)
     url = (
         "https://query1.finance.yahoo.com/v1/finance/search"
-        f"?q={quote(ticker)}&quotesCount=0&newsCount={max(limit, 8)}&listsCount=0"
+        f"?q={quote(ticker)}&quotesCount=0&newsCount={max(limit, 20)}&listsCount=0"
     )
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     payload: dict[str, Any] | None = None
@@ -470,7 +498,7 @@ def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], l
 
 @mcp.tool()
 async def analyze_text_sentiment(texts: list[str]) -> dict:
-    """对英文文本列表做金融情感评分（关键词词典，可复现，不走大模型）。
+    """对英文文本列表做金融情感评分（VADER + 金融词表，可复现，不走大模型）。
 
     Args:
         texts: 待打分文本列表。
@@ -508,13 +536,13 @@ async def analyze_text_sentiment(texts: list[str]) -> dict:
 
 @mcp.tool()
 @cached_tool(ttl=TTL_SHORT, namespace="us_sentiment")
-async def get_ticker_sentiment_report(symbol: str, limit: int = 20) -> dict:
+async def get_ticker_sentiment_report(symbol: str, limit: int = 30) -> dict:
     """一站式美股 ticker 舆情报告：Yahoo 新闻 → 逐条打分 → 聚合。
 
     Args:
         symbol: 美股 ticker，如 ``AAPL``、``TSLA``、``SPY``、``QQQ``。
             **禁止** A 股数字代码或残缺参数（如 ``000``、``000001``）。
-        limit: 新闻条数上限（1–40）。
+        limit: 新闻条数上限（1–60，默认 30；样本越多正/中/负占比越稳）。
     """
     limit = max(1, min(int(limit), MAX_LIMIT))
     ticker = _normalize_ticker(symbol)

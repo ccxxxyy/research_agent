@@ -24,7 +24,7 @@
 - **基金分析** —— akshare 抓天天基金/东方财富基金频道（ETF/LOF 实时行情、基金净值、持仓、评级、排名等 10 个工具）；
 - **披露公告 PDF** —— 巨潮资讯（cninfo）；
 - **市场新闻 & 舆情** —— 东方财富、财联社快讯、雪球热度榜、百度财经早晚报；
-- **量化情感** —— SnowNLP + 金融关键词词典（确定性，不走 LLM 打分）；
+- **量化情感** —— A 股 SnowNLP + 金融词典；美股 **VADER + 金融词表**（确定性，不走 LLM 打分）；
 - **私有 PDF 知识库** —— FAISS（向量）+ BM25（关键词）+ bge-reranker（cross-encoder 重排），Corrective-RAG 闭环。
 
 ---
@@ -718,7 +718,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 
 - **P1**：`us_data_server` + `us_data_expert`（股票/指数/ETF；报价 Chart→东财→yfinance）
 - **P2**：`us_filing_server` + `us_filing_expert`（普通股 10-K/10-Q/8-K/DEF 14A；ETF：NPORT-P/N-CSR/485BPOS）
-- **P3**：`us_news_server` + `us_sentiment_server`（Yahoo Search HTTP / 英文词典舆情）
+- **P3**：`us_news_server` + `us_sentiment_server`（Yahoo Search HTTP / VADER+金融词表舆情）
 - **P4**：ETF 持仓工具、语义缓存 US 域、路由 Eval、UI 市场徽章
 - **P5**：MIXED `[MixedOrchestration]` + `mixed_market_routing` 评估集
 

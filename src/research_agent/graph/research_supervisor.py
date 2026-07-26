@@ -278,7 +278,7 @@ SUPERVISOR_PROMPT_US_NEWS = """\
 """
 
 SUPERVISOR_PROMPT_US_SENTIMENT = """\
-  - us_sentiment_expert ：美股英文舆情量化（英文金融关键词词典，不用 SnowNLP）。
+  - us_sentiment_expert ：美股英文舆情量化（VADER + 金融词表增强，不用 SnowNLP）。
     工具集（前缀 us_sentiment_）：
         * us_sentiment_get_ticker_sentiment_report
         * us_sentiment_analyze_text_sentiment

@@ -28,7 +28,7 @@ CN_A（A 股）                                  US（美股）
 akshare → 东财/新浪/雪球等            报价：Yahoo Chart → 东财 ulist → yfinance
 巨潮 cninfo（披露 PDF）               SEC EDGAR（10-K… + ETF: NPORT-P/N-CSR/485BPOS）
 东财/财联社/雪球（新闻）               新闻：Yahoo Search HTTP → yfinance
-SnowNLP（中文舆情）                   英文关键词词典（本地打分）
+SnowNLP（中文舆情）                   VADER + 金融词表增强（本地打分）
 知识库 FAISS（跨市场共享引擎）         同上（共享 RAG 引擎，内容按集合隔离）
 ```
 
@@ -62,7 +62,7 @@ A 股侧目前也是「**一个接入层（akshare）+ 多家底层站点**」�
 | 报价 / 历史 / ETF | `us_data_server` | 仅 yfinance | Yahoo Finance |
 | 披露 | `us_filing_server` | SEC submissions / company tickers | **EDGAR（官方）** |
 | 新闻 | `us_news_server` | 仅 yfinance.Ticker.news | Yahoo |
-| 舆情 | `us_sentiment_server` | 仅 yfinance 拉新闻 + 本地词典 | Yahoo + 本地 |
+| 舆情 | `us_sentiment_server` | 仅 yfinance 拉新闻 + 本地词典打分 | Yahoo + 本地词典（历史） |
 
 文档与 ADR 中写的「PoC 接受 yfinance」即指此阶段。之后已在 **同一 Yahoo 栈内**加了 Chart / Search HTTP 快路径（见 §4.2），**不是**换供应商。
 
@@ -112,6 +112,10 @@ get_ticker_sentiment_report
     │     .../v1/finance/search?q={ticker}&newsCount=...
     │
     └─② 失败再：yfinance.Ticker.news
+
+打分（本地，不走 LLM）：
+    sentiment_score = clip(0.6 * VADER.compound + 0.4 * finlex_adjustment, -1, 1)
+    model_version = en_vader_finlex_v1
 ```
 
 #### 新闻专家（`us_news_server`）
@@ -228,7 +232,7 @@ FINNHUB_API_KEY=...
 | 通用联网搜索（Tavily 等） | 未挂载；仅有 `retriever.py` 文案；**不应用作行情主源** |
 | 美股共同基金 / 期权 | 明确不在一期范围 |
 | Finnhub / Polygon 等多供应商 | 未接入 |
-| 英文舆情换 VADER / 专用模型 | 仍为关键词词典 PoC |
+| 英文舆情 FinBERT / 专用 Transformer | 可选；当前已为 VADER + 金融词表（`en_vader_finlex_v1`） |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
 | 左侧知识库栏按「当前集合」过滤显示 | 无；列出该用户全部集合的 PDF |
 
@@ -250,3 +254,4 @@ FINNHUB_API_KEY=...
 | `us_news_*` 与舆情对齐：Search HTTP 优先；§4.1 标明为历史 PoC；代码索引去掉「仍偏 yfinance」 |
 | `us_filing_*` 默认纳入 ETF 表单 `NPORT-P` / `N-CSR` / `N-CSRS` / `485BPOS`（`N-PORT` 别名可匹配） |
 | 报价链写入东财 ulist；代理诚实性；文档与 ADR-0006 / README 漂移对齐（粘性市场、免责去重、来源链接等） |
+| 美股舆情打分：词典 PoC → VADER + 金融词表（`en_vader_finlex_v1`） |
