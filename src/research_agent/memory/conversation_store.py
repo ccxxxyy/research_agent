@@ -47,7 +47,8 @@ class ConversationStore:
                 user_id    TEXT NOT NULL,
                 title      TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                pinned     INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_conv_user
                 ON conversations(user_id, updated_at DESC);
@@ -63,6 +64,10 @@ class ConversationStore:
             CREATE INDEX IF NOT EXISTS idx_msg_thread
                 ON messages(thread_id, id);
         """)
+        # 旧库升级：补 pinned 列
+        cols = {row[1] for row in c.execute("PRAGMA table_info(conversations)").fetchall()}
+        if "pinned" not in cols:
+            c.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         c.commit()
 
     # ---- 会话操作 ----
@@ -89,17 +94,47 @@ class ConversationStore:
         rows = (
             self._conn()
             .execute(
-                """SELECT thread_id, title, created_at, updated_at,
+                """SELECT thread_id, title, created_at, updated_at, pinned,
                       (SELECT COUNT(*) FROM messages m WHERE m.thread_id = c.thread_id) AS msg_count
                FROM conversations c
                WHERE user_id = ?
-               ORDER BY updated_at DESC
+               ORDER BY pinned DESC, updated_at DESC
                LIMIT ?""",
                 (user_id, limit),
             )
             .fetchall()
         )
-        return [dict(r) for r in rows]
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            d["pinned"] = bool(d.get("pinned"))
+            out.append(d)
+        return out
+
+    def rename_conversation(self, thread_id: str, user_id: str, title: str) -> bool:
+        title = (title or "").strip()
+        if not title:
+            return False
+        if len(title) > 80:
+            title = title[:80]
+        c = self._conn()
+        cur = c.execute(
+            """UPDATE conversations SET title = ?, updated_at = ?
+               WHERE thread_id = ? AND user_id = ?""",
+            (title, datetime.now(UTC).isoformat(), thread_id, user_id),
+        )
+        c.commit()
+        return cur.rowcount > 0
+
+    def set_pinned(self, thread_id: str, user_id: str, pinned: bool) -> bool:
+        c = self._conn()
+        cur = c.execute(
+            """UPDATE conversations SET pinned = ?, updated_at = ?
+               WHERE thread_id = ? AND user_id = ?""",
+            (1 if pinned else 0, datetime.now(UTC).isoformat(), thread_id, user_id),
+        )
+        c.commit()
+        return cur.rowcount > 0
 
     def delete_conversation(self, thread_id: str, user_id: str) -> bool:
         c = self._conn()

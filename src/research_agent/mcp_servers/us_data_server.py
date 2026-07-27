@@ -295,6 +295,251 @@ def _history_records(df: Any, *, limit: int) -> list[dict[str, Any]]:
     return records
 
 
+def _history_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not records:
+        return {}
+    first, last = records[0], records[-1]
+    if first.get("close") and last.get("close"):
+        try:
+            ret = (float(last["close"]) - float(first["close"])) / float(first["close"])
+            return {
+                "start_close": first["close"],
+                "end_close": last["close"],
+                "return_percent": round(ret * 100, 4),
+                "bars": len(records),
+            }
+        except (TypeError, ValueError, ZeroDivisionError):
+            return {"bars": len(records)}
+    return {"bars": len(records)}
+
+
+_PERIOD_TO_YAHOO_RANGE: dict[str, str] = {
+    "5d": "5d",
+    "1mo": "1mo",
+    "3mo": "3mo",
+    "6mo": "6mo",
+    "1y": "1y",
+    "2y": "2y",
+    "5y": "5y",
+    "10y": "10y",
+    "ytd": "ytd",
+    "max": "max",
+}
+
+_PERIOD_TO_EM_LIMIT: dict[str, int] = {
+    "5d": 8,
+    "1mo": 30,
+    "3mo": 70,
+    "6mo": 140,
+    "1y": 260,
+    "2y": 520,
+    "5y": 1200,
+    "10y": 1200,
+    "ytd": 260,
+    "max": 1200,
+}
+
+
+def _http_get_json(url: str, *, timeout: float = 10.0) -> dict[str, Any] | None:
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    try:
+        from curl_cffi import requests as curl_requests
+
+        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import requests
+
+        sess = requests.Session()
+        sess.trust_env = False
+        try:
+            resp = sess.get(url, headers=headers, timeout=timeout)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, dict) else None
+        finally:
+            sess.close()
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _history_via_yahoo_chart(symbol: str, *, period: str, interval: str) -> dict[str, Any] | None:
+    """Yahoo Chart HTTP 日线兜底（yfinance 挂起/失败时仍可能可用）。"""
+    from urllib.parse import quote
+
+    if interval != "1d":
+        return None
+    range_ = _PERIOD_TO_YAHOO_RANGE.get(period)
+    if not range_:
+        return None
+    ticker = _normalize_ticker(symbol)
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        f"{quote(ticker, safe='')}?interval=1d&range={range_}"
+    )
+    payload = _http_get_json(url, timeout=10.0)
+    try:
+        result = ((payload or {}).get("chart") or {}).get("result") or []
+        if not result:
+            return None
+        ts = result[0].get("timestamp") or []
+        quote = ((result[0].get("indicators") or {}).get("quote") or [{}])[0]
+        opens = quote.get("open") or []
+        highs = quote.get("high") or []
+        lows = quote.get("low") or []
+        closes = quote.get("close") or []
+        volumes = quote.get("volume") or []
+        records: list[dict[str, Any]] = []
+        for i, t in enumerate(ts):
+            c = closes[i] if i < len(closes) else None
+            if c is None:
+                continue
+            date_str = datetime.fromtimestamp(int(t), tz=_ET).strftime("%Y-%m-%d")
+            records.append(
+                {
+                    "date": date_str,
+                    "open": _num_or_none(opens[i] if i < len(opens) else None),
+                    "high": _num_or_none(highs[i] if i < len(highs) else None),
+                    "low": _num_or_none(lows[i] if i < len(lows) else None),
+                    "close": _num_or_none(c),
+                    "volume": _num_or_none(volumes[i] if i < len(volumes) else None),
+                }
+            )
+        if not records:
+            return None
+        records = records[-120:]
+        return {
+            "symbol": ticker,
+            "period": period,
+            "interval": interval,
+            "bars": records,
+            "summary": _history_summary(records),
+            "source": "yahoo_chart",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/history",
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _history_via_eastmoney(symbol: str, *, period: str, interval: str) -> dict[str, Any] | None:
+    """东财美股日线 K 线兜底（Yahoo 全挂时的国内可达路径）。"""
+    if interval != "1d":
+        return None
+    ticker = _normalize_ticker(symbol)
+    secid = _resolve_eastmoney_us_secid(ticker)
+    if not secid:
+        return None
+    limit = _PERIOD_TO_EM_LIMIT.get(period, 60)
+    from urllib.parse import urlencode
+
+    params = {
+        "secid": secid,
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        "klt": "101",
+        "fqt": "1",
+        "end": "20500101",
+        "lmt": str(limit),
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+    }
+    hosts = (
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+        "https://push2hisdelay.eastmoney.com/api/qt/stock/kline/get",
+    )
+    payload: dict[str, Any] | None = None
+    for base in hosts:
+        payload = _http_get_json(f"{base}?{urlencode(params)}", timeout=10.0)
+        if payload and (payload.get("data") or {}).get("klines"):
+            break
+    try:
+        klines = ((payload or {}).get("data") or {}).get("klines") or []
+        records: list[dict[str, Any]] = []
+        for row in klines:
+            parts = str(row).split(",")
+            if len(parts) < 6:
+                continue
+            records.append(
+                {
+                    "date": parts[0],
+                    "open": _num_or_none(parts[1]),
+                    "close": _num_or_none(parts[2]),
+                    "high": _num_or_none(parts[3]),
+                    "low": _num_or_none(parts[4]),
+                    "volume": _num_or_none(parts[5]),
+                }
+            )
+        if not records:
+            return None
+        records = records[-120:]
+        proxy = _EM_US_PROXY_INSTRUMENTS.get(ticker)
+        note = None
+        if proxy:
+            note = f"东财无该指数直连 K 线，使用代理标的 {proxy} 日线。"
+        return {
+            "symbol": ticker,
+            "period": period,
+            "interval": interval,
+            "bars": records,
+            "summary": _history_summary(records),
+            "source": "eastmoney_us_kline",
+            "source_url": (f"https://quote.eastmoney.com/us/{proxy or ticker.lstrip('^')}.html"),
+            **({"note": note} if note else {}),
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _holdings_via_yahoo_quotesummary(symbol: str, *, top_n: int) -> dict[str, Any] | None:
+    """Yahoo quoteSummary topHoldings HTTP（绕过 yfinance.funds_data）。"""
+    from urllib.parse import quote
+
+    ticker = _normalize_ticker(symbol)
+    url = (
+        "https://query1.finance.yahoo.com/v10/finance/quoteSummary/"
+        f"{quote(ticker, safe='')}?modules=topHoldings"
+    )
+    payload = _http_get_json(url, timeout=12.0)
+    try:
+        result = ((payload or {}).get("quoteSummary") or {}).get("result") or []
+        if not result:
+            return None
+        th = (result[0].get("topHoldings") or {}).get("holdings") or []
+        holdings: list[dict[str, Any]] = []
+        for row in th[:top_n]:
+            sym = (row.get("symbol") or "").strip().upper()
+            if not sym:
+                continue
+            holdings.append(
+                {
+                    "symbol": sym,
+                    "name": row.get("holdingName") or sym,
+                    "weight_pct": _pct_display(
+                        (row.get("holdingPercent") or {}).get("raw")
+                        if isinstance(row.get("holdingPercent"), dict)
+                        else row.get("holdingPercent")
+                    ),
+                }
+            )
+        if not holdings:
+            return None
+        return {
+            "symbol": ticker,
+            "holdings": holdings,
+            "count": len(holdings),
+            "top_n": top_n,
+            "note": "Yahoo quoteSummary topHoldings；通常仅前十大，非实时全持仓。",
+            "source": "yahoo_quotesummary",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker}/holdings",
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _num_or_none(val: Any) -> float | None:
     if val is None:
         return None
@@ -814,31 +1059,42 @@ async def get_price_history(symbol: str, period: str = "1mo", interval: str = "1
         ticker = _normalize_ticker(symbol)
         df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=True)
         records = _history_records(df, limit=120)
-        summary: dict[str, Any] = {}
-        if records:
-            first, last = records[0], records[-1]
-            if first.get("close") and last.get("close"):
-                try:
-                    ret = (float(last["close"]) - float(first["close"])) / float(first["close"])
-                    summary = {
-                        "start_close": first["close"],
-                        "end_close": last["close"],
-                        "return_percent": round(ret * 100, 4),
-                        "bars": len(records),
-                    }
-                except (TypeError, ValueError, ZeroDivisionError):
-                    summary = {"bars": len(records)}
+        if not records:
+            return {
+                "error": "empty history from yfinance",
+                "context": f"get_price_history({ticker!r})",
+                "symbol": ticker,
+            }
         return {
             "symbol": ticker,
             "period": period,
             "interval": interval,
             "bars": records,
-            "summary": summary,
+            "summary": _history_summary(records),
             "source": "yfinance",
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/history",
         }
 
-    return await _yf_call(_call, context=f"get_price_history({symbol!r})")
+    # 提问触发（非看板）：yfinance → Yahoo Chart HTTP → 东财美股 K 线
+    primary = await _yf_call(_call, context=f"get_price_history({symbol!r})")
+    if "error" not in primary and (primary.get("bars") or []):
+        return primary
+    chart = await asyncio.to_thread(
+        _history_via_yahoo_chart, symbol, period=period, interval=interval
+    )
+    if chart and (chart.get("bars") or []):
+        return chart
+    em = await asyncio.to_thread(_history_via_eastmoney, symbol, period=period, interval=interval)
+    if em and (em.get("bars") or []):
+        return em
+    return (
+        primary
+        if isinstance(primary, dict)
+        else {
+            "error": "price history unavailable",
+            "context": f"get_price_history({symbol!r})",
+        }
+    )
 
 
 @mcp.tool()
@@ -1032,6 +1288,12 @@ async def get_etf_holdings(symbol: str, top_n: int = 10) -> dict:
             return _fmt_error(exc, context=f"get_etf_holdings({ticker!r}).top_holdings")
 
         holdings = _serialize_top_holdings(top, top_n=n)
+        if not holdings:
+            return {
+                "error": "empty top holdings",
+                "context": f"get_etf_holdings({ticker!r})",
+                "symbol": ticker,
+            }
         return {
             "symbol": ticker,
             "holdings": holdings,
@@ -1042,7 +1304,24 @@ async def get_etf_holdings(symbol: str, top_n: int = 10) -> dict:
             "source_url": f"https://finance.yahoo.com/quote/{ticker}/holdings",
         }
 
-    return await _yf_call(_call, context=f"get_etf_holdings({symbol!r})", timeout=60.0)
+    # 提问触发：yfinance → Yahoo quoteSummary；东财无稳定美股 ETF holdings 公开接口
+    primary = await _yf_call(_call, context=f"get_etf_holdings({symbol!r})", timeout=60.0)
+    if "error" not in primary and (primary.get("holdings") or []):
+        return primary
+    alt = await asyncio.to_thread(_holdings_via_yahoo_quotesummary, symbol, top_n=n)
+    if alt and (alt.get("holdings") or []):
+        return alt
+    if isinstance(primary, dict):
+        primary.setdefault(
+            "note",
+            "Yahoo 持仓不可用；东财无美股 ETF holdings 公开兜底，请稍后重试或换数据源。",
+        )
+        return primary
+    return {
+        "error": "etf holdings unavailable",
+        "context": f"get_etf_holdings({symbol!r})",
+        "symbol": _normalize_ticker(symbol),
+    }
 
 
 @mcp.tool()

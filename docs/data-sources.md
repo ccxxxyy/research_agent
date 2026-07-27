@@ -101,7 +101,9 @@ get_quote / get_index_quotes / _quote_from_ticker
 诚实性校验：`research_agent.market.us_source_honesty.find_us_quote_misstatements`（单测覆盖全部代理表项）。
 
 - `get_market_status`：**本地美东时钟**，不请求外网（避免被挂起的 yfinance 占满线程池导致误超时）。
-- 日线历史、公司概况、ETF holdings / sector weights：仍以 **yfinance** 为主（Yahoo 不可达时可能空）。
+- 日线历史（提问触发）：yfinance → Yahoo Chart HTTP → 东财美股 K 线。
+- 公司概况 / ETF sector weights：仍以 **yfinance** 为主。
+- ETF holdings（提问触发）：yfinance → Yahoo quoteSummary；东财无稳定美股 ETF 持仓公开兜底。
 
 #### 舆情新闻（`us_sentiment_server`）
 
@@ -237,6 +239,12 @@ FINNHUB_API_KEY=...
 | 英文舆情 FinBERT / 专用 Transformer | 可选；当前为 VADER + 金融词表 + 标题/摘要/正文前段（`en_vader_finlex_v2`） |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
 | 左侧知识库栏按「当前集合」过滤显示 | 无；列出该用户全部集合的 PDF |
+| 10-Q/10-K **整篇精读** | 刻意不做：`us_filing_parse_filing_text` 有界窗口（默认 8k 字，最多约 3 窗 / 6 次工具）；宜多轮点名科目追问 |
+| 回答截断后**自动续写** | 未做；可用环境变量 `MAX_OUTPUT_TOKENS` 提高单次输出上限 |
+| 日线历史 / ETF holdings | **提问触发**（非看板）。日线：yfinance → Yahoo Chart HTTP → 东财美股 K 线；holdings：yfinance → Yahoo quoteSummary（东财无稳定美股 ETF 持仓公开接口，Yahoo 全挂时仍可能空） |
+| 美股主线 / 日内异动 / 情绪 / 投机面板 | 看板侧由已有行业·主题 ETF、涨跌榜、活跃榜、空头榜**本地聚合**（不额外打外网）；规则近似，非官方妖股/主线标签 |
+| 别名表外冷门中文名 → 自动 MIXED | 靠 Supervisor 常识 + 搜码协作；解析器别名表只是加速，非完整公司库 |
+| A 股工具返回 runtime `source` 字段 | 多数仍无；UI 对 A 股仍用工具名静态规则，美股已按 payload `source` |
 
 ## 9. 产品侧已落地（非数据源，但影响美股体验）
 
