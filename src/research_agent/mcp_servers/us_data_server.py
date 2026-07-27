@@ -1,26 +1,30 @@
-"""MCP Server — 通过 ``yfinance`` 获取美股（股票 / 指数 / ETF）数据。
+"""MCP Server — 通过 ``yfinance`` 获取美股（股票 / 指数 / ETF / 共同基金 / 期货 / 期权）数据。
 
 与 ``fin_data_server``（A 股 / akshare）**平行隔离**，禁止混用。
-一期范围：美股普通股、主要指数、ETF（不含共同基金 / 期权）。
 
 工具
 ----
 1. ``get_market_status`` — 美东时段：盘前 / 开盘 / 盘后 / 收盘 / 非交易日
 2. ``search_ticker`` — 名称或模糊串 → ticker 候选
-3. ``get_quote`` — 单标的最新报价摘要
+3. ``get_quote`` — 单标的最新报价摘要（含期货 ``CL=F`` 等）
 4. ``get_price_history`` — 日线 OHLCV
-5. ``get_basic_info`` — 公司 / ETF 概况
+5. ``get_basic_info`` — 公司 / ETF / 共同基金概况
 6. ``get_index_quotes`` — 主要美股指数快照
 7. ``get_etf_overview`` — ETF 概况（持仓规模、类别等可得字段）
 8. ``get_etf_holdings`` — ETF 重仓股（Yahoo top holdings）
 9. ``get_etf_sector_weights`` — ETF 行业权重与大类资产占比
+10. ``get_mutual_fund_overview`` — 共同基金概况
+11. ``get_mutual_fund_holdings`` — 共同基金重仓
+12. ``get_futures_quotes`` — 常用商品/股指期货批量报价
+13. ``get_option_expirations`` — 股票期权到期日列表
+14. ``get_option_chain`` — 指定到期日 calls/puts 摘要
 
 设计说明
 --------
 - ``yfinance`` 为同步 I/O，一律 ``asyncio.to_thread``。
 - 错误返回 ``{"error": "...", "context": "..."}``，不抛异常以免弄死 stdio。
 - 工具结果走 ``cached_tool`` TTL 分层（与 A 股工具缓存同框架，namespace=``us``）。
-- ETF 深化走 ``Ticker.funds_data``（与 A 股 ``fund_get_fund_holdings`` 平行，不混用）。
+- ETF / 共同基金深化走 ``Ticker.funds_data``（与 A 股 ``fund_get_fund_holdings`` 平行，不混用）。
 """
 
 from __future__ import annotations
@@ -67,6 +71,18 @@ _MAJOR_INDICES: dict[str, str] = {
     "罗素2000 (Russell 2000)": "^RUT",
     "VIX恐慌 (VIX)": "^VIX",
 }
+
+# 常用美股/商品期货（Yahoo ``=F`` 连续合约）
+_DEFAULT_FUTURES: tuple[tuple[str, str], ...] = (
+    ("CL=F", "WTI Crude Oil"),
+    ("BZ=F", "Brent Crude"),
+    ("GC=F", "Gold"),
+    ("SI=F", "Silver"),
+    ("ES=F", "E-mini S&P 500"),
+    ("NQ=F", "E-mini Nasdaq-100"),
+    ("YM=F", "E-mini Dow"),
+    ("RTY=F", "E-mini Russell 2000"),
+)
 
 
 async def _yf_call(fn, *, context: str, timeout: float = _YF_CALL_TIMEOUT_SECONDS) -> dict:
@@ -1368,6 +1384,292 @@ async def get_etf_sector_weights(symbol: str) -> dict:
         }
 
     return await _yf_call(_call, context=f"get_etf_sector_weights({symbol!r})", timeout=60.0)
+
+
+def _fund_overview_from_info(ticker: str, info: dict[str, Any]) -> dict[str, Any]:
+    quote_type = str(info.get("quoteType") or "")
+    overview = {
+        "symbol": ticker,
+        "name": info.get("shortName") or info.get("longName"),
+        "quote_type": quote_type,
+        "category": info.get("category"),
+        "fund_family": info.get("fundFamily"),
+        "total_assets": _json_safe(info.get("totalAssets")),
+        "nav_price": _json_safe(info.get("navPrice")),
+        "ytd_return": _json_safe(info.get("ytdReturn")),
+        "three_year_avg_return": _json_safe(info.get("threeYearAverageReturn")),
+        "five_year_avg_return": _json_safe(info.get("fiveYearAverageReturn")),
+        "expense_hint": _json_safe(info.get("annualReportExpenseRatio")),
+        "yield": _json_safe(info.get("yield") or info.get("dividendYield")),
+        "currency": info.get("currency") or "USD",
+    }
+    return {k: v for k, v in overview.items() if v is not None}
+
+
+def _serialize_option_legs(df: Any, *, side: str, limit: int) -> list[dict[str, Any]]:
+    if df is None:
+        return []
+    try:
+        if getattr(df, "empty", True):
+            return []
+        limited = df.head(limit)
+    except Exception:  # noqa: BLE001
+        return []
+    rows: list[dict[str, Any]] = []
+    for _, row in limited.iterrows():
+        try:
+            item = {
+                "side": side,
+                "contract": _json_safe(row.get("contractSymbol")),
+                "strike": _json_safe(row.get("strike")),
+                "last": _json_safe(row.get("lastPrice")),
+                "bid": _json_safe(row.get("bid")),
+                "ask": _json_safe(row.get("ask")),
+                "volume": _json_safe(row.get("volume")),
+                "open_interest": _json_safe(row.get("openInterest")),
+                "implied_volatility": _json_safe(row.get("impliedVolatility")),
+                "in_the_money": _json_safe(row.get("inTheMoney")),
+            }
+            rows.append({k: v for k, v in item.items() if v is not None})
+        except Exception:  # noqa: BLE001
+            continue
+    return rows
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="us")
+async def get_mutual_fund_overview(symbol: str) -> dict:
+    """获取美国共同基金概况（NAV、类别、基金公司、费用率等可得字段）。
+
+    Args:
+        symbol: 共同基金 ticker，如 ``VTSAX``、``VFIAX``。
+    """
+
+    def _call() -> dict[str, Any]:
+        import yfinance as yf
+
+        ticker = _normalize_ticker(symbol)
+        info = yf.Ticker(ticker).info or {}
+        quote_type = str(info.get("quoteType") or "").upper()
+        body = _fund_overview_from_info(ticker, info)
+        out: dict[str, Any] = {
+            "fund": body,
+            "source": "yfinance",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker}",
+        }
+        if quote_type and quote_type != "MUTUALFUND":
+            out["note"] = (
+                f"quoteType={quote_type or 'unknown'}（期望 MUTUALFUND）；"
+                "若为 ETF 请改用 get_etf_overview。"
+            )
+        return out
+
+    return await _yf_call(_call, context=f"get_mutual_fund_overview({symbol!r})", timeout=60.0)
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="us")
+async def get_mutual_fund_holdings(symbol: str, top_n: int = 10) -> dict:
+    """获取美国共同基金重仓（Yahoo top holdings；不可用时 quoteSummary 兜底）。
+
+    Args:
+        symbol: 共同基金 ticker，如 ``VTSAX``。
+        top_n: 返回前 N 大持仓，默认 10，范围 1–25。
+    """
+    n = max(1, min(int(top_n), 25))
+
+    def _call() -> dict[str, Any]:
+        import yfinance as yf
+
+        ticker = _normalize_ticker(symbol)
+        t = yf.Ticker(ticker)
+        funds = getattr(t, "funds_data", None)
+        if funds is None:
+            return {
+                "error": "funds_data unavailable (not a fund or yfinance too old)",
+                "context": f"get_mutual_fund_holdings({ticker!r})",
+                "symbol": ticker,
+            }
+        try:
+            top = funds.top_holdings
+        except Exception as exc:  # noqa: BLE001
+            return _fmt_error(exc, context=f"get_mutual_fund_holdings({ticker!r}).top_holdings")
+
+        holdings = _serialize_top_holdings(top, top_n=n)
+        if not holdings:
+            return {
+                "error": "empty top holdings",
+                "context": f"get_mutual_fund_holdings({ticker!r})",
+                "symbol": ticker,
+            }
+        return {
+            "symbol": ticker,
+            "holdings": holdings,
+            "count": len(holdings),
+            "top_n": n,
+            "note": "Yahoo 通常仅披露前十大持仓；权重为可得快照。",
+            "source": "yfinance.funds_data",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker}/holdings",
+        }
+
+    primary = await _yf_call(_call, context=f"get_mutual_fund_holdings({symbol!r})", timeout=60.0)
+    if "error" not in primary and (primary.get("holdings") or []):
+        return primary
+    alt = await asyncio.to_thread(_holdings_via_yahoo_quotesummary, symbol, top_n=n)
+    if alt and (alt.get("holdings") or []):
+        return alt
+    if isinstance(primary, dict):
+        return primary
+    return {
+        "error": "mutual fund holdings unavailable",
+        "context": f"get_mutual_fund_holdings({symbol!r})",
+        "symbol": _normalize_ticker(symbol),
+    }
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="us")
+async def get_futures_quotes(symbols: str = "") -> dict:
+    """批量获取常用美股/商品期货报价（Yahoo ``=F`` 连续合约）。
+
+    Args:
+        symbols: 可选，逗号分隔期货代码（如 ``CL=F,GC=F``）。空则返回内置常用列表。
+    """
+
+    def _parse_symbols(raw: str) -> list[tuple[str, str]]:
+        text = (raw or "").strip()
+        if not text:
+            return list(_DEFAULT_FUTURES)
+        out: list[tuple[str, str]] = []
+        name_map = {sym: name for sym, name in _DEFAULT_FUTURES}
+        for part in text.split(","):
+            sym = _normalize_ticker(part)
+            if not sym:
+                continue
+            out.append((sym, name_map.get(sym, sym)))
+        return out or list(_DEFAULT_FUTURES)
+
+    wanted = _parse_symbols(symbols)
+
+    def _call() -> dict[str, Any]:
+        quotes: list[dict[str, Any]] = []
+        sources: set[str] = set()
+        for sym, name in wanted:
+            try:
+                q = _quote_from_ticker(sym)
+                src = str(q.get("source") or "unknown")
+                sources.add(src)
+                quotes.append(
+                    {
+                        "name": q.get("name") or name,
+                        "symbol": sym,
+                        "price": q.get("price"),
+                        "previous_close": q.get("previous_close"),
+                        "change_percent": q.get("change_percent"),
+                        "as_of_note": q.get("as_of_note"),
+                        "source": src,
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                quotes.append({"name": name, "symbol": sym, "error": str(exc)})
+        ok = sum(1 for x in quotes if x.get("price") is not None)
+        return {
+            "futures": quotes,
+            "count": len(quotes),
+            "ok_count": ok,
+            "source": "+".join(sorted(sources)) or "unknown",
+            "source_url": "https://finance.yahoo.com/markets/commodities/",
+            "note": "Yahoo 连续合约（=F），非交易所具体月份合约。",
+        }
+
+    return await _yf_call(_call, context="get_futures_quotes()", timeout=50.0)
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="us")
+async def get_option_expirations(symbol: str) -> dict:
+    """返回美股标的的期权到期日列表（Yahoo）。
+
+    Args:
+        symbol: 正股 ticker，如 ``AAPL``、``SPY``。
+    """
+
+    def _call() -> dict[str, Any]:
+        import yfinance as yf
+
+        ticker = _normalize_ticker(symbol)
+        try:
+            dates = list(yf.Ticker(ticker).options or [])
+        except Exception as exc:  # noqa: BLE001
+            return _fmt_error(exc, context=f"get_option_expirations({ticker!r})")
+        return {
+            "symbol": ticker,
+            "expirations": dates,
+            "count": len(dates),
+            "source": "yfinance",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker}/options",
+        }
+
+    return await _yf_call(_call, context=f"get_option_expirations({symbol!r})", timeout=45.0)
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_REALTIME, namespace="us")
+async def get_option_chain(symbol: str, expiration: str = "", limit_per_side: int = 25) -> dict:
+    """返回指定到期日的美股期权链摘要（calls / puts）。
+
+    Args:
+        symbol: 正股 ticker，如 ``AAPL``。
+        expiration: 到期日 ``YYYY-MM-DD``；空则取最近一个到期日。
+        limit_per_side: 每侧最多返回行数（默认 25，上限 80）。
+    """
+    n = max(1, min(int(limit_per_side), 80))
+
+    def _call() -> dict[str, Any]:
+        import yfinance as yf
+
+        ticker = _normalize_ticker(symbol)
+        t = yf.Ticker(ticker)
+        try:
+            dates = list(t.options or [])
+        except Exception as exc:  # noqa: BLE001
+            return _fmt_error(exc, context=f"get_option_chain({ticker!r}).options")
+        if not dates:
+            return {
+                "error": "no option expirations",
+                "context": f"get_option_chain({ticker!r})",
+                "symbol": ticker,
+            }
+        exp = (expiration or "").strip() or dates[0]
+        if exp not in dates:
+            return {
+                "error": f"expiration {exp!r} not in available dates",
+                "context": f"get_option_chain({ticker!r})",
+                "symbol": ticker,
+                "expirations": dates[:12],
+            }
+        try:
+            chain = t.option_chain(exp)
+        except Exception as exc:  # noqa: BLE001
+            return _fmt_error(exc, context=f"get_option_chain({ticker!r},{exp!r})")
+        calls = _serialize_option_legs(getattr(chain, "calls", None), side="call", limit=n)
+        puts = _serialize_option_legs(getattr(chain, "puts", None), side="put", limit=n)
+        return {
+            "symbol": ticker,
+            "expiration": exp,
+            "calls": calls,
+            "puts": puts,
+            "call_count": len(calls),
+            "put_count": len(puts),
+            "limit_per_side": n,
+            "source": "yfinance",
+            "source_url": f"https://finance.yahoo.com/quote/{ticker}/options?p={ticker}&date={exp}",
+            "note": "摘要字段；非全市场扫描，不含自算 Greeks。",
+        }
+
+    return await _yf_call(
+        _call, context=f"get_option_chain({symbol!r},{expiration!r})", timeout=60.0
+    )
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 产品需要拓展美股，同时要求：
 
 1. 一期可接受 Yahoo 生态（yfinance + Chart/Search HTTP），并允许东财美股作报价兜底（非「真·多源」配置项）；
-2. 一期范围仅 **美股股票 + 指数 + ETF**（不含共同基金 / 期权）；
+2. 美股范围：**股票 + 指数 + ETF + 共同基金 + 期货合约 + 股票期权**；
 3. 默认市场：问句信号 → 会话粘性 → 用户 memory 偏好 → 产品默认 `CN_A`；用户常说公司/基金名字，**按名字判断市场**；
 4. **A 股与美股必须分开**，不能把 `market=` 参数硬塞进现有 `fin_*` / `news_*`。
 
@@ -36,8 +36,8 @@
 ### 3. 平行专家团队（P1～P5 已全部落地）
 
 ```
-CN_A: data / fund / report / news / sentiment / knowledge / coder
-US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / knowledge / coder
+CN_A: data / fund / derivatives / report / news / sentiment / knowledge / coder
+US:   us_data（含 ETF / 共同基金 / 期货 / 期权）/ us_filing / us_news / us_sentiment / knowledge / coder
 ```
 
 共享层仅限：supervisor 编排、HITL、reflection、RAG **引擎**、tool TTL / semantic cache **框架**、coder。
@@ -132,7 +132,7 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 一期 P0～P5 **已全部完成**。可选增强见 [数据来源说明 §8](../data-sources.md)：
 
 - Finnhub / Polygon 等多供应商**行情**（真·多源）；新闻侧 Finnhub 已可选（见 data-sources §4.4）
-- 美股共同基金 / 期权（明确不在一期）
+- 美股共同基金 / 期货 / 期权与国内 `derivatives_expert` **已落地**（见 data-sources）；私募基金仍未接入
 - 英文舆情再升级 FinBERT / 专用模型（当前 VADER+finlex 已够用）；事件标签仍为关键词，非 LLM 抽取
 - 通用联网搜索（非核心；不能替代行情 API）
 - EDGAR 整篇精读 / 回答自动续写（见 data-sources §8；当前为有界窗口 + `MAX_OUTPUT_TOKENS`）

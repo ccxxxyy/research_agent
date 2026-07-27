@@ -298,7 +298,15 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 | `fin_get_individual_fund_flow` | 个股资金流向 |
 | `fin_get_hsgt_flow` | 沪深港通资金流向 |
 
-#### fund_expert — `fund_server`（10 个工具，数据源：akshare）
+#### fund_expert — `fund_server`（12 个工具，数据源：akshare）
+
+覆盖搜索、净值、ETF/LOF、持仓、评级、排行、**QDII 专项排行**、**基金经理**。
+
+#### derivatives_expert — `derivatives_server`（7 个工具，数据源：akshare/新浪）
+
+国内期货搜码/主力/现货/日线；50ETF 等期权列表与现货；沪深300/上证50/中证1000 股指期权。
+
+首页看板同步展示：A 股区 **ETF 涨幅 / 国内期货 / QDII**；美股区 **商品·股指期货 / 共同基金**；期权以快捷提问进入研究流。
 
 | 工具 | 功能 |
 |---|---|
@@ -567,7 +575,8 @@ docker compose up -d
 | 项 | 现状 | 计划 |
 |---|---|---|
 | **knowledge_server 不走 MCP-stdio** | 🟡 工程取舍：Windows + Python 3.13 + asyncio + heavy ML import 链有系统性死锁，已切到 in-process 同源代码——业务逻辑不变，MCP 协议契约保留在 `@mcp.tool` 装饰器上作为文档。详见 [ADR-0002](docs/adr/0002-knowledge-server-inprocess.md) | 若未来需跨进程/跨语言，可换 fastmcp 的 SSE/HTTP transport 绕开 stdio JSON-RPC 帧 |
-| **fund_server 仅覆盖公募基金** | 🟡 当前覆盖开放式基金、ETF、LOF 的净值/行情/持仓/评级/排名，尚未接入私募基金和 QDII 专项数据 | 按需扩展 akshare 私募/QDII 接口 |
+| **fund_server 公募为主** | 🟡 已含开放式/ETF/LOF/QDII 排行与基金经理；**私募**未接入 | 按需扩展私募接口 |
+| **derivatives_server** | ✅ 国内期货合约行情 + ETF/股指期权 | 商品期权全历史可按需加深 |
 | **LangSmith 评估集已上 CI** | ✅ `evals/` 下有 100 条标注样本 + 5 个评估器 + 离线评估 runner + regression 对比工具；Nightly CI 自动跑路由评估 | 持续扩充样本 + 增加 RAG 召回率评估 |
 | **pgvector 引擎装了但未用作向量搜索后端** | 🟡 设计取舍：docker-compose 用 `pgvector/pgvector:pg16` 是为给 Postgres checkpointer + KV-style 长期记忆提供后端；RAG 走本地 FAISS 因为 demo 不依赖外部服务 | 当用户研究量 >100 条时，把"语义相似历史研究召回"切到 pgvector + ANN |
 | **静态知识语义缓存** | ✅ 已落地 | `cache/semantic_cache.py`：glossary/methodology/template/faq/macro/historical_event；L0 精确键 + L1 FAISS 语义；维度过滤 version/locale/prompt_version；research 入口命中则短路 LLM |
@@ -616,7 +625,9 @@ src/research_agent/
 │   ├── code_server.py             # Python 沙箱执行
 │   ├── echo_server.py             # 调试用
 │   ├── fin_data_server.py         # akshare A 股行情/基本面（18 工具：K 线、分时、龙虎榜、融资融券、股东、ETF、宏观、概念/行业板块、资金流、港股通等）
-│   ├── fund_server.py             # akshare 基金分析（10 工具：基金搜索、净值、ETF/LOF 行情、持仓、评级、排名等）
+│   ├── fund_server.py             # akshare 基金（含 QDII 排行、基金经理）
+│   ├── derivatives_server.py      # 国内期货 + ETF/股指期权
+│   ├── us_data_server.py          # 美股股票/指数/ETF/共同基金/期货/期权
 │   ├── knowledge_server.py        # FAISS+BM25 RAG（生产入口在 tools/knowledge_tools.py，in-process）
 │   ├── news_server.py             # 东方财富 / 财联社新闻
 │   ├── news_sentiment_server.py   # SnowNLP + 金融词典量化情感
@@ -720,7 +731,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 
 详见 [ADR-0006](docs/adr/0006-us-market-parallel-isolation.md) 与 [数据来源说明](docs/data-sources.md)。
 
-- **P1**：`us_data_server` + `us_data_expert`（股票/指数/ETF；报价 Chart→东财→yfinance）
+- **P1**：`us_data_server` + `us_data_expert`（股票/指数/ETF/共同基金/期货/期权；报价 Chart→东财→yfinance）
 - **P2**：`us_filing_server` + `us_filing_expert`（普通股 10-K/10-Q/8-K/DEF 14A；ETF：NPORT-P/N-CSR/485BPOS）
 - **P3**：`us_news_server` + `us_sentiment_server`（Yahoo Search HTTP / VADER+金融词表舆情）
 - **P4**：ETF 持仓工具、语义缓存 US 域、路由 Eval、UI 市场徽章
@@ -728,7 +739,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 
 ### 待做 / 可选
 
-- 增加更多业务 specialist（如 `bond_expert` 债券 / `option_expert` 期权；美股期权不在一期）
+- 增加更多业务 specialist（如 `bond_expert` 债券）；美股期权/期货与国内衍生品已接入 `us_data` / `derivatives_expert`
 - Finnhub / Polygon 等真·多源行情（可选；见 data-sources §5/§8）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）

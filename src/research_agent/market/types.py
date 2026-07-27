@@ -2,7 +2,7 @@
 
 美股拓展的边界约定：
 * A 股（``CN_A``）与美股（``US``）平行隔离，禁止混用同一套 MCP 工具。
-* 一期范围：美股股票 + 指数 + ETF（不含共同基金/期权）。
+* 美股范围：股票 + 指数 + ETF + 共同基金 + 期货合约 + 股票期权。
 * 行情实现：Yahoo Chart → 东财美股 ulist → yfinance（详见 ``docs/data-sources.md``）。
 * 默认市场：问句信号 → 会话粘性 → 用户偏好 → 产品默认 ``CN_A``。
 """
@@ -31,7 +31,7 @@ class Market(StrEnum):
 
 
 class AssetClass(StrEnum):
-    """一期支持的资产类别。"""
+    """支持的资产类别。"""
 
     EQUITY = "equity"
     """普通股。"""
@@ -41,6 +41,15 @@ class AssetClass(StrEnum):
 
     ETF = "etf"
     """交易所交易基金。"""
+
+    MUTUAL_FUND = "mutual_fund"
+    """共同基金（场外，美股 Yahoo MUTUALFUND）。"""
+
+    FUTURE = "future"
+    """期货合约。"""
+
+    OPTION = "option"
+    """期权合约。"""
 
     UNKNOWN = "unknown"
 

@@ -261,27 +261,31 @@ FUND_EXPERT_PROMPT = """\
   - ``fund_get_fund_rating``     — 基金综合评级排行（上海证券/招商/济安/晨星四家机构）。
   - ``fund_get_fund_rank``       — 基金业绩排行（按近1年/3年/5年收益，支持按类型筛选）。
   - ``fund_get_fund_daily``      — 当日开放式基金净值列表（按类型筛选）。
+  - ``fund_get_fund_qdii_rank``  — QDII 专项业绩排行。
 
   单只基金工具（需要 6 位基金代码）：
   - ``fund_get_fund_info``       — 基金概况（类型、规模、经理、成立日期）。
   - ``fund_get_fund_nav``        — 开放式基金历史净值走势。
   - ``fund_get_fund_etf_hist``   — 单只 ETF 历史 K 线（日线/周线/月线）。
   - ``fund_get_fund_holdings``   — 基金重仓股持仓明细。
+  - ``fund_get_fund_manager``    — 基金经理与档案字段。
 
 规则
 1. 判断用户意图：
    - "ETF 排行""场内基金涨幅榜" → get_fund_etf_spot / get_fund_lof_spot
    - "场外/开放式基金净值榜" → get_fund_daily（看单位净值+日增长率）
+   - "QDII / 出海基金排行" → get_fund_qdii_rank
    - "沪深300ETF 走势" → 先 search_fund 找代码，再 get_fund_etf_hist
    - "场外基金净值走势" → search_fund 后 get_fund_nav（不要用 ETF 行情接口）
    - "某基金持仓""重仓股" → get_fund_holdings
+   - "基金经理是谁" → get_fund_manager（可辅以 get_fund_info）
    - "基金评级""五星基金" → get_fund_rating
 2. 用户给的是基金名称时，先 search_fund 查找代码；**优先采用精确匹配的 6 位代码**，不要把名称里沾边的其它基金当成目标。
 3. **场外开放式基金**用 get_fund_nav / get_fund_daily（单位净值、日增长率）；**场内 ETF/LOF** 用 get_fund_etf_spot / get_fund_etf_hist（交易价格、涨跌幅）。二者口径不同，禁止混用。
 4. ``日增长率`` / 涨跌幅已是百分比数值（如 -3.63 即 -3.63%），回答时直接带 %，**禁止再乘 100**。
 5. 每个工具返回 dict，含 ``"error"`` 键表示失败 — 简要报告并停止。
 6. 总结时引用具体数据（代码、净值日期、单位净值、日增长率），给出趋势判断。
-7. 非基金类请求说明并返回 — supervisor 会路由到其他专家。
+7. 非基金类请求（国内期货/期权）说明并返回 — supervisor 会路由到 derivatives_expert；美股共同基金退回 us_data_expert。
 8. 每次被调度最多调用 **6 次**工具。
 """
 
@@ -423,16 +427,22 @@ US_DATA_EXPERT_PROMPT = """\
 工具前缀以运行时为准（通常 ``us_*``）：
 
   - ``us_get_market_status``  — 美东时段：盘前 / 开盘 / 盘后 / 收盘 / 非交易日。
-  - ``us_search_ticker``      — 名称或模糊串 → ticker 候选。
-  - ``us_get_quote``          — 单标的最新报价摘要（股票 / 指数 / ETF）。
+  - ``us_search_ticker``      — 名称或模糊串 → ticker 候选（含共同基金 / 期货）。
+  - ``us_get_quote``          — 单标的最新报价摘要（股票 / 指数 / ETF / 期货 ``CL=F`` 等）。
   - ``us_get_price_history``  — 日线 OHLCV。
-  - ``us_get_basic_info``     — 公司 / ETF 概况。
+  - ``us_get_basic_info``     — 公司 / ETF / 共同基金概况。
   - ``us_get_index_quotes``   — 主要美股指数快照（标普 / 道指 / 纳指 / NDX / 罗素2000 / VIX）。
   - ``us_get_etf_overview``   — ETF 概况（规模、类别、收益等可得字段）。
   - ``us_get_etf_holdings``   — ETF 重仓股（Yahoo top holdings，含权重）。
   - ``us_get_etf_sector_weights`` — ETF 行业权重与大类资产占比。
+  - ``us_get_mutual_fund_overview`` — 美国共同基金概况（NAV、费用率、基金公司）。
+  - ``us_get_mutual_fund_holdings`` — 共同基金重仓。
+  - ``us_get_futures_quotes`` — 常用商品/股指期货批量报价；单合约也可用 get_quote。
+  - ``us_get_option_expirations`` — 股票期权到期日列表。
+  - ``us_get_option_chain``   — 指定到期日 calls/puts 摘要。
 
-一期范围：美股普通股、主要指数、ETF。不含共同基金、期权。
+范围：美股普通股、指数、ETF、共同基金、期货合约、股票期权。
+**禁止**把美股共同基金交给 A 股 ``fund_expert``。
 
 规则
 ----
@@ -448,6 +458,9 @@ US_DATA_EXPERT_PROMPT = """\
    - ETF 概况 → get_etf_overview（可辅以 get_quote）
    - ETF 持仓 / 重仓股 → get_etf_holdings
    - ETF 行业分布 / 资产大类 → get_etf_sector_weights
+   - **共同基金**（VTSAX 等）→ get_mutual_fund_overview；持仓 → get_mutual_fund_holdings
+   - **期货**（原油/黄金/股指期货、CL=F）→ get_futures_quotes 或 get_quote / get_price_history
+   - **期权** → get_option_expirations → get_option_chain（先到期日再链）
 2. 用户给中文/英文名而无 ticker 时，先 ``search_ticker``；绝不猜测 ticker。
 3. 工具返回 ``error`` 时简要报告并停止；不要循环重试。
 4. **数据来源必须忠实且可点**：文末必须有一行 ``数据来源：``，**只**用工具返回的顶层 ``source_url`` 做 markdown 链接。
@@ -458,7 +471,7 @@ US_DATA_EXPERT_PROMPT = """\
    **禁止**写成「VIX恐慌指数收盘价 xx」。可注明「东财无 VIX 现货，此为代理 ETF，与官方 VIX 点位不可直接等同」。
 6. **数字格式**：跌幅写作 ``-0.64%``，**禁止** ``-+0.64%`` / ``+-0.64%``；涨幅 ``+0.05%``。
    叙述「跌」时数字必须为负号，叙述「涨/收红」时数字必须为正号，二者不得矛盾。
-7. 若请求明显是 A 股，说明并退回 supervisor。
+7. 若请求明显是 A 股 / 国内期货期权，说明并退回 supervisor。
 8. 每次被调度最多调用 **3 次**工具（指数走势场景最多 2 次）；达到上限必须停止调工具并给出文字结论。
 """
 
@@ -523,6 +536,49 @@ def build_fund_expert(
         tools=list(mcp_tools),
         system_prompt=FUND_EXPERT_PROMPT,
         name="fund_expert",
+    )
+
+
+DERIVATIVES_EXPERT_PROMPT = """\
+你是国内期货与期权（金融/ETF 期权）专家。工具前缀通常为 ``derivatives_*``：
+
+  期货：
+  - ``derivatives_search_futures`` — 品种/合约关键词搜码
+  - ``derivatives_get_main_futures`` — 常用主力品种目录
+  - ``derivatives_get_futures_spot`` — 实时/近实时行情（新浪）
+  - ``derivatives_get_futures_daily`` — 日线（如 RB0 / IF0）
+
+  期权：
+  - ``derivatives_get_etf_option_list`` — 50ETF/300ETF 等到期月列表
+  - ``derivatives_get_etf_option_spot`` — 单张 ETF 期权行情
+  - ``derivatives_get_index_option_spot`` — 沪深300/上证50/中证1000 股指期权
+
+规则
+1. 期货行情：先 search_futures 或 get_main_futures 确认品种，再 spot / daily。
+2. ETF 期权：先 list 到期月，再对具体合约 spot；股指期权用 get_index_option_spot。
+3. **禁止**用本工具查美股期货/期权（退回 us_data_expert）或公募基金净值（退回 fund_expert）。
+4. 工具 ``error`` 时简要报告并停止。
+5. 文末 ``数据来源：`` 只用工具返回的 ``source_url``。
+6. 每次最多 **5** 次工具调用。
+"""
+
+
+def build_derivatives_expert(
+    model_router: ModelRouter,
+    mcp_tools: Sequence[BaseTool],
+):
+    """国内期货/期权专家（``derivatives_server``）。"""
+    if not mcp_tools:
+        raise ValueError(
+            "derivatives_expert 需要 derivatives_server 的 MCP 工具；"
+            "收到了空序列。是否忘记调用 "
+            "``await load_derivatives_server_tools()``？"
+        )
+    return create_agent(
+        model=model_router.for_agent(AgentName.ANALYST),
+        tools=list(mcp_tools),
+        system_prompt=DERIVATIVES_EXPERT_PROMPT,
+        name="derivatives_expert",
     )
 
 
@@ -790,6 +846,7 @@ SPECIALIST_BUILDERS = {
     "us_news_expert": build_us_news_expert,
     "us_sentiment_expert": build_us_sentiment_expert,
     "fund_expert": build_fund_expert,
+    "derivatives_expert": build_derivatives_expert,
     "report_expert": build_report_expert,
     "news_expert": build_news_expert,
     "knowledge_expert": build_knowledge_expert,

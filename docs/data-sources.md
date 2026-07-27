@@ -41,11 +41,14 @@ SnowNLP（中文舆情）                   VADER + 金融词表增强（本地�
 | 能力 | MCP / 模块 | 数据来源 | 备注 |
 |------|------------|----------|------|
 | 行情/板块/龙虎榜等 | `fin_data_server` | **akshare**（底层多为东财、新浪等） | 主路径 |
-| 基金净值/ETF | `fund_server` | **akshare**（天天基金/东财基金） | 主路径 |
+| 基金净值/ETF/QDII | `fund_server` | **akshare**（天天基金/东财基金） | 主路径（含 QDII 排行、基金经理） |
+| 国内期货/期权 | `derivatives_server` | **akshare**（新浪期货/期权） | 主路径 |
 | 公告 PDF | `pdf_report_server` | **巨潮 cninfo** | 主路径 |
 | 新闻 | `news_server` | 东财 / 财联社 / 雪球等 | 主路径 |
 | 舆情 | `news_sentiment_server` | 新闻文本 + **SnowNLP** | 本地模型 |
 | 看板热搜/科技股等 | `main.py` 看板 API | 东财 push2 / 新浪等 HTTP（部分 `curl_cffi`） | UI 聚合，与 MCP 同源生态 |
+| 看板·国内期货/ETF/QDII | `market/dashboard_extras` → `/api/dashboard` | 新浪期货 / 基金 ETF / 东财 QDII | 首页 A 股区面板 |
+| 看板·美股期货/共同基金 | 同上（并入 `us` 包） | Yahoo `=F` / yfinance NAV | 首页美股区；期权以快捷提问入口 |
 
 A 股侧目前也是「**一个接入层（akshare）+ 多家底层站点**」，不是可配置的多供应商切换。
 
@@ -359,7 +362,9 @@ FINNHUB_API_KEY=...
 
 | 主题 | 路径 |
 |------|------|
-| 美股报价主备 | `mcp_servers/us_data_server.py`（Chart → 东财 → yfinance） |
+| 美股报价主备 | `mcp_servers/us_data_server.py`（Chart → 东财 → yfinance；含共同基金/期货/期权） |
+| 国内期货/期权 | `mcp_servers/derivatives_server.py` |
+| 看板扩展（期货/ETF/QDII/共同基金） | `market/dashboard_extras.py` + `main.py` `/api/dashboard` |
 | 代理/来源诚实性 | `market/us_source_honesty.py` |
 | 美股新闻管道（双源/过滤/聚类/标签） | `mcp_servers/us_news_pipeline.py` |
 | 美股新闻工具 | `mcp_servers/us_news_server.py`（Yahoo → Finnhub → pipeline） |
@@ -378,7 +383,7 @@ FINNHUB_API_KEY=...
 | 项 | 现状 |
 |----|------|
 | 通用联网搜索（Tavily 等） | 未挂载；仅有 `retriever.py` 文案；**不应用作行情主源** |
-| 美股共同基金 / 期权 | 明确不在一期范围 |
+| 私募基金 | 未接入（数据源不稳） |
 | Finnhub / Polygon 等**行情**多供应商配置链 | 未接入（新闻侧 Finnhub 已可选，见 §4.4） |
 | 英文舆情 FinBERT / 专用 Transformer | 可选；当前为 VADER + 金融词表 + 标题/摘要/正文前段（`en_vader_finlex_v2`） |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
@@ -386,11 +391,10 @@ FINNHUB_API_KEY=...
 | 10-Q/10-K **整篇精读** | 刻意不做：`us_filing_parse_filing_text` 有界窗口（默认 8k 字，最多约 3 窗 / 6 次工具）；宜多轮点名科目追问 |
 | 回答截断后**自动续写** | 未做；可用环境变量 `MAX_OUTPUT_TOKENS` 提高单次输出上限 |
 | 日线历史 / ETF holdings | **提问触发**（非看板）。日线：yfinance → Yahoo Chart HTTP → 东财美股 K 线；holdings：yfinance → Yahoo quoteSummary（东财无稳定美股 ETF 持仓公开接口，Yahoo 全挂时仍可能空） |
-| 美股主线 / 日内异动 / 情绪 / 投机面板 | 看板侧由已有行业·主题 ETF、涨跌榜、活跃榜、空头榜**本地聚合**（不额外打外网）；规则近似，非官方妖股/主线标签 |
 | 别名表外冷门中文名 → 自动 MIXED | 靠 Supervisor 常识 + 搜码协作；解析器别名表只是加速，非完整公司库 |
 | A 股工具返回 runtime `source` 字段 | 多数仍无；UI 对 A 股仍用工具名静态规则，美股已按 payload `source` |
 
-## 9. 产品侧已落地（非数据源，但影响美股体验）
+## 9. 产品侧已落地（非数据源，但影响体验）
 
 | 项 | 说明 |
 |----|------|
@@ -399,6 +403,9 @@ FINNHUB_API_KEY=...
 | 数据来源可点 | 正文 `数据来源：` 自动链东财/Yahoo；缺省时按 `us_*` 工具或美股市场兜底 |
 | 涨跌着色 | 美股绿涨红跌；清洗 `-+0.64%` 误号 |
 | 对话滚动位置 | 返回看板再进同一会话时恢复离开时的滚动位置 |
+| 美股主线 / 日内异动 / 情绪 / 投机面板 | 由行业·主题 ETF、涨跌榜等**本地聚合**；规则近似 |
+| 看板·基金/期货/共同基金 | A 股：ETF 涨幅、国内期货、QDII；美股：商品/股指期货、共同基金 NAV；期权快捷提问→`us_get_option_*` |
+| 美股共同基金/期货/期权工具 | `us_data_server`；国内衍生品 `derivatives_server` |
 
 ## 10. 变更记录
 
@@ -411,3 +418,5 @@ FINNHUB_API_KEY=...
 | 美股舆情打分：词典 PoC → VADER + 金融词表（`en_vader_finlex_v1`） |
 | 舆情打分文本：标题+摘要；摘要短则补抓页面前段（`en_vader_finlex_v2`） |
 | §4.4：美股新闻管道技术说明（过滤/聚类/标签）+ Finnhub 第二源操作指南 |
+| 美股共同基金/期货/期权 + 国内 fund QDII/经理 + derivatives_server |
+| 看板同步：A 股期货/ETF/QDII + 美股期货/共同基金/期权快捷；专家列表含 derivatives_expert |

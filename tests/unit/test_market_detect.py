@@ -225,3 +225,19 @@ async def test_set_preferred_market_rejects_mixed() -> None:
 
     item = await memory.get_memory("u1", MemoryNamespace.USER_PREFERENCES, PREFERRED_MARKET_KEY)
     assert item is None
+
+
+def test_detect_us_mutual_fund_and_futures_symbol() -> None:
+    r = detect_market_from_query("VTSAX 和 CL=F 最近怎么样")
+    assert r.market == Market.US
+    tickers = {s.ticker for s in r.symbols}
+    assert "VTSAX" in tickers
+    assert "CL=F" in tickers
+    assert any(s.asset_class == AssetClass.MUTUAL_FUND for s in r.symbols)
+    assert any(s.asset_class == AssetClass.FUTURE for s in r.symbols)
+
+
+def test_detect_cn_futures_keyword() -> None:
+    r = detect_market_from_query("螺纹钢期货主力合约行情")
+    assert r.market == Market.CN_A
+    assert any(s.asset_class == AssetClass.FUTURE for s in r.symbols)
