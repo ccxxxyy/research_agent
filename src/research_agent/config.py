@@ -27,6 +27,16 @@ class LLMConfig(BaseSettings):
             "作为 ``request_timeout`` 传递给 LangChain ``ChatOpenAI``，防止停滞的提供商连接无限期占用工作线程。"
         ),
     )
+    max_output_tokens: int = Field(
+        default=0,
+        ge=0,
+        le=128_000,
+        description=(
+            "单次补全最大输出 token 数，传给 ChatOpenAI ``max_tokens``。"
+            "0 表示不设置（沿用模型/网关默认上限）。提高可减少长文表格被截断；"
+            "过大则更贵、更慢。可用环境变量 ``MAX_OUTPUT_TOKENS``。"
+        ),
+    )
 
     openai_api_key: str = ""
     openai_api_base: str = "https://api.openai.com/v1"

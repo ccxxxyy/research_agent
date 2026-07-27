@@ -28,6 +28,17 @@ from research_agent.api.routes import (  # noqa: E402
     usage,
 )
 from research_agent.config import get_settings  # noqa: E402
+from research_agent.market.theme_panels import (  # noqa: E402
+    build_mainline_themes,
+    build_sentiment_benchmark,
+    build_speculative_pool,
+)
+from research_agent.market.us_theme_panels import (  # noqa: E402
+    build_us_intraday_moves,
+    build_us_mainline_themes,
+    build_us_sentiment,
+    build_us_speculative,
+)
 from research_agent.observability.logging import setup_logging  # noqa: E402
 
 # LangSmith tracer 在 stream_mode=["messages","updates"] + subgraphs 下
@@ -740,7 +751,8 @@ def create_app() -> FastAPI:
             return data, _hms()
 
         idx_task = asyncio.create_task(_timed_thread(_fetch_indices_sina))
-        zt_task = asyncio.create_task(_timed_thread(_fetch_zt_pool))
+        # 多拉涨停供主线/情绪/妖股聚合；面板仍截断为 Top15
+        zt_task = asyncio.create_task(_timed_thread(lambda: _fetch_zt_pool(limit=80)))
         extra_task = asyncio.create_task(_timed_thread(_fetch_extra_pools))
         boards_task = asyncio.create_task(_timed_thread(_fetch_boards))
         changes_task = asyncio.create_task(_timed_thread(_fetch_changes))
@@ -751,7 +763,7 @@ def create_app() -> FastAPI:
         us_task = asyncio.create_task(_timed_thread(lambda: _get_us_dashboard_cached(force=fresh)))
 
         indices, indices_at = await idx_task
-        zt_pool, zt_at = await zt_task
+        zt_full, zt_at = await zt_task
         extra_pools, extra_at = await extra_task
         boards, boards_at = await boards_task
         changes, changes_at = await changes_task
@@ -762,6 +774,16 @@ def create_app() -> FastAPI:
         us_dash, us_bundle_at = await us_task
         trending_fa = (trending or {}).get("fetched_at") or {}
         us_fa = (us_dash or {}).get("fetched_at") or {}
+
+        zt_pool = (zt_full or [])[:15]
+        concept_all = (boards or {}).get("concept_all") or (boards or {}).get("concept") or []
+        mainline_themes = build_mainline_themes(concept_all, zt_full or [])
+        sentiment_benchmark = build_sentiment_benchmark(zt_full or [])
+        speculative_pool = build_speculative_pool(zt_full or [], lhb or [], changes or [])
+        boards_out = {
+            "industry": (boards or {}).get("industry") or [],
+            "concept": (boards or {}).get("concept") or [],
+        }
 
         breadth = _compute_breadth(indices, zt_pool)
         breadth_at = _hms()
@@ -780,6 +802,9 @@ def create_app() -> FastAPI:
             "zbgc_pool": extra_at,
             "boards_industry": boards_at,
             "boards_concept": boards_at,
+            "mainline_themes": boards_at,
+            "sentiment_benchmark": zt_at,
+            "speculative_pool": lhb_at,
             "changes": changes_at,
             "lhb": lhb_at,
             "tech_stocks": tech_at,
@@ -797,6 +822,10 @@ def create_app() -> FastAPI:
             "us_undervalued": us_fa.get("undervalued") or us_bundle_at,
             "us_losers": us_fa.get("losers") or us_bundle_at,
             "us_shorted": us_fa.get("shorted") or us_bundle_at,
+            "us_mainline_themes": us_fa.get("mainline_themes") or us_bundle_at,
+            "us_intraday_moves": us_fa.get("intraday_moves") or us_bundle_at,
+            "us_sentiment": us_fa.get("sentiment") or us_bundle_at,
+            "us_speculative": us_fa.get("speculative") or us_bundle_at,
             "us_market_status": us_fa.get("market_status") or us_bundle_at,
         }
 
@@ -807,7 +836,10 @@ def create_app() -> FastAPI:
             "strong_pool": extra_pools.get("strong", []),
             "previous_zt": extra_pools.get("previous", []),
             "zbgc_pool": extra_pools.get("zbgc", []),
-            "boards": boards,
+            "boards": boards_out,
+            "mainline_themes": mainline_themes,
+            "sentiment_benchmark": sentiment_benchmark,
+            "speculative_pool": speculative_pool,
             "changes": changes,
             "lhb": lhb,
             "tech_stocks": tech_stocks,
@@ -831,7 +863,8 @@ def create_app() -> FastAPI:
         对应 A 股面板：
         指数 / 涨跌概览 / 涨幅榜 / 最活跃 / 成长科技 /
         行业 ETF / 主题 ETF / 小盘异动 / 七巨头 / 低估值大盘 /
-        跌幅榜 / 空头最重 / 市场状态。
+        跌幅榜 / 空头最重 / 市场状态；
+        以及聚合面板：主线题材 / 日内异动 / 情绪标杆 / 投机·拥挤。
         """
         import io
         import logging
@@ -1143,6 +1176,7 @@ def create_app() -> FastAPI:
                             "change_pct": q.get("regularMarketChangePercent"),
                             "volume": q.get("regularMarketVolume"),
                             "market_cap": q.get("marketCap"),
+                            "fifty_two_week_high": q.get("fiftyTwoWeekHigh"),
                             "price_source": "yahoo_screen",
                         }
                     )
@@ -1381,6 +1415,17 @@ def create_app() -> FastAPI:
             if not market_status.get("message"):
                 market_status["message"] = "Yahoo 不可达，已用东财美股数据填充看板"
 
+        # 由已有榜单聚合：主线 / 日内异动 / 情绪 / 投机近似（不额外打外网）
+        us_mainline = build_us_mainline_themes(sectors, theme_etfs, gainers, mega, growth)
+        us_moves = build_us_intraday_moves(gainers, losers)
+        us_sentiment = build_us_sentiment(actives, gainers, mega)
+        us_speculative = build_us_speculative(shorted, small_gainers, gainers)
+        now_hms = _time.strftime("%H:%M:%S")
+        fetched_at["mainline_themes"] = fetched_at.get("sectors") or now_hms
+        fetched_at["intraday_moves"] = fetched_at.get("gainers") or now_hms
+        fetched_at["sentiment"] = fetched_at.get("actives") or now_hms
+        fetched_at["speculative"] = fetched_at.get("shorted") or now_hms
+
         return {
             "market_status": market_status,
             "indices": indices,
@@ -1395,6 +1440,10 @@ def create_app() -> FastAPI:
             "mega": mega,
             "undervalued": undervalued,
             "shorted": shorted,
+            "mainline_themes": us_mainline,
+            "intraday_moves": us_moves,
+            "sentiment": us_sentiment,
+            "speculative": us_speculative,
             "fetched_at": fetched_at,
         }
 
@@ -1473,8 +1522,11 @@ def create_app() -> FastAPI:
                 continue
         return out
 
-    def _fetch_zt_pool() -> list[dict]:
-        """东方财富涨停池 Top 15。"""
+    def _fetch_zt_pool(*, limit: int = 15) -> list[dict]:
+        """东方财富涨停池。
+
+        ``limit`` 默认 15（面板展示）；主题聚合时可拉更大（如 80）以便统计涨停家数。
+        """
         import datetime
 
         try:
@@ -1487,7 +1539,7 @@ def create_app() -> FastAPI:
             df = ak.stock_zt_pool_em(date=today.strftime("%Y%m%d"))
             if df is None or df.empty:
                 return []
-            rows = df.head(15).to_dict("records")
+            rows = df.head(max(1, int(limit))).to_dict("records")
             items = [
                 {
                     "code": str(r.get("代码", "")),
@@ -1499,6 +1551,8 @@ def create_app() -> FastAPI:
                     "last_time": str(r.get("最后封板时间", ""))[-8:],
                     "open_count": r.get("炸板次数"),
                     "streak": r.get("连板数"),
+                    # 封板资金（元）；作情绪标杆排序用
+                    "seal_amount": r.get("封板资金"),
                     "industry": str(r.get("所属行业", "")),
                     "amount": r.get("成交额"),
                 }
@@ -1591,8 +1645,9 @@ def create_app() -> FastAPI:
         import requests
 
         out: dict = {"industry": [], "concept": []}
-        fields = "f2,f3,f4,f12,f14"
-        board_fs = [("industry", "m:90+t:2"), ("concept", "m:90+t:3")]
+        # f104/f105 = 上涨/下跌家数，供主线题材辅助展示
+        fields = "f2,f3,f4,f12,f14,f104,f105"
+        board_fs = [("industry", "m:90+t:2", 10), ("concept", "m:90+t:3", 30)]
         hosts = (
             "https://push2delay.eastmoney.com/api/qt/clist/get",
             "https://88.push2.eastmoney.com/api/qt/clist/get",
@@ -1606,15 +1661,17 @@ def create_app() -> FastAPI:
                     "name": it.get("f14", ""),
                     "change_pct": it.get("f3"),
                     "price": it.get("f2"),
+                    "up_count": it.get("f104"),
+                    "down_count": it.get("f105"),
                 }
                 for it in items
                 if it.get("f14")
             ]
 
-        def _query_params(fs_code: str) -> dict:
+        def _query_params(fs_code: str, pz: int = 10) -> dict:
             return {
                 "pn": "1",
-                "pz": "10",
+                "pz": str(pz),
                 "po": "1",
                 "np": "1",
                 "fltt": "2",
@@ -1625,12 +1682,12 @@ def create_app() -> FastAPI:
                 "ut": "7eea3edcaed734bea9cbfc24409ed989",
             }
 
-        def _via_curl(fs_code: str) -> list[dict]:
+        def _via_curl(fs_code: str, pz: int = 10) -> list[dict]:
             try:
                 from curl_cffi import requests as curl_requests
             except ImportError:
                 return []
-            qs = urlencode(_query_params(fs_code))
+            qs = urlencode(_query_params(fs_code, pz=pz))
             for base in hosts:
                 try:
                     resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=10)
@@ -1644,12 +1701,12 @@ def create_app() -> FastAPI:
                     continue
             return []
 
-        def _via_requests(fs_code: str) -> list[dict]:
+        def _via_requests(fs_code: str, pz: int = 10) -> list[dict]:
             # Windows 会从注册表读系统代理；push2 走代理常被断开
             sess = requests.Session()
             sess.trust_env = False
             try:
-                params = _query_params(fs_code)
+                params = _query_params(fs_code, pz=pz)
                 headers = {
                     "User-Agent": "Mozilla/5.0",
                     "Referer": "https://quote.eastmoney.com/",
@@ -1690,7 +1747,7 @@ def create_app() -> FastAPI:
             try:
                 df = ak.stock_board_concept_name_em()
                 if df is not None and not df.empty:
-                    for r in df.head(10).to_dict("records"):
+                    for r in df.head(30).to_dict("records"):
                         result["concept"].append(
                             {
                                 "code": str(r.get("板块代码", r.get("代码", ""))),
@@ -1703,8 +1760,8 @@ def create_app() -> FastAPI:
                 pass
             return result
 
-        for key, fs_code in board_fs:
-            items = _via_curl(fs_code) or _via_requests(fs_code)
+        for key, fs_code, pz in board_fs:
+            items = _via_curl(fs_code, pz=pz) or _via_requests(fs_code, pz=pz)
             out[key] = items
 
         if not out["industry"] and not out["concept"]:
@@ -1715,35 +1772,64 @@ def create_app() -> FastAPI:
                 out["industry"] = fb["industry"]
             if not out["concept"]:
                 out["concept"] = fb["concept"]
+        # 概念多拉用于主线题材；面板仍只展示 TOP10
+        out["concept_all"] = list(out.get("concept") or [])
+        out["concept"] = (out.get("concept") or [])[:10]
+        out["industry"] = (out.get("industry") or [])[:10]
         return out
 
     def _fetch_changes() -> list[dict]:
-        """异动快照（火箭发射 + 大笔买入）。"""
+        """盘中异动：急速拉升 / 大笔买入 / 高台跳水（东财异动类型，非行业）。"""
+        # (东财 symbol, 展示名)；每类最多 5 条，合并去重后最多 12 条
+        type_specs = (
+            ("火箭发射", "急速拉升"),
+            ("大笔买入", "大笔买入"),
+            ("高台跳水", "高台跳水"),
+        )
         result: list[dict] = []
+        seen: set[str] = set()
         try:
             import akshare as ak
 
-            df = ak.stock_changes_em(symbol="火箭发射")
-            if df is not None and not df.empty:
-                seen: set = set()
+            for raw_type, label in type_specs:
+                try:
+                    df = ak.stock_changes_em(symbol=raw_type)
+                except Exception:
+                    continue
+                if df is None or df.empty:
+                    continue
+                n = 0
                 for _, row in df.iterrows():
-                    code = str(row.get("代码", ""))
-                    if code in seen:
+                    code = str(row.get("代码", "")).zfill(6)
+                    if not code or code in seen:
                         continue
                     seen.add(code)
+                    # 「相关信息」是东财盘口数值（非新闻原因）：急速拉升多为涨速/幅度，
+                    # 大笔买入多为成交量（股），高台跳水多为跌速；单位随类型而变。
+                    info_raw = row.get("相关信息", row.get("相关信息 ", ""))
                     result.append(
                         {
                             "time": str(row.get("时间", "")),
                             "code": code,
                             "name": str(row.get("名称", "")),
-                            "type": "火箭发射",
+                            "type": label,
+                            "type_raw": raw_type,
+                            "info": str(info_raw).strip() if info_raw is not None else "",
                         }
                     )
-                    if len(result) >= 10:
+                    n += 1
+                    if n >= 5:
                         break
+                if len(result) >= 12:
+                    break
         except Exception:
             pass
-        return result
+        if result:
+            industries = _batch_stock_industry_em([str(it.get("code") or "") for it in result])
+            for it in result:
+                code = str(it.get("code") or "").zfill(6)
+                it["industry"] = industries.get(code) or ""
+        return result[:12]
 
     def _fetch_lhb() -> list[dict]:
         """龙虎榜（最近一个交易日）。

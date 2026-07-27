@@ -212,6 +212,9 @@ class ModelRouter:
             }
             if rt is not None and float(rt) > 0:
                 chat_kw["request_timeout"] = float(rt)
+            max_out = int(getattr(self._config, "max_output_tokens", 0) or 0)
+            if max_out > 0:
+                chat_kw["max_tokens"] = max_out
             registry[tier] = ChatOpenAI(**chat_kw)
 
         return registry

@@ -11,6 +11,7 @@
   --text:#e1e2e8;--text2:#8b8fa3;--accent:#6c63ff;--accent2:#8b85ff;
   --green:#4ade80;--yellow:#facc15;--red:#f87171;--blue:#60a5fa;
   --radius:12px;
+  --sidebar-w:280px;
 }
 html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
 
@@ -18,7 +19,10 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .app{display:flex;height:100vh;overflow:hidden}
 
 /* Sidebar */
-.sidebar{width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;min-height:0}
+.sidebar{width:var(--sidebar-w);background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;min-height:0;position:relative}
+.sidebar-resizer{position:absolute;top:0;right:-3px;width:6px;height:100%;cursor:col-resize;z-index:30;touch-action:none}
+.sidebar-resizer:hover,.sidebar-resizer.dragging{background:rgba(108,99,255,0.45)}
+body.resizing-sidebar{cursor:col-resize;user-select:none}
 .sidebar-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .sidebar-header h1{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
 .sidebar-header h1 span{font-size:22px}
@@ -40,12 +44,33 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 .conv-item .conv-icon{font-size:14px;flex-shrink:0;color:var(--text2)}
 .conv-item .conv-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)}
 .conv-item.active .conv-title{color:var(--text);font-weight:500}
-.conv-item .conv-delete{opacity:0;background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:2px 4px;border-radius:4px;transition:opacity .15s}
-.conv-item:hover .conv-delete{opacity:0.7}
-.conv-item .conv-delete:hover{opacity:1;background:rgba(248,113,113,0.15)}
+.conv-item .conv-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.conv-item .conv-btn{opacity:0;background:none;border:none;cursor:pointer;font-size:12px;padding:2px 5px;border-radius:4px;color:var(--text2);transition:opacity .15s,background .15s,color .15s;line-height:1.2}
+.conv-item:hover .conv-btn{opacity:0.75}
+.conv-item .conv-btn:hover{opacity:1;background:var(--surface);color:var(--text)}
+.conv-item .conv-btn.pin-on{opacity:1;color:var(--yellow)}
+.conv-item .conv-btn.pin-on:hover{color:#fde68a;background:rgba(250,204,21,.12)}
+.conv-item .conv-btn.conv-delete{color:var(--red)}
+.conv-item .conv-btn.conv-delete:hover{background:rgba(248,113,113,0.15)}
+.conv-item.pinned .conv-title{color:var(--text)}
 .conv-item .conv-streaming{font-size:10px;color:var(--accent);animation:convPulse 1.2s infinite;flex-shrink:0}
 @keyframes convPulse{0%,100%{opacity:1}50%{opacity:.2}}
 .conv-empty{font-size:12px;color:var(--text2);padding:8px 20px;opacity:0.6}
+
+/* 自定义弹窗（替代浏览器 prompt，避免「127.0.0.1 显示」） */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9999;padding:20px}
+.modal-overlay.show{display:flex}
+.modal-card{width:min(420px,100%);background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;box-shadow:0 16px 48px rgba(0,0,0,.45)}
+.modal-card h3{font-size:15px;font-weight:700;margin-bottom:6px;color:var(--text)}
+.modal-card p{font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.5}
+.modal-card input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:14px;outline:none;margin-bottom:14px}
+.modal-card input:focus{border-color:var(--accent)}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px}
+.modal-actions button{border:none;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer}
+.modal-actions .btn-cancel{background:var(--surface2);color:var(--text2)}
+.modal-actions .btn-cancel:hover{color:var(--text)}
+.modal-actions .btn-ok{background:var(--accent);color:#fff}
+.modal-actions .btn-ok:hover{background:var(--accent2)}
 
 .specialist-list{padding:0 12px 8px;flex:1;min-height:0;overflow-y:auto;max-height:none;scrollbar-width:thin;scrollbar-color:rgba(46,47,69,0.5) transparent}
 .specialist-list::-webkit-scrollbar{width:3px}
@@ -152,6 +177,14 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 
 .token-stream{white-space:pre-wrap;line-height:1.7}
 
+/* 跟进建议：只标蓝科目，不整段染色 */
+.msg .follow-up-chip{
+  display:inline;padding:0;margin:0;border:none;background:none;
+  color:#38bdf8;font-size:inherit;font-weight:700;font-family:inherit;
+  cursor:pointer;text-decoration:none;
+}
+.msg .follow-up-chip:hover{color:#7dd3fc;text-decoration:underline}
+
 .msg .phase-tag{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text2);margin-bottom:6px}
 
 .typing{display:inline-flex;gap:4px;padding:4px 0}
@@ -214,6 +247,10 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 /* Grid Rows */
 .dash-row3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .dash-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.app.main-narrow .dash-row3{grid-template-columns:1fr 1fr}
+.app.main-narrow .dash-row2{grid-template-columns:1fr}
+.app.main-narrow .dash-top{grid-template-columns:1fr}
+.app.main-xnarrow .dash-row3{grid-template-columns:1fr}
 .dash-row2 .example-list{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:230px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:transparent transparent}
 .dash-row2 .example-list:hover{scrollbar-color:rgba(255,255,255,0.12) transparent}
 .dash-row2 .example-list::-webkit-scrollbar,.dash-row3 .example-list::-webkit-scrollbar{width:3px;background:transparent}
@@ -380,8 +417,11 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 /* Responsive */
 @media(max-width:768px){
   .sidebar{display:none}
+  .sidebar-resizer{display:none}
   .msg{max-width:95%}
   .msg.assistant{width:95%}
+  .dash-row3{grid-template-columns:1fr}
+  .dash-row2{grid-template-columns:1fr}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
@@ -389,7 +429,8 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 <body>
 <div class="app">
   <!-- Sidebar -->
-  <aside class="sidebar">
+  <aside class="sidebar" id="appSidebar">
+    <div class="sidebar-resizer" id="sidebarResizer" title="拖拽调整侧边栏宽度"></div>
     <div class="sidebar-header">
       <h1><span>🔬</span> 研究助手</h1>
       <button class="btn-new-chat" onclick="newThread()">+ 新对话</button>
@@ -470,7 +511,12 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
         <div class="dash-row3">
           <div class="dash-panel"><div class="panel-title">行业板块 TOP10<span class="panel-fetched" data-fetch="boards_industry"></span></div><ul class="zt-list" id="industryList"></ul></div>
           <div class="dash-panel"><div class="panel-title">概念板块 TOP10<span class="panel-fetched" data-fetch="boards_concept"></span></div><ul class="zt-list" id="conceptList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="东财异动类型：急速拉升（火箭发射）/ 大笔买入 / 高台跳水；非行业名">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
+        </div>
+        <div class="dash-row3">
+          <div class="dash-panel"><div class="panel-title" title="概念涨幅 + 匹配涨停家数合成得分（主线题材）">主线题材<span class="panel-fetched" data-fetch="mainline_themes"></span></div><ul class="zt-list" id="mainlineList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="连板高度优先，其次封板资金">情绪标杆<span class="panel-fetched" data-fetch="sentiment_benchmark"></span></div><ul class="zt-list" id="sentimentList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="规则近似：连板高标≈妖股候选；龙虎榜机构/大额净买≈庄股/游资候选，非官方标签">妖股/庄股候选<span class="panel-fetched" data-fetch="speculative_pool"></span></div><ul class="zt-list" id="speculativeList"></ul></div>
         </div>
         <div class="dash-row3">
           <div class="dash-panel"><div class="panel-title">强势股<span class="panel-fetched" data-fetch="strong_pool"></span></div><ul class="zt-list" id="strongList"></ul></div>
@@ -503,12 +549,18 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
             <div class="dash-panel"><div class="panel-title">小盘异动<span class="panel-fetched" data-fetch="us_small_gainers"></span></div><ul class="zt-list" id="usSmallList"></ul></div>
           </div>
           <div class="dash-row3">
+            <div class="dash-panel"><div class="panel-title" title="行业/主题 ETF 涨幅 + 关联龙头命中（近似 A 股主线题材）">美股主线<span class="panel-fetched" data-fetch="us_mainline_themes"></span></div><ul class="zt-list" id="usMainlineList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="涨跌幅绝对值较大的暴涨/暴跌（近似盘中异动）">日内异动<span class="panel-fetched" data-fetch="us_intraday_moves"></span></div><ul class="zt-list" id="usMovesList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="高换手活跃 + 强势涨幅；接近 52 周高标近新高">情绪标杆<span class="panel-fetched" data-fetch="us_sentiment"></span></div><ul class="zt-list" id="usSentimentList"></ul></div>
+          </div>
+          <div class="dash-row3">
             <div class="dash-panel"><div class="panel-title">七巨头<span class="panel-fetched" data-fetch="us_mega"></span></div><ul class="zt-list" id="usMegaList"></ul></div>
             <div class="dash-panel"><div class="panel-title">低估值大盘<span class="panel-fetched" data-fetch="us_undervalued"></span></div><ul class="zt-list" id="usUnderList"></ul></div>
             <div class="dash-panel"><div class="panel-title">日内跌幅榜<span class="panel-fetched" data-fetch="us_losers"></span></div><ul class="zt-list" id="usLosersList"></ul></div>
           </div>
-          <div class="dash-row2">
+          <div class="dash-row3">
             <div class="dash-panel"><div class="panel-title">空头最重<span class="panel-fetched" data-fetch="us_shorted"></span></div><ul class="zt-list" id="usShortedList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="高空头关注 + 小盘/极端暴涨，规则近似投机拥挤（非官方妖股）">投机/拥挤<span class="panel-fetched" data-fetch="us_speculative"></span></div><ul class="zt-list" id="usSpeculativeList"></ul></div>
             <div class="dash-panel"><div class="panel-title">美股快捷提问</div><div class="example-list" id="usQuickQueries">
               <div class="example" onclick="fillQuery(this)">分析标普500与纳斯达克今日走势</div>
               <div class="example" onclick="fillQuery(this)">美股科技板块和七巨头今日表现如何？</div>
@@ -542,6 +594,18 @@ html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="appModal" role="dialog" aria-modal="true" aria-labelledby="appModalTitle">
+  <div class="modal-card">
+    <h3 id="appModalTitle">提示</h3>
+    <p id="appModalDesc" style="display:none"></p>
+    <input id="appModalInput" type="text" style="display:none" />
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="appModalCancel">取消</button>
+      <button type="button" class="btn-ok" id="appModalOk">确定</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const ALL_SPECIALISTS = [
@@ -824,11 +888,75 @@ function init() {
   refreshUsage();
   refreshKnowledgeCollections();
   setupUploadZone();
+  initSidebarResize();
   setInterval(refreshUsage, 15000);
   autoResize(document.getElementById('queryInput'));
   _updateSendBtn();
   loadConversations();
   initDashboard();
+}
+
+/** 侧边栏横向拖拽改宽；主区 flex 自适应，看板列数随主区宽度切换 */
+function initSidebarResize() {
+  const root = document.documentElement;
+  const app = document.querySelector('.app');
+  const handle = document.getElementById('sidebarResizer');
+  if (!handle || !app) return;
+  const MIN = 200, MAX = 480, KEY = 'ra_sidebar_w';
+  const applyWidth = (w) => {
+    const clamped = Math.max(MIN, Math.min(MAX, Math.round(w)));
+    root.style.setProperty('--sidebar-w', clamped + 'px');
+    try { localStorage.setItem(KEY, String(clamped)); } catch {}
+    updateMainNarrowClass();
+  };
+  const updateMainNarrowClass = () => {
+    const main = document.querySelector('.main');
+    if (!main) return;
+    const w = main.clientWidth || 0;
+    app.classList.toggle('main-narrow', w > 0 && w < 980);
+    app.classList.toggle('main-xnarrow', w > 0 && w < 640);
+  };
+  try {
+    const saved = parseInt(localStorage.getItem(KEY) || '', 10);
+    if (Number.isFinite(saved)) applyWidth(saved);
+  } catch {}
+  updateMainNarrowClass();
+  window.addEventListener('resize', updateMainNarrowClass);
+  if (typeof ResizeObserver !== 'undefined') {
+    const main = document.querySelector('.main');
+    if (main) new ResizeObserver(updateMainNarrowClass).observe(main);
+  }
+  let startX = 0, startW = 0, dragging = false;
+  const onMove = (e) => {
+    if (!dragging) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    applyWidth(startW + (x - startX));
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.classList.remove('resizing-sidebar');
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    window.removeEventListener('touchmove', onMove);
+    window.removeEventListener('touchend', onUp);
+  };
+  const onDown = (e) => {
+    if (window.matchMedia('(max-width:768px)').matches) return;
+    dragging = true;
+    startX = e.touches ? e.touches[0].clientX : e.clientX;
+    startW = parseInt(getComputedStyle(root).getPropertyValue('--sidebar-w'), 10) || 280;
+    handle.classList.add('dragging');
+    document.body.classList.add('resizing-sidebar');
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, {passive: true});
+    window.addEventListener('touchend', onUp);
+    e.preventDefault();
+  };
+  handle.addEventListener('mousedown', onDown);
+  handle.addEventListener('touchstart', onDown, {passive: false});
 }
 
 function getUserId() {
@@ -951,23 +1079,41 @@ function renderConvList(convs) {
   for (const tid of streamingThreads) {
     if (!allIds.has(tid)) {
       const td = threadData.get(tid);
-      items.unshift({ thread_id: tid, title: td?._title || '新对话…', msg_count: 0, _local: true });
+      items.unshift({
+        thread_id: tid,
+        title: td?._title || '新对话…',
+        msg_count: 0,
+        pinned: !!td?._pinned,
+        _local: true,
+      });
     }
   }
   if (items.length === 0) {
     el.innerHTML = '<div class="conv-empty">暂无对话</div>';
     return;
   }
+  // 置顶优先（后端已排；本地流式项跟在后）
+  items.sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
   el.innerHTML = items.map(c => {
     const active = c.thread_id === currentThread ? ' active' : '';
-    const title = c.title || '未命名对话';
+    const pinned = !!c.pinned;
+    const title = _escapeHtml(c.title || '未命名对话');
+    const tid = String(c.thread_id).replace(/'/g, "\\'");
     const isStreaming = streamingThreads.has(c.thread_id);
     const streamBadge = isStreaming ? '<span class="conv-streaming">● 处理中</span>' : '';
-    return `<div class="conv-item${active}" data-tid="${c.thread_id}" onclick="switchConversation('${c.thread_id}')">
-      <span class="conv-icon">💬</span>
+    const pinCls = pinned ? 'conv-btn pin-on' : 'conv-btn';
+    const pinTitle = pinned ? '取消置顶' : '置顶';
+    const pinIcon = pinned ? '📌' : '📍';
+    const localOnly = c._local ? '1' : '0';
+    return `<div class="conv-item${active}${pinned ? ' pinned' : ''}" data-tid="${_escapeHtml(c.thread_id)}" data-local="${localOnly}" onclick="switchConversation('${tid}')">
+      <span class="conv-icon">${pinned ? '📌' : '💬'}</span>
       <span class="conv-title" title="${title}">${title}</span>
       ${streamBadge}
-      <button class="conv-delete" onclick="event.stopPropagation();deleteConversation('${c.thread_id}')" title="删除">✕</button>
+      <span class="conv-actions">
+        <button class="${pinCls}" onclick="event.stopPropagation();togglePinConversation('${tid}', ${pinned ? 'false' : 'true'})" title="${pinTitle}">${pinIcon}</button>
+        <button class="conv-btn" onclick="event.stopPropagation();renameConversation('${tid}')" title="重命名">✎</button>
+        <button class="conv-btn conv-delete" onclick="event.stopPropagation();deleteConversation('${tid}')" title="删除">✕</button>
+      </span>
     </div>`;
   }).join('');
 }
@@ -1055,8 +1201,66 @@ async function switchConversation(threadId) {
   }
 }
 
+/** 应用内弹窗，替代 browser prompt/confirm（避免「127.0.0.1 显示」） */
+function appDialog({ title, message = '', defaultValue = null, okText = '确定', cancelText = '取消' }) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('appModal');
+    const titleEl = document.getElementById('appModalTitle');
+    const descEl = document.getElementById('appModalDesc');
+    const inputEl = document.getElementById('appModalInput');
+    const okBtn = document.getElementById('appModalOk');
+    const cancelBtn = document.getElementById('appModalCancel');
+    if (!overlay || !titleEl || !okBtn || !cancelBtn) {
+      resolve(defaultValue === null ? false : null);
+      return;
+    }
+    const withInput = defaultValue !== null;
+    titleEl.textContent = title || '提示';
+    if (message) {
+      descEl.style.display = '';
+      descEl.textContent = message;
+    } else {
+      descEl.style.display = 'none';
+      descEl.textContent = '';
+    }
+    if (withInput) {
+      inputEl.style.display = '';
+      inputEl.value = String(defaultValue ?? '');
+    } else {
+      inputEl.style.display = 'none';
+      inputEl.value = '';
+    }
+    okBtn.textContent = okText;
+    cancelBtn.textContent = cancelText;
+    overlay.classList.add('show');
+    const cleanup = (value) => {
+      overlay.classList.remove('show');
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      overlay.onclick = null;
+      inputEl.onkeydown = null;
+      document.removeEventListener('keydown', onEsc);
+      resolve(value);
+    };
+    const onEsc = (e) => { if (e.key === 'Escape') cleanup(withInput ? null : false); };
+    okBtn.onclick = () => cleanup(withInput ? inputEl.value : true);
+    cancelBtn.onclick = () => cleanup(withInput ? null : false);
+    overlay.onclick = (e) => { if (e.target === overlay) cleanup(withInput ? null : false); };
+    document.addEventListener('keydown', onEsc);
+    if (withInput) {
+      inputEl.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); cleanup(inputEl.value); }
+      };
+      setTimeout(() => { inputEl.focus(); inputEl.select(); }, 0);
+    } else {
+      setTimeout(() => okBtn.focus(), 0);
+    }
+  });
+}
+
 async function deleteConversation(threadId) {
-  if (!confirm('确定删除这个对话？')) return;
+  const ok = await appDialog({ title: '删除对话', message: '确定删除这个对话？删除后不可恢复。' });
+  if (!ok) return;
   const userId = getUserId();
   try {
     await fetch(`/api/conversations/${threadId}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
@@ -1064,6 +1268,65 @@ async function deleteConversation(threadId) {
     if (currentThread === threadId) newThread();
     loadConversations();
   } catch {}
+}
+
+async function renameConversation(threadId) {
+  const item = document.querySelector(`.conv-item[data-tid="${CSS.escape(threadId)}"] .conv-title`);
+  const cur = (item?.getAttribute('title') || item?.textContent || '').trim() || '未命名对话';
+  const next = await appDialog({ title: '重命名对话', defaultValue: cur });
+  if (next === null) return;
+  const title = String(next).trim();
+  if (!title || title === cur) return;
+  const userId = getUserId();
+  const localOnly = document.querySelector(`.conv-item[data-tid="${CSS.escape(threadId)}"]`)?.dataset?.local === '1';
+  if (localOnly) {
+    const td = threadData.get(threadId);
+    if (td) td._title = title;
+    if (item) { item.textContent = title; item.title = title; }
+    return;
+  }
+  try {
+    const resp = await fetch(
+      `/api/conversations/${encodeURIComponent(threadId)}/title?user_id=${encodeURIComponent(userId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      }
+    );
+    if (!resp.ok) throw new Error('rename failed');
+    const td = threadData.get(threadId);
+    if (td) td._title = title;
+    loadConversations();
+  } catch {
+    alert('重命名失败');
+  }
+}
+
+async function togglePinConversation(threadId, pinned) {
+  const userId = getUserId();
+  const want = !!pinned;
+  const localOnly = document.querySelector(`.conv-item[data-tid="${CSS.escape(threadId)}"]`)?.dataset?.local === '1';
+  if (localOnly) {
+    const td = threadData.get(threadId);
+    if (td) td._pinned = want;
+    loadConversations();
+    return;
+  }
+  try {
+    const resp = await fetch(
+      `/api/conversations/${encodeURIComponent(threadId)}/pin?user_id=${encodeURIComponent(userId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned: want }),
+      }
+    );
+    if (!resp.ok) throw new Error('pin failed');
+    loadConversations();
+  } catch {
+    alert(want ? '置顶失败' : '取消置顶失败');
+  }
 }
 
 // =====================================================================
@@ -1125,7 +1388,12 @@ function _dashboardInnerHtml() {
     <div class="dash-row3">
       <div class="dash-panel"><div class="panel-title">行业板块 TOP10<span class="panel-fetched" data-fetch="boards_industry"></span></div><ul class="zt-list" id="industryList"></ul></div>
       <div class="dash-panel"><div class="panel-title">概念板块 TOP10<span class="panel-fetched" data-fetch="boards_concept"></span></div><ul class="zt-list" id="conceptList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="东财异动类型：急速拉升（火箭发射）/ 大笔买入 / 高台跳水；非行业名">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
+    </div>
+    <div class="dash-row3">
+      <div class="dash-panel"><div class="panel-title" title="概念涨幅 + 匹配涨停家数合成得分（主线题材）">主线题材<span class="panel-fetched" data-fetch="mainline_themes"></span></div><ul class="zt-list" id="mainlineList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="连板高度优先，其次封板资金">情绪标杆<span class="panel-fetched" data-fetch="sentiment_benchmark"></span></div><ul class="zt-list" id="sentimentList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="规则近似：连板高标≈妖股候选；龙虎榜机构/大额净买≈庄股/游资候选，非官方标签">妖股/庄股候选<span class="panel-fetched" data-fetch="speculative_pool"></span></div><ul class="zt-list" id="speculativeList"></ul></div>
     </div>
     <div class="dash-row3">
       <div class="dash-panel"><div class="panel-title">强势股<span class="panel-fetched" data-fetch="strong_pool"></span></div><ul class="zt-list" id="strongList"></ul></div>
@@ -1165,12 +1433,18 @@ function _dashboardInnerHtml() {
         <div class="dash-panel"><div class="panel-title">小盘异动<span class="panel-fetched" data-fetch="us_small_gainers"></span></div><ul class="zt-list" id="usSmallList"></ul></div>
       </div>
       <div class="dash-row3">
+        <div class="dash-panel"><div class="panel-title" title="行业/主题 ETF 涨幅 + 关联龙头命中（近似 A 股主线题材）">美股主线<span class="panel-fetched" data-fetch="us_mainline_themes"></span></div><ul class="zt-list" id="usMainlineList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="涨跌幅绝对值较大的暴涨/暴跌（近似盘中异动）">日内异动<span class="panel-fetched" data-fetch="us_intraday_moves"></span></div><ul class="zt-list" id="usMovesList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="高换手活跃 + 强势涨幅；接近 52 周高标近新高">情绪标杆<span class="panel-fetched" data-fetch="us_sentiment"></span></div><ul class="zt-list" id="usSentimentList"></ul></div>
+      </div>
+      <div class="dash-row3">
         <div class="dash-panel"><div class="panel-title">七巨头<span class="panel-fetched" data-fetch="us_mega"></span></div><ul class="zt-list" id="usMegaList"></ul></div>
         <div class="dash-panel"><div class="panel-title">低估值大盘<span class="panel-fetched" data-fetch="us_undervalued"></span></div><ul class="zt-list" id="usUnderList"></ul></div>
         <div class="dash-panel"><div class="panel-title">日内跌幅榜<span class="panel-fetched" data-fetch="us_losers"></span></div><ul class="zt-list" id="usLosersList"></ul></div>
       </div>
-      <div class="dash-row2">
+      <div class="dash-row3">
         <div class="dash-panel"><div class="panel-title">空头最重<span class="panel-fetched" data-fetch="us_shorted"></span></div><ul class="zt-list" id="usShortedList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="高空头关注 + 小盘/极端暴涨，规则近似投机拥挤（非官方妖股）">投机/拥挤<span class="panel-fetched" data-fetch="us_speculative"></span></div><ul class="zt-list" id="usSpeculativeList"></ul></div>
         <div class="dash-panel"><div class="panel-title">美股快捷提问</div><div class="example-list" id="usQuickQueries">
           <div class="example" onclick="fillQuery(this)">分析标普500与纳斯达克今日走势</div>
           <div class="example" onclick="fillQuery(this)">美股科技板块和七巨头今日表现如何？</div>
@@ -1278,6 +1552,9 @@ function _renderDashboard() {
   _renderBoardList('industryList', _dashData.boards?.industry, '行业');
   _renderBoardList('conceptList', _dashData.boards?.concept, '概念');
   _renderChangesList(_dashData.changes);
+  _renderMainlineThemes(_dashData.mainline_themes);
+  _renderSentimentBenchmark(_dashData.sentiment_benchmark);
+  _renderSpeculativePool(_dashData.speculative_pool);
   _renderLHB(_dashData.lhb);
   _renderTechStocks(_dashData.tech_stocks);
   _renderDynamicQueries(_dashData);
@@ -1297,10 +1574,96 @@ function _renderUsDashboard(us) {
   _renderUsQuoteList('usSectorsList', us.sectors, '行业ETF');
   _renderUsQuoteList('usThemeList', us.theme_etfs, '主题ETF');
   _renderUsQuoteList('usSmallList', us.small_gainers, '小盘');
+  _renderUsMainline(us.mainline_themes);
+  _renderUsMoves(us.intraday_moves);
+  _renderUsSentiment(us.sentiment);
   _renderUsQuoteList('usMegaList', us.mega, '七巨头');
   _renderUsQuoteList('usUnderList', us.undervalued, '低估值');
   _renderUsQuoteList('usLosersList', us.losers, '跌幅');
   _renderUsQuoteList('usShortedList', us.shorted, '空头');
+  _renderUsSpeculative(us.speculative);
+}
+
+function _renderUsMainline(items) {
+  const el = document.getElementById('usMainlineList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无主线</li>'; return; }
+  el.innerHTML = items.map((s, i) => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const hit = s.hit_count ? `龙头${s.hit_count}` : '';
+    const leaders = (s.leaders || []).filter(Boolean).slice(0, 2).join('、');
+    const query = `分析美股${s.name}今日是否为主线，关联龙头表现如何`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="hot-rank">${i + 1}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      ${hit ? `<span class="zt-tag">${escHtml(hit)}</span>` : ''}
+      <span class="zt-right">
+        <span class="hot-change ${cls}">${changeText}</span>
+        ${leaders ? `<span class="change-type">${escHtml(leaders)}</span>` : ''}
+      </span>
+    </li>`;
+  }).join('');
+}
+
+function _renderUsMoves(items) {
+  const el = document.getElementById('usMovesList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无大幅异动</li>'; return; }
+  el.innerHTML = items.map(s => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const query = `分析${s.name}(${s.symbol || s.code})今日${s.label || '异动'}原因和风险`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-tag">${escHtml(s.label || '')}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      <span class="zt-right">
+        <span class="hot-change ${cls}">${changeText}</span>
+        <span class="hot-code">${escHtml(s.symbol || s.code || '')}</span>
+      </span>
+    </li>`;
+  }).join('');
+}
+
+function _renderUsSentiment(items) {
+  const el = document.getElementById('usSentimentList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无情绪标杆</li>'; return; }
+  el.innerHTML = items.map(s => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const query = `分析${s.name}(${s.symbol || s.code})作为美股情绪标杆的意义`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-tag">${escHtml(s.tag || '')}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      <span class="zt-right">
+        <span class="hot-change ${cls}">${changeText}</span>
+      </span>
+    </li>`;
+  }).join('');
+}
+
+function _renderUsSpeculative(items) {
+  const el = document.getElementById('usSpeculativeList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无投机/拥挤候选</li>'; return; }
+  el.innerHTML = items.map(s => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const query = `分析${s.name}(${s.symbol || s.code})的投机拥挤风险`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-tag">${escHtml(s.label || '')}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      <span class="zt-right">
+        <span class="hot-change ${cls}">${changeText}</span>
+        <span class="change-type" title="${escHtmlAttr(s.reason || '')}">${escHtml(s.reason || '')}</span>
+      </span>
+    </li>`;
+  }).join('');
 }
 
 function _renderStatusBar(status, usStatus) {
@@ -1611,20 +1974,103 @@ function _renderBoardList(elId, items, label) {
   }).join('');
 }
 
+function _fmtChangeInfo(type, info) {
+  const raw = String(info || '').trim();
+  if (!raw) return '';
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n)) return raw;
+  if (type === '大笔买入' || type === '大笔卖出') {
+    if (Math.abs(n) >= 10000) return (n / 10000).toFixed(1) + '万股';
+    return Math.round(n) + '股';
+  }
+  // 急速拉升 / 高台跳水等：东财多为涨跌幅或涨速类数值
+  return (n > 0 && !String(raw).includes('%') ? '+' : '') + n.toFixed(2) + '%';
+}
+
 function _renderChangesList(items) {
   const el = document.getElementById('changesList');
   if (!el) return;
   if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无异动</li>'; return; }
   el.innerHTML = items.map(s => {
     const ind = _industryOf(s);
+    const detail = _fmtChangeInfo(s.type, s.info);
+    const tip = [s.time ? `触发 ${s.time}` : '', detail ? `盘口 ${detail}` : ''].filter(Boolean).join(' · ');
     const query = `分析${s.name}(${s.code})的异动原因和后续走势`;
-    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
-      <span class="change-time">${s.time || ''}</span>
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}" title="${escHtmlAttr(tip)}">
       <span class="zt-name">${escHtml(s.name)}</span>
       ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
       <span class="zt-right">
-        <span class="hot-code">${escHtml(s.code)}</span>
+        ${detail ? `<span class="change-type" title="东财相关信息（盘口数值，非新闻原因）">${escHtml(detail)}</span>` : ''}
         <span class="change-type">${escHtml(s.type || '')}</span>
+      </span>
+    </li>`;
+  }).join('');
+}
+
+function _fmtSeal(amount) {
+  const n = parseFloat(amount);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n >= 1e8) return (n / 1e8).toFixed(2) + '亿';
+  if (n >= 1e4) return (n / 1e4).toFixed(0) + '万';
+  return String(Math.round(n));
+}
+
+function _renderMainlineThemes(items) {
+  const el = document.getElementById('mainlineList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无主线题材</li>'; return; }
+  el.innerHTML = items.map((s, i) => {
+    const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '';
+    const zt = s.zt_count != null ? `涨停${s.zt_count}` : '';
+    const leaders = (s.leaders || []).filter(Boolean).slice(0, 2).join('、');
+    const query = `分析${s.name}板块今日是否为主线题材，涨停家数和龙头表现`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="hot-rank">${i + 1}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      ${zt ? `<span class="zt-tag">${escHtml(zt)}</span>` : ''}
+      <span class="zt-right">
+        <span class="hot-change ${cls}">${changeText}</span>
+        ${leaders ? `<span class="change-type" title="匹配涨停">${escHtml(leaders)}</span>` : ''}
+      </span>
+    </li>`;
+  }).join('');
+}
+
+function _renderSentimentBenchmark(items) {
+  const el = document.getElementById('sentimentList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无情绪标杆</li>'; return; }
+  el.innerHTML = items.map(s => {
+    const seal = _fmtSeal(s.seal_amount);
+    const ind = _industryOf(s);
+    const query = `分析${s.name}(${s.code})作为情绪标杆的连板高度、封单和持续性`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-tag">${escHtml(s.tag || '')}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
+      <span class="zt-right">
+        ${seal ? `<span class="change-type" title="封板资金">封${escHtml(seal)}</span>` : ''}
+        <span class="hot-code">${escHtml(s.code || '')}</span>
+      </span>
+    </li>`;
+  }).join('');
+}
+
+function _renderSpeculativePool(items) {
+  const el = document.getElementById('speculativeList');
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无候选（规则近似）</li>'; return; }
+  el.innerHTML = items.map(s => {
+    const ind = _industryOf(s);
+    const query = `分析${s.name}(${s.code})是否具备妖股/庄股特征及风险`;
+    return `<li class="zt-item" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-tag">${escHtml(s.label || '')}</span>
+      <span class="zt-name">${escHtml(s.name)}</span>
+      ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
+      <span class="zt-right">
+        <span class="change-type" title="${escHtmlAttr(s.reason || '')}">${escHtml(s.reason || '')}</span>
       </span>
     </li>`;
   }).join('');
@@ -2197,7 +2643,8 @@ function toggleKbDelete() {
 }
 
 async function deleteKbDocument(collection, source) {
-  if (!confirm(`确定删除「${source}」？`)) return;
+  const ok = await appDialog({ title: '删除文档', message: `确定删除「${source}」？` });
+  if (!ok) return;
   const userId = getUserId();
   try {
     const qs = new URLSearchParams({collection, source});
@@ -2510,7 +2957,53 @@ function renderLine(line) {
     return `<div class="source-line">${s}</div>`;
   }
   if (s.startsWith('<li>')) return s;
+  if (_isFollowUpLine(line)) {
+    return `<div class="md-p">${_decorateFollowUpHtml(line)}</div>`;
+  }
   return `<div class="md-p">${s}</div>`;
+}
+
+function _isFollowUpLine(line) {
+  const t = String(line || '').trim();
+  return /如需进一步|如需拆解|如需分析|如需对比|随时告知|可以继续问|若需深入|若要继续/.test(t);
+}
+
+/**
+ * 仅把「（如 A、B、或 C）」里的完整科目标蓝可点。
+ * 只按顿号/逗号拆，保留「与 MSFT/AMZN Cloud 增速对比」整段，避免被 / 拆散。
+ */
+function _decorateFollowUpHtml(rawLine) {
+  const raw = String(rawLine || '');
+  const m = raw.match(/[（(]如\s*([^）)]+)[）)]/);
+  if (!m) return escAndInline(raw);
+  const inner = m[1];
+  // 只按中文顿号/中英文逗号拆；前导「或」去掉但仍属同一科目
+  const parts = inner
+    .split(/[、，,]/)
+    .map(p => p.replace(/^\s*或\s*/, '').trim())
+    .filter(Boolean);
+  if (!parts.length) return escAndInline(raw);
+
+  const chips = parts.map((p, i) => {
+    const label = escHtml(p);
+    const q = encodeURIComponent('请进一步分析：' + p);
+    const sep = i === 0 ? '' : '、';
+    return `${sep}<button type="button" class="follow-up-chip" data-follow-q="${q}" onclick="fillFollowUpQuery(decodeURIComponent(this.dataset.followQ))">${label}</button>`;
+  }).join('');
+
+  const before = escAndInline(raw.slice(0, m.index));
+  const after = escAndInline(raw.slice(m.index + m[0].length));
+  // 保留「（如 …）」结构，只把科目染蓝
+  return `${before}（如 ${chips}）${after}`;
+}
+
+function fillFollowUpQuery(text) {
+  const input = document.getElementById('queryInput');
+  if (!input) return;
+  input.value = text;
+  input.focus();
+  if (typeof autoResize === 'function') autoResize(input);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 /** 模型常写纯文本「东方财富美股行情」而不带 markdown 链接；在此补可点击链接 */

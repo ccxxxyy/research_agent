@@ -124,7 +124,7 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 
 - 跨市场 MIXED 深度编排已落地（P5：``[MixedOrchestration]`` 分侧子任务）；
 - 英文舆情已为 VADER + 金融词表（`en_vader_finlex_v2`，含摘要/正文前段）；FinBERT 等仍为可选；
-- 日线历史 / ETF holdings 仍依赖 yfinance，Yahoo 全挂时可能空。
+- 日线：yfinance → Chart HTTP → 东财 K 线；ETF holdings：yfinance → quoteSummary（提问触发；Yahoo 全挂时 holdings 仍可能空）。
 
 ## 后续（一期范围外 / 可选）
 
@@ -134,3 +134,4 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 - 美股共同基金 / 期权（明确不在一期）
 - 英文舆情再升级 FinBERT / 专用模型（当前 VADER+finlex 已够用）
 - 通用联网搜索（非核心；不能替代行情 API）
+- EDGAR 整篇精读 / 回答自动续写（见 data-sources §8；当前为有界窗口 + `MAX_OUTPUT_TOKENS`）

@@ -267,11 +267,66 @@ async def test_get_etf_holdings_unavailable_funds_data():
     mock_ticker = MagicMock()
     mock_ticker.funds_data = None
 
-    with patch("yfinance.Ticker", return_value=mock_ticker):
+    with (
+        patch("yfinance.Ticker", return_value=mock_ticker),
+        patch.object(mod, "_holdings_via_yahoo_quotesummary", return_value=None),
+    ):
         result = await mod.get_etf_holdings("AAPL")
 
     assert "error" in result
     assert result["symbol"] == "AAPL"
+
+
+@pytest.mark.asyncio
+async def test_get_price_history_falls_back_to_chart():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = pd.DataFrame()
+    fallback = {
+        "symbol": "AAPL",
+        "period": "5d",
+        "interval": "1d",
+        "bars": [{"date": "2024-01-02", "close": 100.0}],
+        "summary": {"bars": 1},
+        "source": "yahoo_chart",
+        "source_url": "https://finance.yahoo.com/quote/AAPL/history",
+    }
+
+    with (
+        patch("yfinance.Ticker", return_value=mock_ticker),
+        patch.object(mod, "_history_via_yahoo_chart", return_value=fallback),
+        patch.object(mod, "_history_via_eastmoney", return_value=None),
+    ):
+        result = await mod.get_price_history("AAPL", period="5d")
+
+    assert result["source"] == "yahoo_chart"
+    assert len(result["bars"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_etf_holdings_falls_back_to_quotesummary():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    mock_ticker = MagicMock()
+    mock_ticker.funds_data = None
+    fallback = {
+        "symbol": "QQQ",
+        "holdings": [{"symbol": "NVDA", "name": "NVIDIA", "weight_pct": 8.0}],
+        "count": 1,
+        "top_n": 10,
+        "source": "yahoo_quotesummary",
+        "source_url": "https://finance.yahoo.com/quote/QQQ/holdings",
+    }
+
+    with (
+        patch("yfinance.Ticker", return_value=mock_ticker),
+        patch.object(mod, "_holdings_via_yahoo_quotesummary", return_value=fallback),
+    ):
+        result = await mod.get_etf_holdings("QQQ", top_n=10)
+
+    assert result["source"] == "yahoo_quotesummary"
+    assert result["holdings"][0]["symbol"] == "NVDA"
 
 
 @pytest.mark.asyncio
