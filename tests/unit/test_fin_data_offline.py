@@ -623,8 +623,8 @@ def test_market_status_weekend():
     assert "last_trading_day" in result
 
 
-def test_market_status_pre_market():
-    """盘前（8:00）应返回 pre_market 状态。"""
+def test_market_status_morning_before_auction_not_yet_open():
+    """09:14 前为休市未开盘（不是盘前）。"""
     import research_agent.mcp_servers.fin_data_server as mod
 
     fake_now = _dt(2026, 6, 10, 8, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -632,12 +632,13 @@ def test_market_status_pre_market():
 
     with patch.object(mod, "_load_trade_dates", return_value=trade_dates):
         result = mod._compute_market_status(_now=fake_now)
-    assert result["status"] == "pre_market"
+    assert result["status"] == "not_yet_open"
     assert result["is_trading_day"] is True
     assert "last_trading_day" in result
 
 
 def test_market_status_overnight_not_pre_market():
+    """交易日凌晨（0:05）应是未开盘，不能标盘前。"""
     import research_agent.mcp_servers.fin_data_server as mod
 
     fake_now = _dt(2026, 6, 10, 0, 5, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -664,6 +665,18 @@ def test_market_status_trading():
     assert result["is_trading_day"] is True
 
 
+def test_market_status_afternoon_trading():
+    """下午连续竞价（14:00）应为 trading。"""
+    import research_agent.mcp_servers.fin_data_server as mod
+
+    fake_now = _dt(2026, 6, 10, 14, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    trade_dates = {"2026-06-10", "2026-06-09"}
+
+    with patch.object(mod, "_load_trade_dates", return_value=trade_dates):
+        result = mod._compute_market_status(_now=fake_now)
+    assert result["status"] == "trading"
+
+
 def test_market_status_lunch_break():
     """午间休市（12:00）应返回 lunch_break 状态。"""
     import research_agent.mcp_servers.fin_data_server as mod
@@ -678,7 +691,7 @@ def test_market_status_lunch_break():
 
 
 def test_market_status_call_auction():
-    """集合竞价（9:20）应返回 call_auction 状态。"""
+    """开盘集合竞价/盘前（9:20）应返回 call_auction。"""
     import research_agent.mcp_servers.fin_data_server as mod
 
     fake_now = _dt(2026, 6, 10, 9, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -688,3 +701,27 @@ def test_market_status_call_auction():
         result = mod._compute_market_status(_now=fake_now)
     assert result["status"] == "call_auction"
     assert result["is_trading_day"] is True
+
+
+def test_market_status_pre_open_silence():
+    """09:25–09:30 静默空档。"""
+    import research_agent.mcp_servers.fin_data_server as mod
+
+    fake_now = _dt(2026, 6, 10, 9, 27, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    trade_dates = {"2026-06-10", "2026-06-09"}
+
+    with patch.object(mod, "_load_trade_dates", return_value=trade_dates):
+        result = mod._compute_market_status(_now=fake_now)
+    assert result["status"] == "pre_open_silence"
+
+
+def test_market_status_closing_auction():
+    """14:57–15:00 收盘集合竞价。"""
+    import research_agent.mcp_servers.fin_data_server as mod
+
+    fake_now = _dt(2026, 6, 10, 14, 58, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    trade_dates = {"2026-06-10", "2026-06-09"}
+
+    with patch.object(mod, "_load_trade_dates", return_value=trade_dates):
+        result = mod._compute_market_status(_now=fake_now)
+    assert result["status"] == "closing_auction"

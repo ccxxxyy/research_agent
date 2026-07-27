@@ -2,7 +2,7 @@
 
 ## 一、系统概览
 
-Research Agent 是一个面向 A 股市场的多智能体金融研究系统。基于 LangGraph Supervisor 模式编排 6 个专业化 Agent，通过 MCP 协议对接外部数据源，结合 Corrective RAG、三级 LLM 路由、HITL 审批工作流，为用户提供有引用来源的结构化研究报告。系统在安全层面实施了 Prompt 注入检测、输出过滤、限流、Token 配额等多层防御；在可靠性层面实现了熔断器、多级降级、优雅启动等生产级模式。
+Research Agent 是一个面向 **A 股与美股** 的多智能体金融研究系统。基于 LangGraph Supervisor 模式编排专业化 Agent（A 股侧 data/fund/derivatives/report/news/sentiment 等 + 美股侧 us_data/us_filing/us_news/us_sentiment + 共享 coder/knowledge），通过 MCP 协议对接外部数据源，结合 Corrective RAG、三级 LLM 路由、HITL 审批工作流，为用户提供有引用来源的结构化研究报告。系统在安全层面实施了 Prompt 注入检测、输出过滤、限流、Token 配额等多层防御；在可靠性层面实现了熔断器、多级降级、优雅启动等生产级模式。首页聚合行情面板，并支持按用户持久化的 **我的自选**（`/api/watchlist`）。A/美股工具链平行隔离详见 [ADR-0006](adr/0006-us-market-parallel-isolation.md) 与 [数据来源说明](data-sources.md)。
 
 ## 二、架构全景图
 
@@ -21,7 +21,8 @@ Research Agent 是一个面向 A 股市场的多智能体金融研究系统。�
                ▼                    ▼                     ▼
         /api/supervisor       /api/knowledge         /api/memory
         /research             /api/sentiment         /api/usage
-        /research/stream                             /metrics
+        /research/stream      /api/watchlist         /metrics
+        /api/dashboard        …
                │
                ▼
     ┌─── PromptGuard ───┐     输入安全过滤
@@ -29,23 +30,31 @@ Research Agent 是一个面向 A 股市场的多智能体金融研究系统。�
     └────────┬──────────┘
              │
              ▼
-    ┌── Research Supervisor ──────────────────────────────────┐
-    │   (HEAVY LLM — deepseek-v4-pro)                        │
-    │                                                         │
-    │   分析用户请求 → 识别子问题 → 规划移交序列               │
-    │                                                         │
-    │   ┌──────────┬──────────┬──────────┬──────────┬────────┐│
-    │   ▼          ▼          ▼          ▼          ▼        ▼│
-    │ data_     report_    coder_   knowledge_ news_   sentiment_
-    │ expert    expert     expert   expert     expert   expert │
-    │ (MEDIUM)  (MEDIUM)  (MEDIUM)  (MEDIUM)  (MEDIUM) (MEDIUM)│
-    │   │          │          │          │        │        │   │
-    │   ▼          ▼          ▼          ▼        ▼        ▼   │
-    │ akshare  巨潮PDF    Python    FAISS+BM25  东财/   SnowNLP │
-    │  MCP      MCP      sandbox    Corrective  财联社   确定性  │
-    │ (stdio)  (stdio)    MCP       RAG        MCP     模型    │
-    │                    (stdio)   (in-proc)  (stdio)          │
-    └──────────────────────────────────────────────────────────┘
+    ┌── Research Supervisor ──────────────────────────────────────────────┐
+    │   (HEAVY LLM — deepseek-v4-pro)                                     │
+    │                                                                     │
+    │   分析用户请求 → 市场判定(CN_A/US/MIXED) → 规划移交序列                  │
+    │                                                                     │
+    │   【专家 ↔ 数据源】（MEDIUM 专家；工具集平行隔离，见 ADR-0006）           │
+    │                                                                     │
+    │   A股:                                                              │
+    │     data_expert        ← akshare MCP (stdio)                        │
+    │     fund_expert        ← 天天基金/东财基金 MCP (stdio)                │
+    │     derivatives_expert ← 新浪期货/期权 (akshare) MCP (stdio)         │
+    │     report_expert      ← 巨潮 PDF MCP (stdio)                       │
+    │     news_expert        ← 东财/财联社/雪球 MCP (stdio)                 │
+    │     sentiment_expert   ← SnowNLP 确定性模型 (stdio)                  │
+    │                                                                     │
+    │   美股:                                                              │
+    │     us_data_expert     ← Yahoo Chart → 东财 → yfinance MCP (stdio)   │
+    │     us_filing_expert   ← SEC EDGAR MCP (stdio)                      │
+    │     us_news_expert     ← Yahoo (+可选 Finnhub) MCP (stdio)           │
+    │     us_sentiment_expert← VADER + 金融词表 MCP (stdio)                │
+    │                                                                     │
+    │   共享:                                                              │
+    │     coder_expert       ← Python sandbox MCP (stdio)                 │
+    │     knowledge_expert   ← FAISS+BM25 Corrective RAG (in-proc)        │
+    └─────────────────────────────────────────────────────────────────────┘
              │
              ▼ (可选)
     ┌── Reflection 子图 ──┐
@@ -89,8 +98,8 @@ Research Agent 是一个面向 A 股市场的多智能体金融研究系统。�
 ```
 1. API 层接收请求
    → PromptGuard.check_input() 通过
-   → 加载用户长期记忆上下文（偏好 + 近期研究历史）
-   → 注入为 SystemMessage 前导
+   → 加载用户长期记忆上下文（偏好 + 近期研究历史 + **看板自选摘要**）
+   → 注入为 SystemMessage 前导（含市场判定 preamble）
 
 2. Supervisor 分析（HEAVY LLM）
    识别 4 个子问题：

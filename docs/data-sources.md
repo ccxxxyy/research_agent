@@ -40,15 +40,16 @@ SnowNLP（中文舆情）                   VADER + 金融词表增强（本地�
 
 | 能力 | MCP / 模块 | 数据来源 | 备注 |
 |------|------------|----------|------|
-| 行情/板块/龙虎榜等 | `fin_data_server` | **akshare**（底层多为东财、新浪等） | 主路径 |
+| 行情/板块/龙虎榜等 | `fin_data_server` | **akshare**（底层多为东财、新浪等） | 主路径；`get_market_status`（交易日北京时间）：**未开盘 00:00–09:14** / **开盘集合竞价·盘前 09:15–09:25** / **静默 09:25–09:30** / **连续竞价 09:30–11:30、13:00–14:57** / **午休 11:30–13:00** / **收盘集合竞价 14:57–15:00** / **已收盘** / 非交易日 |
 | 基金净值/ETF/QDII | `fund_server` | **akshare**（天天基金/东财基金） | 主路径（含 QDII 排行、基金经理） |
 | 国内期货/期权 | `derivatives_server` | **akshare**（新浪期货/期权） | 主路径 |
 | 公告 PDF | `pdf_report_server` | **巨潮 cninfo** | 主路径 |
 | 新闻 | `news_server` | 东财 / 财联社 / 雪球等 | 主路径 |
 | 舆情 | `news_sentiment_server` | 新闻文本 + **SnowNLP** | 本地模型 |
 | 看板热搜/科技股等 | `main.py` 看板 API | 东财 push2 / 新浪等 HTTP（部分 `curl_cffi`） | UI 聚合，与 MCP 同源生态 |
-| 看板·国内期货/ETF/QDII | `market/dashboard_extras` → `/api/dashboard` | 新浪期货 / 基金 ETF / 东财 QDII | 首页 A 股区面板 |
+| 看板·国内期货/ETF/QDII | `market/dashboard_extras` → `/api/dashboard` | 新浪期货 / 基金 ETF / 东财开放式 QDII | 首页 A 股区；**QDII 为场外开放式**，按**日增长率**（最近净值日）排 Top，非场内 ETF |
 | 看板·美股期货/共同基金 | 同上（并入 `us` 包） | Yahoo `=F` / yfinance NAV | 首页美股区；期权以快捷提问入口 |
+| 看板·我的自选 | `watchlist_store` + `watchlist_resolve` → `/api/watchlist` | CN：新浪/净值；US：`_quote_from_ticker` 同源 | 按 `user_id` 持久化；研究 preamble 注入 |
 
 A 股侧目前也是「**一个接入层（akshare）+ 多家底层站点**」，不是可配置的多供应商切换。
 
@@ -365,6 +366,7 @@ FINNHUB_API_KEY=...
 | 美股报价主备 | `mcp_servers/us_data_server.py`（Chart → 东财 → yfinance；含共同基金/期货/期权） |
 | 国内期货/期权 | `mcp_servers/derivatives_server.py` |
 | 看板扩展（期货/ETF/QDII/共同基金） | `market/dashboard_extras.py` + `main.py` `/api/dashboard` |
+| 看板自选 | `memory/watchlist_store.py` + `market/watchlist_resolve.py` + `api/routes/watchlist.py` |
 | 代理/来源诚实性 | `market/us_source_honesty.py` |
 | 美股新闻管道（双源/过滤/聚类/标签） | `mcp_servers/us_news_pipeline.py` |
 | 美股新闻工具 | `mcp_servers/us_news_server.py`（Yahoo → Finnhub → pipeline） |
@@ -404,7 +406,10 @@ FINNHUB_API_KEY=...
 | 涨跌着色 | 美股绿涨红跌；清洗 `-+0.64%` 误号 |
 | 对话滚动位置 | 返回看板再进同一会话时恢复离开时的滚动位置 |
 | 美股主线 / 日内异动 / 情绪 / 投机面板 | 由行业·主题 ETF、涨跌榜等**本地聚合**；规则近似 |
-| 看板·基金/期货/共同基金 | A 股：ETF 涨幅、国内期货、QDII；美股：商品/股指期货、共同基金 NAV；期权快捷提问→`us_get_option_*` |
+| 看板·基金/期货/共同基金 | A 股：ETF 双榜、国内期货、**QDII 日涨幅（场外日增长率）**；美股：商品/股指期货、共同基金 NAV；期权快捷提问→`us_get_option_*` |
+| 看板·我的自选 | A/美股分区；搜码加入；报价与问答同源（US）；同步记忆并注入研究 preamble |
+| A 股市场状态文案 | `not_yet_open`（00:00–09:14）/ `call_auction` 盘前（09:15–09:25）/ `pre_open_silence`（09:25–09:30）/ `trading` / `lunch_break` / `closing_auction`（14:57–15:00）/ `closed` |
+| 最终回答清洗 | 剥除「上述分析已完整呈现」等虚指开场；禁止模型假装气泡上方还有分析 |
 | 美股共同基金/期货/期权工具 | `us_data_server`；国内衍生品 `derivatives_server` |
 
 ## 10. 变更记录
@@ -420,3 +425,5 @@ FINNHUB_API_KEY=...
 | §4.4：美股新闻管道技术说明（过滤/聚类/标签）+ Finnhub 第二源操作指南 |
 | 美股共同基金/期货/期权 + 国内 fund QDII/经理 + derivatives_server |
 | 看板同步：A 股期货/ETF/QDII + 美股期货/共同基金/期权快捷；专家列表含 derivatives_expert |
+| 看板自选 `/api/watchlist` + SQLite 持久化 + 记忆注入；QDII 面板改为场外日增长率；A 股时段对齐交易所（集合竞价/静默/收盘竞价）；剥除「上述分析」虚指 |
+| architecture 专家↔数据源图补回双市场全工具；A 股 `get_market_status` 取消旧 `pre_market` 清晨窗 |

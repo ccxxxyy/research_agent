@@ -1505,16 +1505,21 @@ async def get_market_status() -> dict:
     """返回 A 股市场当前交易状态（开盘中 / 已收盘 / 未开盘 / 非交易日）。
 
     无需参数。返回字典包含：
-    - ``status``: ``"trading"`` / ``"closed"`` / ``"pre_market"`` / ``"not_yet_open"`` / ``"non_trading_day"`` / ``"lunch_break"`` / ``"call_auction"``
+    - ``status``: ``"trading"`` / ``"closed"`` / ``"not_yet_open"`` / ``"call_auction"`` /
+      ``"pre_open_silence"`` / ``"closing_auction"`` / ``"lunch_break"`` / ``"non_trading_day"``
     - ``is_trading_day``: 今天是否为交易日
     - ``current_time``: 当前北京时间
     - ``message``: 中文状态描述
-    - ``last_trading_day``: 最近一个交易日（如果今天非交易日、凌晨未开盘或盘前）
+    - ``last_trading_day``: 最近一个交易日（非交易日、未开盘、静默等需用昨收时）
     - ``hint``: 给 LLM 的指导提示
 
     **建议**：当用户问"今天大盘怎么样""收盘分析""市场情况"等问题时，
     先调用此工具判断市场状态，再决定如何描述数据的时效性。
-    注意：交易日凌晨（0:00–7:00）为 ``not_yet_open``（未开盘），清晨临近开盘才是 ``pre_market``（盘前）。
+
+    A 股交易日时段（北京时间）：
+    ``00:00–09:14`` 休市未开盘；``09:15–09:25`` 开盘集合竞价（盘前）；
+    ``09:25–09:30`` 静默空档；``09:30–11:30`` / ``13:00–14:57`` 连续竞价；
+    ``14:57–15:00`` 收盘集合竞价；``15:00`` 后已收盘；午休 ``11:30–13:00``。
     """
 
     try:
@@ -1569,8 +1574,11 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
         }
 
     hour_min = now.hour * 100 + now.minute
-    # 交易日 00:00–06:59：隔夜未开盘，不要标「盘前」（盘前指临近开盘的清晨）
-    if hour_min < 700:
+    # A 股时段（北京时间，交易日）：
+    # 00:00–09:14 休市未开盘；09:15–09:25 开盘集合竞价（盘前）；
+    # 09:25–09:30 未开盘静默；09:30–11:30 / 13:00–14:57 连续竞价；
+    # 14:57–15:00 收盘集合竞价；15:00 后已收盘；11:30–13:00 午休。
+    if hour_min < 915:
         last_td = _find_last_trading_day()
         return {
             "status": "not_yet_open",
@@ -1579,47 +1587,54 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
             "today": today_str,
             "last_trading_day": last_td,
             "message": (
-                f"交易日凌晨（当前 {now.strftime('%H:%M')}），"
-                f"今日 9:30 开盘；行情仍为上一交易日收盘。"
+                f"交易日休市未开盘（当前 {now.strftime('%H:%M')}；"
+                f"09:15 开盘集合竞价，09:30 连续竞价）。"
             ),
             "hint": (
                 f"当前可用数据为上一个交易日（{last_td}）的收盘数据。"
                 f"请告知用户'尚未开盘，以下为昨日收盘数据'，不要说'盘前'或'今日收盘'。"
             ),
         }
-    if hour_min < 915:
-        last_td = _find_last_trading_day()
-        return {
-            "status": "pre_market",
-            "is_trading_day": True,
-            "current_time": current_time,
-            "today": today_str,
-            "last_trading_day": last_td,
-            "message": f"今天是交易日，盘前尚未开盘（当前 {now.strftime('%H:%M')}，9:30 开盘）。",
-            "hint": (
-                f"当前可用数据为上一个交易日（{last_td}）的收盘数据。"
-                f"请告知用户'盘前，以下为昨日收盘数据'。"
-            ),
-        }
-    if hour_min < 930:
+    if hour_min < 925:
         return {
             "status": "call_auction",
             "is_trading_day": True,
             "current_time": current_time,
             "today": today_str,
-            "message": f"集合竞价中（{now.strftime('%H:%M')}），9:30 正式开盘。",
-            "hint": "可获取集合竞价阶段的参考价格，但正式行情需等 9:30。",
+            "message": (
+                f"开盘集合竞价/盘前（{now.strftime('%H:%M')}，"
+                f"09:15–09:25；09:25–09:30 静默，09:30 连续竞价）。"
+            ),
+            "hint": "开盘集合竞价阶段可参考撮合价；连续竞价实时行情需等 09:30。",
         }
-    if hour_min <= 1130 or (1300 <= hour_min <= 1500):
+    if hour_min < 930:
+        last_td = _find_last_trading_day()
+        return {
+            "status": "pre_open_silence",
+            "is_trading_day": True,
+            "current_time": current_time,
+            "today": today_str,
+            "last_trading_day": last_td,
+            "message": (
+                f"开盘前静默空档（{now.strftime('%H:%M')}，"
+                f"09:25–09:30 不可申报，09:30 开盘）。"
+            ),
+            "hint": (
+                f"静默阶段无连续竞价；可用上一交易日（{last_td}）收盘或集合竞价参考价，"
+                f"勿称正在盘中交易。"
+            ),
+        }
+    if hour_min <= 1130:
         return {
             "status": "trading",
             "is_trading_day": True,
             "current_time": current_time,
             "today": today_str,
-            "message": f"A 股交易中（{now.strftime('%H:%M')}）。",
-            "hint": "市场正在交易，获取的行情数据为实时数据。",
+            "session": "morning",
+            "message": f"A 股上午盘中（{now.strftime('%H:%M')}，09:30–11:30）。",
+            "hint": "市场正在连续竞价，获取的行情数据为实时数据。",
         }
-    if 1130 < hour_min < 1300:
+    if hour_min < 1300:
         return {
             "status": "lunch_break",
             "is_trading_day": True,
@@ -1627,6 +1642,27 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
             "today": today_str,
             "message": f"午间休市（{now.strftime('%H:%M')}，13:00 恢复交易）。",
             "hint": "上午交易已结束，数据为上午收盘时的最新状态，13:00 后恢复实时更新。",
+        }
+    if hour_min < 1457:
+        return {
+            "status": "trading",
+            "is_trading_day": True,
+            "current_time": current_time,
+            "today": today_str,
+            "session": "afternoon",
+            "message": f"A 股下午盘中（{now.strftime('%H:%M')}，13:00–14:57）。",
+            "hint": "市场正在连续竞价，获取的行情数据为实时数据。",
+        }
+    if hour_min < 1500:
+        return {
+            "status": "closing_auction",
+            "is_trading_day": True,
+            "current_time": current_time,
+            "today": today_str,
+            "message": (
+                f"收盘集合竞价（{now.strftime('%H:%M')}，14:57–15:00）。"
+            ),
+            "hint": "收盘集合竞价阶段；正式收盘价以 15:00 撮合结果为准。",
         }
     return {
         "status": "closed",
