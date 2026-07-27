@@ -1,17 +1,18 @@
-"""MCP Server — 美股新闻（Yahoo Finance / 可选 EDGAR 8-K 标题）。
+"""MCP Server — 美股新闻（Yahoo + 可选 Finnhub / EDGAR 8-K 标题）。
 
 与 ``news_server``（东财/财联社/雪球）**平行隔离**，禁止混用。
 
 工具
 ----
-1. ``get_ticker_news`` — 个股 / ETF 近期新闻（Search HTTP → yfinance）
+1. ``get_ticker_news`` — 个股 / ETF 近期新闻（Yahoo → Finnhub；聚类/过滤/标签）
 2. ``get_market_news`` — 主要美股指数相关新闻（标普/纳指/道指/VIX）
 3. ``get_etf_news`` — 常见 ETF 新闻（SPY/QQQ/IWM/…）
 4. ``get_recent_8k_headlines`` — 近期 8-K 标题（SEC submissions，事件向）
 
 设计说明
 --------
-- 新闻优先 Yahoo Search HTTP（与 ``us_sentiment_server`` 对齐，休市更稳），失败再回退 ``yfinance.Ticker.news``。
+- Yahoo Search HTTP（失败再 yfinance）+ 可选 Finnhub company-news（``FINNHUB_API_KEY``）。
+- 共用 ``us_news_pipeline``：垃圾源过滤、标题相似度聚类、事件关键词标签。
 - 错误返回 ``{"error": "...", "context": "..."}``。
 - 工具结果走 ``cached_tool``（namespace=``us_news``）。
 """
@@ -220,10 +221,13 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
     return out
 
 
-def _fetch_ticker_news(symbol: str, limit: int) -> list[dict[str, Any]]:
-    """优先 Search HTTP，失败再 yfinance.news（与舆情侧对齐）。"""
+def _fetch_yahoo_news_raw(symbol: str, limit: int) -> list[dict[str, Any]]:
+    """Yahoo Search HTTP，失败再 yfinance.news（未经聚类）。"""
     items = _fetch_news_via_yahoo_search(symbol, limit)
     if items:
+        for it in items:
+            it.setdefault("provider", "yahoo_search")
+            it.setdefault("source", "yahoo_search")
         return items
 
     import yfinance as yf
@@ -239,10 +243,22 @@ def _fetch_ticker_news(symbol: str, limit: int) -> list[dict[str, Any]]:
     for raw in raw_list:
         item = _normalize_news_item(raw)
         if item:
+            item["provider"] = "yfinance"
+            item["source"] = "yfinance"
             out.append(item)
         if len(out) >= limit:
             break
     return out
+
+
+def _fetch_ticker_news(symbol: str, limit: int) -> dict[str, Any]:
+    """Yahoo + Finnhub → 垃圾过滤 → 聚类 → 事件标签。"""
+    from research_agent.mcp_servers.us_news_pipeline import collect_us_news
+
+    ticker = _normalize_ticker(symbol)
+    pull = min(40, max(limit * 2, limit + 5))
+    yahoo = _fetch_yahoo_news_raw(ticker, pull)
+    return collect_us_news(ticker, yahoo_items=yahoo, limit=limit)
 
 
 async def _http_get_json(url: str) -> Any:
@@ -274,7 +290,7 @@ async def _load_ticker_map() -> dict[str, dict[str, str]]:
 @mcp.tool()
 @cached_tool(ttl=TTL_SHORT, namespace="us_news")
 async def get_ticker_news(symbol: str, limit: int = 15) -> dict:
-    """获取美股个股 / ETF 近期新闻标题（Yahoo Search HTTP，失败回退 yfinance）。
+    """获取美股个股 / ETF 近期新闻（Yahoo + 可选 Finnhub；已聚类/过滤/贴标签）。
 
     Args:
         symbol: ticker，如 ``AAPL``、``TSLA``、``SPY``。
@@ -286,22 +302,23 @@ async def get_ticker_news(symbol: str, limit: int = 15) -> dict:
         return {"error": "symbol 不能为空", "context": "get_ticker_news()"}
 
     def _call() -> dict[str, Any]:
-        items = _fetch_ticker_news(ticker, limit)
-        src = "yahoo_search"
-        if items and items[0].get("source") == "yfinance":
-            src = "yfinance"
-        elif items and items[0].get("source") == "yahoo_search":
-            src = "yahoo_search"
-        elif not items:
-            src = "yahoo_search+yfinance"
-        return {
+        bundle = _fetch_ticker_news(ticker, limit)
+        items = bundle.get("news") or []
+        providers = bundle.get("providers_used") or []
+        src = "+".join(providers) if providers else "yahoo"
+        out: dict[str, Any] = {
             "symbol": ticker,
             "news": items,
             "count": len(items),
             "source": src,
+            "providers_used": providers,
+            "raw_count": bundle.get("raw_count"),
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/news",
             "available_off_hours": True,
         }
+        if bundle.get("note"):
+            out["note"] = bundle["note"]
+        return out
 
     return await _news_call(_call, context=f"get_ticker_news({symbol!r})")
 
@@ -320,15 +337,29 @@ async def get_market_news(limit_per_index: int = 5) -> dict:
         # 只拉标普+纳指，避免 4 路 yfinance 新闻把研究流拖死
         focus = {k: v for k, v in _MAJOR_INDEX_TICKERS.items() if v in {"^GSPC", "^IXIC"}}
         buckets = []
+        providers: list[str] = []
         for name, sym in focus.items():
             try:
-                news = _fetch_ticker_news(sym, limit_per_index)
-                buckets.append({"index": name, "symbol": sym, "news": news, "count": len(news)})
+                bundle = _fetch_ticker_news(sym, limit_per_index)
+                news = bundle.get("news") or []
+                for p in bundle.get("providers_used") or []:
+                    if p not in providers:
+                        providers.append(p)
+                buckets.append(
+                    {
+                        "index": name,
+                        "symbol": sym,
+                        "news": news,
+                        "count": len(news),
+                        "providers_used": bundle.get("providers_used") or [],
+                    }
+                )
             except Exception as exc:  # noqa: BLE001
                 buckets.append({"index": name, "symbol": sym, "error": str(exc), "news": []})
         return {
             "indices": buckets,
-            "source": "yfinance",
+            "source": "+".join(providers) if providers else "yahoo",
+            "providers_used": providers,
             "source_url": "https://finance.yahoo.com/topic/stock-market-news/",
         }
 
@@ -350,15 +381,28 @@ async def get_etf_news(symbols: str = "SPY,QQQ,IWM", limit_per_etf: int = 5) -> 
 
     def _call() -> dict[str, Any]:
         buckets = []
+        providers: list[str] = []
         for sym in tickers:
             try:
-                news = _fetch_ticker_news(sym, limit_per_etf)
-                buckets.append({"symbol": sym, "news": news, "count": len(news)})
+                bundle = _fetch_ticker_news(sym, limit_per_etf)
+                news = bundle.get("news") or []
+                for p in bundle.get("providers_used") or []:
+                    if p not in providers:
+                        providers.append(p)
+                buckets.append(
+                    {
+                        "symbol": sym,
+                        "news": news,
+                        "count": len(news),
+                        "providers_used": bundle.get("providers_used") or [],
+                    }
+                )
             except Exception as exc:  # noqa: BLE001
                 buckets.append({"symbol": sym, "error": str(exc), "news": []})
         return {
             "etfs": buckets,
-            "source": "yfinance",
+            "source": "+".join(providers) if providers else "yahoo",
+            "providers_used": providers,
             "source_url": "https://finance.yahoo.com/etfs/",
         }
 

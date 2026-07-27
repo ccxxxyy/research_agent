@@ -139,6 +139,10 @@ REFLECTION_ENABLED=true
 
 # SSE 心跳间隔，0 关闭（ 5s 更直观）
 SSE_RESEARCH_HEARTBEAT_SECONDS=5
+
+# 美股新闻第二源（可选）。配置后与 Yahoo 合并，再过滤/聚类/贴事件标签。
+# 申请：https://finnhub.io/  — 详见 docs/data-sources.md §4.4
+FINNHUB_API_KEY=
 ```
 
 ### 4.2 测试

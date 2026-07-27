@@ -607,13 +607,19 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
 def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], list[str]]:
     import logging
 
+    from research_agent.mcp_servers.us_news_pipeline import collect_us_news
+
     ticker = _normalize_ticker(symbol)
     logger.info("fetching sentiment news for %s limit=%s", ticker, limit)
 
-    news_list = _fetch_news_via_yahoo_search(ticker, limit)
+    pull = min(40, max(limit * 2, limit + 5))
+    yahoo = _fetch_news_via_yahoo_search(ticker, pull)
     source = "yahoo_search"
-
-    if not news_list:
+    if yahoo:
+        for n in yahoo:
+            n.setdefault("provider", "yahoo_search")
+            n.setdefault("source", "yahoo_search")
+    else:
         # 回退 yfinance（可能慢）
         logging.getLogger("yfinance").setLevel(logging.CRITICAL)
         try:
@@ -623,16 +629,22 @@ def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], l
         except Exception as exc:  # noqa: BLE001
             logger.warning("yfinance.news failed for %s: %s", ticker, exc)
             raw_list = []
-        news_list = []
+        yahoo = []
         for raw in raw_list:
             news = _normalize_news_item(raw)
             if news:
-                news_list.append(news)
-            if len(news_list) >= limit:
+                news["provider"] = "yfinance"
+                news["source"] = "yfinance"
+                yahoo.append(news)
+            if len(yahoo) >= pull:
                 break
         source = "yfinance"
 
-    news_list = news_list[:limit]
+    bundle = collect_us_news(ticker, yahoo_items=yahoo, limit=limit)
+    news_list = bundle.get("news") or []
+    providers = bundle.get("providers_used") or []
+    if providers:
+        source = "+".join(providers)
     # 摘要过短时补抓页面 meta/正文前段，缓解标题夸大
     _enrich_thin_summaries(news_list)
     body_hits = sum(1 for n in news_list if n.get("body_snippet"))
@@ -663,6 +675,10 @@ def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], l
                 "text_fingerprint": _text_fingerprint(combined),
                 "fetch_source": source,
                 "score_text_basis": basis,
+                "event_type": news.get("event_type") or "other",
+                "event_label_zh": news.get("event_label_zh") or "其他",
+                "cluster_size": news.get("cluster_size") or 1,
+                "provider": news.get("provider") or "",
             }
         )
         items.append(scored)
