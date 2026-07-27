@@ -202,6 +202,10 @@ def fetch_cn_futures_panel(*, limit: int = 10) -> dict[str, Any]:
                 continue
             seen.add(code)
             display = str(row.get("symbol") or name_by_sym.get(code, code))
+            # 新浪/akshare 对主力连续合约返回的中文名自带「连续」（如「豆粕连续」），
+            # 并非拼接；面板标题已说明「主力连续」，展示时去掉后缀避免重复观感。
+            if display.endswith("连续") and len(display) > 2:
+                display = display[:-2]
             price = _num(row.get("current_price"))
             settle = _num(row.get("last_settle_price")) or _num(row.get("last_close"))
             chg = None
@@ -285,9 +289,9 @@ def fetch_cn_etf_panel(*, limit: int = 10) -> dict[str, Any]:
         return empty
 
 
-def fetch_cn_qdii_panel(*, limit: int = 8) -> dict[str, Any]:
-    """QDII：按近一年收益作涨跌榜（无可靠成交量，by_volume 为空）。"""
-    limit = max(1, min(int(limit), 15))
+def fetch_cn_qdii_panel(*, limit: int = 15) -> dict[str, Any]:
+    """QDII 场外开放式：按日增长率（最近净值日涨跌）排榜；无可靠成交量。"""
+    limit = max(1, min(int(limit), 30))
     empty = _empty_rank(limit=limit, source="eastmoney")
     try:
         import akshare as ak
@@ -295,8 +299,10 @@ def fetch_cn_qdii_panel(*, limit: int = 8) -> dict[str, Any]:
         df = ak.fund_open_fund_rank_em(symbol="QDII")
         if df is None or getattr(df, "empty", True):
             return empty
-        sort_col = (
-            "近1年" if "近1年" in df.columns else ("今年来" if "今年来" in df.columns else None)
+        # 优先日涨跌（约等于最新公布净值日相对前一日）；场外无盘中实时价
+        sort_col = next(
+            (c for c in ("日增长率", "日涨幅", "近1周", "今年来") if c in df.columns),
+            None,
         )
         rows: list[dict[str, Any]] = []
         for _, row in df.iterrows():
@@ -311,6 +317,7 @@ def fetch_cn_qdii_panel(*, limit: int = 8) -> dict[str, Any]:
                     "change_pct": chg,
                     "volume": None,
                     "industry": "QDII",
+                    "period": sort_col or "",
                 }
             )
         return _rank_dual(rows, limit=limit, source="eastmoney")

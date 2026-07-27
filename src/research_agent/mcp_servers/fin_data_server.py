@@ -1505,15 +1505,16 @@ async def get_market_status() -> dict:
     """返回 A 股市场当前交易状态（开盘中 / 已收盘 / 未开盘 / 非交易日）。
 
     无需参数。返回字典包含：
-    - ``status``: ``"trading"`` / ``"closed"`` / ``"pre_market"`` / ``"non_trading_day"``
+    - ``status``: ``"trading"`` / ``"closed"`` / ``"pre_market"`` / ``"not_yet_open"`` / ``"non_trading_day"`` / ``"lunch_break"`` / ``"call_auction"``
     - ``is_trading_day``: 今天是否为交易日
     - ``current_time``: 当前北京时间
     - ``message``: 中文状态描述
-    - ``last_trading_day``: 最近一个交易日（如果今天非交易日或盘前）
+    - ``last_trading_day``: 最近一个交易日（如果今天非交易日、凌晨未开盘或盘前）
     - ``hint``: 给 LLM 的指导提示
 
     **建议**：当用户问"今天大盘怎么样""收盘分析""市场情况"等问题时，
     先调用此工具判断市场状态，再决定如何描述数据的时效性。
+    注意：交易日凌晨（0:00–7:00）为 ``not_yet_open``（未开盘），清晨临近开盘才是 ``pre_market``（盘前）。
     """
 
     try:
@@ -1568,6 +1569,24 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
         }
 
     hour_min = now.hour * 100 + now.minute
+    # 交易日 00:00–06:59：隔夜未开盘，不要标「盘前」（盘前指临近开盘的清晨）
+    if hour_min < 700:
+        last_td = _find_last_trading_day()
+        return {
+            "status": "not_yet_open",
+            "is_trading_day": True,
+            "current_time": current_time,
+            "today": today_str,
+            "last_trading_day": last_td,
+            "message": (
+                f"交易日凌晨（当前 {now.strftime('%H:%M')}），"
+                f"今日 9:30 开盘；行情仍为上一交易日收盘。"
+            ),
+            "hint": (
+                f"当前可用数据为上一个交易日（{last_td}）的收盘数据。"
+                f"请告知用户'尚未开盘，以下为昨日收盘数据'，不要说'盘前'或'今日收盘'。"
+            ),
+        }
     if hour_min < 915:
         last_td = _find_last_trading_day()
         return {
@@ -1576,7 +1595,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
             "current_time": current_time,
             "today": today_str,
             "last_trading_day": last_td,
-            "message": f"今天是交易日，但尚未开盘（当前 {now.strftime('%H:%M')}，9:30 开盘）。",
+            "message": f"今天是交易日，盘前尚未开盘（当前 {now.strftime('%H:%M')}，9:30 开盘）。",
             "hint": (
                 f"当前可用数据为上一个交易日（{last_td}）的收盘数据。"
                 f"请告知用户'盘前，以下为昨日收盘数据'。"

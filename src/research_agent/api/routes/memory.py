@@ -51,6 +51,7 @@ class UserContextResponse(BaseModel):
     user_id: str
     preferences: list[dict[str, Any]]
     recent_research: list[dict[str, Any]]
+    watchlist: dict[str, Any] | None = None
 
 
 # =====================================================================
@@ -63,7 +64,7 @@ async def get_user_context(
     memory: MemoryDep,
     x_user_id: str = Header(..., alias="X-User-ID"),
 ) -> UserContextResponse:
-    """获取完整的用户上下文（偏好 + 近期研究历史）。
+    """获取完整的用户上下文（偏好 + 近期研究历史 + 看板自选快照）。
 
     与研究主管在每次调用前注入的前导上下文相同。
     """
@@ -72,6 +73,7 @@ async def get_user_context(
         user_id=x_user_id,
         preferences=ctx.get("preferences", []),
         recent_research=ctx.get("recent_research", []),
+        watchlist=ctx.get("watchlist"),
     )
 
 

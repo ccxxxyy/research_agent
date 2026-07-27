@@ -8,7 +8,7 @@
     get_memory — 按 key 读一条
     search_memories — 搜索某个命名空间下的记忆
     save_research_result — 快捷方法，把研究结果存到历史
-    get_user_context — 一次性拉出用户的偏好+最近研究，用来个性化 Agent 行为
+    get_user_context — 一次性拉出用户的偏好+最近研究+看板自选，用来个性化 Agent 行为
 """
 
 from __future__ import annotations
@@ -23,11 +23,12 @@ if TYPE_CHECKING:
 
 
 class MemoryNamespace:
-    """用于组织长期记忆的预定义命名空间。分别是用户偏好 / 研究历史 / 领域知识。"""
+    """用于组织长期记忆的预定义命名空间。分别是用户偏好 / 研究历史 / 领域知识 / 看板自选。"""
 
     USER_PREFERENCES = "user_preferences"
     RESEARCH_HISTORY = "research_history"
     DOMAIN_KNOWLEDGE = "domain_knowledge"
+    WATCHLIST = "user_watchlist"
 
 
 class MemoryManager:
@@ -98,6 +99,8 @@ class MemoryManager:
 
     async def get_user_context(self, user_id: str) -> dict[str, Any]:
         """检索所有相关的用户上下文，用于个性化 agent 行为。"""
+        from research_agent.memory.watchlist_store import WATCHLIST_MEMORY_KEY
+
         preferences = await self.search_memories(
             user_id,
             MemoryNamespace.USER_PREFERENCES,
@@ -108,7 +111,13 @@ class MemoryManager:
             MemoryNamespace.RESEARCH_HISTORY,
             limit=5,
         )
+        watchlist = await self.get_memory(
+            user_id,
+            MemoryNamespace.WATCHLIST,
+            WATCHLIST_MEMORY_KEY,
+        )
         return {
             "preferences": preferences,
             "recent_research": history,
+            "watchlist": watchlist,
         }

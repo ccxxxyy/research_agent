@@ -26,6 +26,7 @@ from research_agent.api.routes import (  # noqa: E402
     sentiment,
     supervisor,
     usage,
+    watchlist,
 )
 from research_agent.config import get_settings  # noqa: E402
 from research_agent.market.dashboard_extras import (  # noqa: E402
@@ -262,10 +263,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
 
     from research_agent.memory.conversation_store import ConversationStore
+    from research_agent.memory.watchlist_store import WatchlistStore
 
     conv_db = getattr(settings, "conversation_sqlite_path", "./data/conversations.db")
     conv_store = ConversationStore(db_path=conv_db)
     app.state.conversation_store = conv_store
+    wl_db = getattr(settings, "watchlist_sqlite_path", "./data/watchlist.db")
+    app.state.watchlist_store = WatchlistStore(db_path=wl_db)
 
     yield
 
@@ -368,6 +372,7 @@ def create_app() -> FastAPI:
     app.include_router(sentiment.router)
     app.include_router(supervisor.router)
     app.include_router(conversations.router)
+    app.include_router(watchlist.router)
     app.include_router(a2a.router)
 
     # --- 热搜 API（轻量端点，供首页展示） ---
@@ -430,7 +435,7 @@ def create_app() -> FastAPI:
                 url = "https://reportapi.eastmoney.com/report/list"
                 params = {
                     "industryCode": "*",
-                    "pageSize": 20,
+                    "pageSize": 40,
                     "pageNo": 1,
                     "beginTime": begin,
                     "endTime": today.isoformat(),
@@ -463,7 +468,7 @@ def create_app() -> FastAPI:
                             "stock_code": stock_code,
                         }
                     )
-                    if len(out) >= 10:
+                    if len(out) >= 15:
                         break
                 return out
             except Exception:
@@ -477,15 +482,15 @@ def create_app() -> FastAPI:
         topics = await topic_task
         topics_fetched_at = _time.strftime("%H:%M:%S")
 
-        # --- 人气榜 Top 10 ---
+        # --- 人气榜 Top 15 ---
         em_hot = []
         if all_items:
-            top10 = all_items[:10]
-            codes = [it["sc"] for it in top10]
+            top_n = all_items[:15]
+            codes = [it["sc"] for it in top_n]
             info = await asyncio.to_thread(_batch_stock_info_sina, codes)
             industries = await asyncio.to_thread(_batch_stock_industry_em, codes)
             rank_fetched_at = _time.strftime("%H:%M:%S")
-            for it in top10:
+            for it in top_n:
                 sc = it["sc"]
                 si = info.get(sc, {})
                 code_bare = sc.replace("SZ", "").replace("SH", "").replace("BJ", "")
@@ -501,13 +506,13 @@ def create_app() -> FastAPI:
                     }
                 )
 
-        # --- 飙升榜：hisRc 最小（排名上升最多）的 10 只 ---
+        # --- 飙升榜：hisRc 最小（排名上升最多）的 15 只 ---
         surge = []
         if all_items:
             surged = sorted(
                 [it for it in all_items if it.get("hisRc", 0) < 0],
                 key=lambda x: x.get("hisRc", 0),
-            )[:10]
+            )[:15]
             if surged:
                 codes = [it["sc"] for it in surged]
                 info = await asyncio.to_thread(_batch_stock_info_sina, codes)
@@ -861,7 +866,7 @@ def create_app() -> FastAPI:
             # 占位；前端另拉 /api/dashboard/extras
             "cn_futures": dict(_empty_rank),
             "cn_etf": dict(_empty_rank),
-            "cn_qdii": {**_empty_rank, "limit": 8},
+            "cn_qdii": {**_empty_rank, "limit": 15},
             "breadth": breadth,
             "trending": trending,
             "us": us_dash,
@@ -894,7 +899,7 @@ def create_app() -> FastAPI:
             return out
 
         def _cn_qdii():
-            out = fetch_cn_qdii_panel(limit=8)
+            out = fetch_cn_qdii_panel(limit=15)
             _stamp("cn_qdii")
             return out
 
@@ -917,7 +922,7 @@ def create_app() -> FastAPI:
         results = {
             "cn_futures": dict(empty),
             "cn_etf": dict(empty),
-            "cn_qdii": {**empty, "limit": 8},
+            "cn_qdii": {**empty, "limit": 15},
             "us_futures": dict(empty),
             "us_etf_rank": dict(empty),
             "us_mutual_funds": dict(empty),
@@ -1897,7 +1902,7 @@ def create_app() -> FastAPI:
 
     def _fetch_changes() -> list[dict]:
         """盘中异动：急速拉升 / 大笔买入 / 高台跳水（东财异动类型，非行业）。"""
-        # (东财 symbol, 展示名)；每类最多 5 条，合并去重后最多 12 条
+        # (东财 symbol, 展示名)；每类最多 6 条，合并去重后最多 16 条
         type_specs = (
             ("火箭发射", "急速拉升"),
             ("大笔买入", "大笔买入"),
@@ -1935,9 +1940,9 @@ def create_app() -> FastAPI:
                         }
                     )
                     n += 1
-                    if n >= 5:
+                    if n >= 6:
                         break
-                if len(result) >= 12:
+                if len(result) >= 16:
                     break
         except Exception:
             pass
@@ -1946,7 +1951,7 @@ def create_app() -> FastAPI:
             for it in result:
                 code = str(it.get("code") or "").zfill(6)
                 it["industry"] = industries.get(code) or ""
-        return result[:12]
+        return result[:16]
 
     def _fetch_lhb() -> list[dict]:
         """龙虎榜（最近一个交易日）。

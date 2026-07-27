@@ -222,9 +222,9 @@ def _session_status(*, now: datetime | None = None) -> dict[str, Any]:
     weekday = local.weekday()  # Mon=0
     t = local.time()
     date_str = local.strftime("%Y-%m-%d")
-    clock = local.strftime("%H:%M")
+    clock = local.strftime("%H:%M:%S")
     weekday_cn = _WEEKDAYS_CN[weekday]
-    # 如 2026-07-25 周六 02:41
+    # 如 2026-07-25 周六 02:41:03
     local_display = f"{date_str} {weekday_cn} {clock}"
 
     if weekday >= 5:

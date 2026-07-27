@@ -5,6 +5,7 @@ from __future__ import annotations
 from research_agent.api.routes.supervisor import (
     _looks_like_interim_supervisor_text,
     _looks_like_real_synthesis,
+    _strip_meta_above_analysis,
 )
 
 
@@ -31,3 +32,14 @@ def test_real_synthesis_with_pct() -> None:
 def test_empty_is_interim() -> None:
     assert _looks_like_interim_supervisor_text("")
     assert not _looks_like_real_synthesis("")
+
+
+def test_strip_meta_above_analysis_opening() -> None:
+    raw = (
+        "上述分析已完整呈现。今日美股跌幅榜的核心风险信号可浓缩为一句判断："
+        "**半导体板块无差别杀跌**。"
+    )
+    out = _strip_meta_above_analysis(raw)
+    assert not out.startswith("上述分析")
+    assert "半导体板块" in out
+    assert _strip_meta_above_analysis("## 结论\n标普上涨") == "## 结论\n标普上涨"

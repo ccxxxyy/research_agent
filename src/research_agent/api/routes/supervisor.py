@@ -27,6 +27,7 @@ from research_agent.api.dependencies import (
     ResearchSupervisorGraphDep,
     SupervisorGraphDep,
     TokenQuotaDep,
+    WatchlistStoreDep,
 )
 from research_agent.api.schemas import (
     ApproveRequest,
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from research_agent.cache.semantic_cache import SemanticHit
     from research_agent.market.types import MarketResolution
     from research_agent.memory.manager import MemoryManager
+    from research_agent.memory.watchlist_store import WatchlistStore
     from research_agent.security.token_quota import TokenQuotaManager
 
 
@@ -160,6 +162,7 @@ async def _build_user_context_messages(
     *,
     market_override: str | None = None,
     thread_market: str | None = None,
+    watchlist_store: WatchlistStore | None = None,
 ) -> tuple[list[BaseMessage], MarketResolution]:
     """构建包含可选长期上下文的图输入消息列表。
 
@@ -170,8 +173,11 @@ async def _build_user_context_messages(
 
     同时解析市场（问句信号 → 会话粘性 → 用户偏好 → 默认），写入 SystemMessage，
     并返回 ``MarketResolution`` 供响应头 / JSON 字段使用。
+
+    看板自选：优先从 ``watchlist_store`` 实时读取；若无 store 则回退到长期记忆快照。
     """
     from research_agent.market import format_market_preamble, resolve_market
+    from research_agent.memory.watchlist_store import snapshot_watchlist
 
     override = (
         None if (not market_override or market_override.lower() == "auto") else market_override
@@ -198,6 +204,21 @@ async def _build_user_context_messages(
                 for r in user_ctx["recent_research"][:3]
             ]
             context_parts.append("Recent research history:\n" + "\n".join(history_lines))
+
+        watchlist_text = ""
+        if watchlist_store is not None:
+            try:
+                snap = await asyncio.to_thread(snapshot_watchlist, watchlist_store, user_id)
+                watchlist_text = snap.get("content") or ""
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("watchlist snapshot failed: {}", exc)
+        if not watchlist_text:
+            wl_mem = user_ctx.get("watchlist") or {}
+            raw = wl_mem.get("content") if isinstance(wl_mem, dict) else ""
+            if isinstance(raw, str) and raw.startswith("User dashboard watchlist"):
+                watchlist_text = raw
+        if watchlist_text:
+            context_parts.append(watchlist_text)
 
     messages.append(SystemMessage(content="\n\n".join(context_parts)))
     messages.append(HumanMessage(content=query))
@@ -273,11 +294,12 @@ async def supervisor_research(
     graph: ResearchSupervisorGraphDep,
     memory: MemoryDep,
     quota: TokenQuotaDep,
+    watchlist_store: WatchlistStoreDep,
 ) -> ResearchSupervisorResponse:
     """同步调用金融研究主管。
 
     记忆生命周期：
-      1. 加载用户的长期上下文（偏好 + 近期研究历史）并作为系统消息前导注入。
+      1. 加载用户的长期上下文（偏好 + 近期研究历史 + 看板自选）并作为系统消息前导注入。
       2. 执行研究图（短期状态由检查点器通过 thread_id 管理）。
       3. 将完成的研究结果保存到长期记忆，以支持跨会话检索。
     """
@@ -344,6 +366,7 @@ async def supervisor_research(
         request.query,
         market_override=request.market,
         thread_market=request.thread_market,
+        watchlist_store=watchlist_store,
     )
 
     result = await graph.ainvoke(
@@ -412,6 +435,23 @@ def _format_sse(event: ResearchSupervisorSSEEvent) -> str:
     return f"data: {event.model_dump_json()}\n\n"
 
 
+_META_ABOVE_ANALYSIS_RE = re.compile(
+    r"^(?:"
+    r"上述分析已完整呈现[。．.!！]?\s*"
+    r"|如上(?:文|所述|分析)(?:已完整呈现)?[。．.!！]?\s*"
+    r"|前文(?:已述|已分析|所述)[。．.!！]?\s*"
+    r"|分析(?:内容)?已完整呈现[。．.!！]?\s*"
+    r")+",
+)
+
+
+def _strip_meta_above_analysis(text: str) -> str:
+    t = (text or "").lstrip()
+    if not t:
+        return ""
+    return _META_ABOVE_ANALYSIS_RE.sub("", t, count=1).lstrip()
+
+
 def _clean_markdown(text: str) -> str:
     """对 LLM 输出做轻量清洗，保留 markdown 格式供前端渲染。
 
@@ -423,6 +463,7 @@ def _clean_markdown(text: str) -> str:
     from research_agent.text.urls import sanitize_markdown_links
 
     result = sanitize_signed_percents(text or "")
+    result = _strip_meta_above_analysis(result)
     result = strip_trailing_disclaimers(result)
     result = sanitize_markdown_links(result)
     result = re.sub(r"\n{3,}", "\n\n", result)
@@ -1114,6 +1155,7 @@ async def supervisor_research_stream(
     graph: ResearchSupervisorGraphDep,
     memory: MemoryDep,
     quota: TokenQuotaDep,
+    watchlist_store: WatchlistStoreDep,
 ) -> StreamingResponse:
     """通过 SSE 流式传输研究主管工作流。
 
@@ -1221,6 +1263,7 @@ async def supervisor_research_stream(
         request.query,
         market_override=request.market,
         thread_market=request.thread_market,
+        watchlist_store=watchlist_store,
     )
 
     specialists: list[str] = getattr(raw_request.app.state, "available_specialists", None) or []

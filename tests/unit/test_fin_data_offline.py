@@ -637,6 +637,20 @@ def test_market_status_pre_market():
     assert "last_trading_day" in result
 
 
+def test_market_status_overnight_not_pre_market():
+    import research_agent.mcp_servers.fin_data_server as mod
+
+    fake_now = _dt(2026, 6, 10, 0, 5, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    trade_dates = {"2026-06-10", "2026-06-09"}
+
+    with patch.object(mod, "_load_trade_dates", return_value=trade_dates):
+        result = mod._compute_market_status(_now=fake_now)
+    assert result["status"] == "not_yet_open"
+    assert result["is_trading_day"] is True
+    assert result["last_trading_day"] == "2026-06-09"
+    assert "盘前" not in result["message"]
+
+
 def test_market_status_trading():
     """盘中（10:30）应返回 trading 状态。"""
     import research_agent.mcp_servers.fin_data_server as mod
