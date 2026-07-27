@@ -14,6 +14,8 @@
 8. ``get_fund_rating``      — 基金综合评级（上海证券/招商/济安/晨星）。
 9. ``get_fund_rank``        — 基金业绩排行（按近1年/3年/5年收益）。
 10. ``get_fund_daily``      — 当日全市场开放式基金净值列表。
+11. ``get_fund_qdii_rank``  — QDII 基金业绩排行（专项入口）。
+12. ``get_fund_manager``    — 按基金代码查基金经理与基本档案字段。
 
 数据来源
 --------
@@ -1051,6 +1053,106 @@ async def get_fund_daily(fund_type: str = "股票型", limit: int = 30) -> dict:
         return await asyncio.to_thread(_call)
     except Exception as e:
         return _fmt_error(e, context=f"get_fund_daily(fund_type={fund_type!r})")
+
+
+# =====================================================================
+# 工具 11: QDII 业绩排行
+# =====================================================================
+@mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="fund")
+async def get_fund_qdii_rank(sort_by: str = "近1年", limit: int = 20) -> dict:
+    """返回 QDII 基金业绩排行（专项入口，避免与股票型排行混淆）。
+
+    Args:
+        sort_by: ``"近1年"`` / ``"近3年"`` / ``"近5年"`` / ``"今年来"`` / ``"近1周"`` / ``"近1月"``。
+        limit: 返回条目数（默认 20，上限 50）。
+    """
+    limit = max(1, min(limit, 50))
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.fund_open_fund_rank_em(symbol="QDII")
+        if sort_by in df.columns:
+            df[sort_by] = pd.to_numeric(df[sort_by], errors="coerce")
+            df = df.sort_values(sort_by, ascending=False)
+        df = df.head(limit)
+        cols = [
+            c
+            for c in [
+                "基金代码",
+                "基金简称",
+                "单位净值",
+                "今年来",
+                "近1周",
+                "近1月",
+                "近1年",
+                "近3年",
+            ]
+            if c in df.columns
+        ]
+        return {
+            "fund_type": "QDII",
+            "sort_by": sort_by,
+            "funds": _df_to_records(df[cols] if cols else df),
+            "count": len(df),
+            "source": "eastmoney",
+            "source_url": "https://fund.eastmoney.com/data/fundranking.html",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context="get_fund_qdii_rank()")
+
+
+# =====================================================================
+# 工具 12: 基金经理 / 档案
+# =====================================================================
+@mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fund")
+async def get_fund_manager(symbol: str) -> dict:
+    """按基金代码查询基金经理与基本档案字段（天天基金概况）。
+
+    Args:
+        symbol: 6 位基金代码，如 ``110011``、``161725``。
+    """
+    code = re.sub(r"\D", "", symbol or "")[:6]
+    if len(code) != 6:
+        return {"error": "invalid fund code", "context": f"get_fund_manager({symbol!r})"}
+
+    def _call() -> dict[str, Any]:
+        import akshare as ak
+
+        df = ak.fund_overview_em(symbol=code)
+        records = _df_to_records(df) if df is not None else []
+        # 常见为 项目/值 两列
+        profile: dict[str, Any] = {}
+        for row in records:
+            keys = list(row.keys())
+            if len(keys) >= 2:
+                k = str(row.get(keys[0]) or "").strip()
+                v = row.get(keys[1])
+                if k:
+                    profile[k] = v
+            else:
+                profile.update({str(k): v for k, v in row.items() if v is not None})
+
+        manager_keys = [k for k in profile if "经理" in str(k)]
+        managers = {k: profile[k] for k in manager_keys} if manager_keys else {}
+        return {
+            "symbol": code,
+            "profile": profile,
+            "managers": managers,
+            "count": len(profile),
+            "source": "eastmoney",
+            "source_url": f"https://fundf10.eastmoney.com/jbgk_{code}.html",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_fund_manager({code!r})")
 
 
 if __name__ == "__main__":

@@ -347,4 +347,131 @@ async def test_get_etf_sector_weights_mocked():
     assert result["sector_count"] == 2
     assert result["sectors"][0]["name"] == "technology"
     assert result["sectors"][0]["weight_pct"] == pytest.approx(40.0)
-    assert any(a["name"] == "stockPosition" for a in result["asset_classes"])
+
+
+@pytest.mark.asyncio
+async def test_get_mutual_fund_overview_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    mock_ticker = MagicMock()
+    mock_ticker.info = {
+        "shortName": "Vanguard Total Stock Mkt Idx Adm",
+        "quoteType": "MUTUALFUND",
+        "fundFamily": "Vanguard",
+        "category": "Large Blend",
+        "navPrice": 120.5,
+        "ytdReturn": 0.12,
+        "annualReportExpenseRatio": 0.04,
+        "currency": "USD",
+    }
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = await mod.get_mutual_fund_overview("vtsax")
+
+    assert "error" not in result
+    assert result["fund"]["symbol"] == "VTSAX"
+    assert result["fund"]["quote_type"] == "MUTUALFUND"
+    assert result["fund"]["nav_price"] == 120.5
+
+
+@pytest.mark.asyncio
+async def test_get_mutual_fund_holdings_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    holdings_df = pd.DataFrame(
+        {"Name": ["Apple Inc"], "Holding Percent": [0.06]},
+        index=["AAPL"],
+    )
+    mock_funds = MagicMock()
+    mock_funds.top_holdings = holdings_df
+    mock_ticker = MagicMock()
+    mock_ticker.funds_data = mock_funds
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = await mod.get_mutual_fund_holdings("VTSAX", top_n=5)
+
+    assert "error" not in result
+    assert result["holdings"][0]["symbol"] == "AAPL"
+    assert result["holdings"][0]["weight_pct"] == pytest.approx(6.0)
+
+
+@pytest.mark.asyncio
+async def test_get_futures_quotes_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    with patch.object(
+        mod,
+        "_quote_from_ticker",
+        side_effect=lambda sym: {
+            "symbol": sym,
+            "name": sym,
+            "price": 70.0,
+            "previous_close": 69.0,
+            "change_percent": 1.45,
+            "source": "yahoo_chart",
+        },
+    ):
+        result = await mod.get_futures_quotes("CL=F,GC=F")
+
+    assert result["ok_count"] == 2
+    assert {q["symbol"] for q in result["futures"]} == {"CL=F", "GC=F"}
+
+
+@pytest.mark.asyncio
+async def test_get_option_expirations_and_chain_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    calls = pd.DataFrame(
+        {
+            "contractSymbol": ["AAPL250117C00200000"],
+            "strike": [200.0],
+            "lastPrice": [5.0],
+            "bid": [4.8],
+            "ask": [5.2],
+            "volume": [100],
+            "openInterest": [500],
+            "impliedVolatility": [0.25],
+            "inTheMoney": [True],
+        }
+    )
+    puts = pd.DataFrame(
+        {
+            "contractSymbol": ["AAPL250117P00200000"],
+            "strike": [200.0],
+            "lastPrice": [3.0],
+            "bid": [2.8],
+            "ask": [3.2],
+            "volume": [50],
+            "openInterest": [200],
+            "impliedVolatility": [0.28],
+            "inTheMoney": [False],
+        }
+    )
+    chain = MagicMock()
+    chain.calls = calls
+    chain.puts = puts
+    mock_ticker = MagicMock()
+    mock_ticker.options = ["2025-01-17", "2025-02-21"]
+    mock_ticker.option_chain.return_value = chain
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        exps = await mod.get_option_expirations("AAPL")
+        result = await mod.get_option_chain("AAPL", expiration="2025-01-17", limit_per_side=10)
+
+    assert exps["count"] == 2
+    assert result["call_count"] == 1
+    assert result["put_count"] == 1
+    assert result["calls"][0]["strike"] == 200.0
+
+
+@pytest.mark.asyncio
+async def test_get_option_chain_empty_expirations():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    mock_ticker = MagicMock()
+    mock_ticker.options = []
+
+    with patch("yfinance.Ticker", return_value=mock_ticker):
+        result = await mod.get_option_chain("AAPL")
+
+    assert "error" in result

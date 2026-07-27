@@ -32,6 +32,7 @@ from research_agent.config import LLMConfig
 from research_agent.graph.research_supervisor import (
     SUPERVISOR_PROMPT_CODER,
     SUPERVISOR_PROMPT_DATA,
+    SUPERVISOR_PROMPT_DERIVATIVES,
     SUPERVISOR_PROMPT_FUND,
     SUPERVISOR_PROMPT_KNOWLEDGE,
     SUPERVISOR_PROMPT_NEWS,
@@ -300,6 +301,7 @@ class TestSupervisorPrompt:
             has_news=True,
             has_sentiment=True,
             has_fund=True,
+            has_derivatives=True,
         )
         # 使用 "  - <name>" 避免 us_*_expert 子串命中裸名。
         assert "  - data_expert" in prompt
@@ -313,6 +315,7 @@ class TestSupervisorPrompt:
         assert "  - news_expert" in prompt
         assert "  - sentiment_expert" in prompt
         assert "fund_expert" in prompt
+        assert "derivatives_expert" in prompt
         # 各节文本确实被追加。
         assert SUPERVISOR_PROMPT_DATA in prompt
         assert SUPERVISOR_PROMPT_US_DATA in prompt
@@ -324,6 +327,7 @@ class TestSupervisorPrompt:
         assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
         assert SUPERVISOR_PROMPT_NEWS in prompt
         assert SUPERVISOR_PROMPT_FUND in prompt
+        assert SUPERVISOR_PROMPT_DERIVATIVES in prompt
 
     def test_missing_specialists_are_not_mentioned(self) -> None:
         """提及团队中不存在的专家会导致 supervisor 发出在运行时失败的
@@ -340,6 +344,7 @@ class TestSupervisorPrompt:
             has_news=False,
             has_sentiment=False,
             has_fund=False,
+            has_derivatives=False,
         )
         assert "  - data_expert" in prompt
         assert "us_data_expert" not in prompt
@@ -352,6 +357,7 @@ class TestSupervisorPrompt:
         assert "  - news_expert" not in prompt
         assert "  - sentiment_expert" not in prompt
         assert "fund_expert" not in prompt
+        assert "derivatives_expert" not in prompt
 
     def test_us_only_prompt_omits_cn_data_expert(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -477,20 +483,21 @@ class TestSupervisorPrompt:
     def test_rules_always_included(self) -> None:
         """路由规则（"每次只移交一个子任务"、"不可捏造数字"等）是不可协商的 —
         无论团队组成如何，它们都必须出现。"""
-        # 元组: (data, us_data, us_filing, us_news, us_sentiment, report, coder, knowledge, news, sentiment, fund)
+        # 元组: (data, us_data, us_filing, us_news, us_sentiment, report, coder, knowledge, news, sentiment, fund, derivatives)
         for flags in [
-            (True, False, False, False, False, False, False, False, False, False, False),
-            (False, True, False, False, False, False, False, False, False, False, False),
-            (False, False, True, False, False, False, False, False, False, False, False),
-            (False, False, False, True, False, False, False, False, False, False, False),
-            (False, False, False, False, True, False, False, False, False, False, False),
-            (False, False, False, False, False, True, False, False, False, False, False),
-            (False, False, False, False, False, False, True, False, False, False, False),
-            (False, False, False, False, False, False, False, True, False, False, False),
-            (False, False, False, False, False, False, False, False, True, False, False),
-            (False, False, False, False, False, False, False, False, False, True, False),
-            (False, False, False, False, False, False, False, False, False, False, True),
-            (True, True, True, True, True, True, True, True, True, True, True),
+            (True, False, False, False, False, False, False, False, False, False, False, False),
+            (False, True, False, False, False, False, False, False, False, False, False, False),
+            (False, False, True, False, False, False, False, False, False, False, False, False),
+            (False, False, False, True, False, False, False, False, False, False, False, False),
+            (False, False, False, False, True, False, False, False, False, False, False, False),
+            (False, False, False, False, False, True, False, False, False, False, False, False),
+            (False, False, False, False, False, False, True, False, False, False, False, False),
+            (False, False, False, False, False, False, False, True, False, False, False, False),
+            (False, False, False, False, False, False, False, False, True, False, False, False),
+            (False, False, False, False, False, False, False, False, False, True, False, False),
+            (False, False, False, False, False, False, False, False, False, False, True, False),
+            (False, False, False, False, False, False, False, False, False, False, False, True),
+            (True, True, True, True, True, True, True, True, True, True, True, True),
         ]:
             prompt = _build_supervisor_prompt(
                 has_data=flags[0],
@@ -504,6 +511,7 @@ class TestSupervisorPrompt:
                 has_news=flags[8],
                 has_sentiment=flags[9],
                 has_fund=flags[10],
+                has_derivatives=flags[11],
             )
             assert "移交" in prompt
             assert "不要编造" in prompt

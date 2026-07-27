@@ -293,3 +293,42 @@ async def test_get_fund_nav_empty():
     with patch("akshare.fund_open_fund_info_em", return_value=pd.DataFrame()):
         result = await mod.get_fund_nav(symbol="999999", limit=30)
     assert result["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_fund_qdii_rank():
+    import research_agent.mcp_servers.fund_server as mod
+
+    mock_df = pd.DataFrame(
+        {
+            "基金代码": ["000041", "000043"],
+            "基金简称": ["华夏全球", "嘉实海外"],
+            "单位净值": [1.2, 1.1],
+            "近1年": [15.0, 10.0],
+            "今年来": [5.0, 3.0],
+        }
+    )
+    with patch("akshare.fund_open_fund_rank_em", return_value=mock_df):
+        result = await mod.get_fund_qdii_rank(sort_by="近1年", limit=10)
+    assert result["fund_type"] == "QDII"
+    assert result["count"] == 2
+    assert result["funds"][0]["基金代码"] == "000041"
+
+
+@pytest.mark.asyncio
+async def test_get_fund_manager():
+    import research_agent.mcp_servers.fund_server as mod
+
+    mock_df = pd.DataFrame({"项目": ["基金全称", "基金经理"], "值": ["某某混合", "张三"]})
+    with patch("akshare.fund_overview_em", return_value=mock_df):
+        result = await mod.get_fund_manager("110011")
+    assert result["symbol"] == "110011"
+    assert result["managers"].get("基金经理") == "张三"
+
+
+@pytest.mark.asyncio
+async def test_get_fund_manager_invalid_code():
+    import research_agent.mcp_servers.fund_server as mod
+
+    result = await mod.get_fund_manager("abc")
+    assert "error" in result

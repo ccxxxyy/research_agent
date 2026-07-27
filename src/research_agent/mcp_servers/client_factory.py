@@ -65,6 +65,7 @@ KNOWLEDGE_SERVER_MODULE = "research_agent.mcp_servers.knowledge_server"
 NEWS_SERVER_MODULE = "research_agent.mcp_servers.news_server"
 NEWS_SENTIMENT_SERVER_MODULE = "research_agent.mcp_servers.news_sentiment_server"
 FUND_SERVER_MODULE = "research_agent.mcp_servers.fund_server"
+DERIVATIVES_SERVER_MODULE = "research_agent.mcp_servers.derivatives_server"
 US_DATA_SERVER_MODULE = "research_agent.mcp_servers.us_data_server"
 US_FILING_SERVER_MODULE = "research_agent.mcp_servers.us_filing_server"
 US_NEWS_SERVER_MODULE = "research_agent.mcp_servers.us_news_server"
@@ -233,13 +234,25 @@ async def load_news_sentiment_server_tools() -> list[BaseTool]:
 async def load_fund_server_tools() -> list[BaseTool]:
     """通过 stdio 启动 ``fund_server`` 并返回其工具列表。
 
-    暴露 10 个基金数据工具，每个通过 ``tool_name_prefix=True`` 添加
-    ``fund_`` 前缀，涵盖基金搜索、净值、ETF/LOF 行情、持仓、评级、业绩排行等。
+    暴露基金数据工具，每个通过 ``tool_name_prefix=True`` 添加
+    ``fund_`` 前缀，涵盖基金搜索、净值、ETF/LOF 行情、持仓、评级、QDII、经理等。
 
     数据来源：东方财富基金网 / 天天基金。
     """
     client = MultiServerMCPClient(
         {"fund": _stdio_server_spec(FUND_SERVER_MODULE)},
+        tool_name_prefix=True,
+    )
+    return await client.get_tools()
+
+
+async def load_derivatives_server_tools() -> list[BaseTool]:
+    """通过 stdio 启动 ``derivatives_server`` 并返回国内期货/期权工具。
+
+    运行时前缀 ``derivatives_``。
+    """
+    client = MultiServerMCPClient(
+        {"derivatives": _stdio_server_spec(DERIVATIVES_SERVER_MODULE)},
         tool_name_prefix=True,
     )
     return await client.get_tools()
@@ -335,6 +348,7 @@ def extract_text_content(value: object) -> str:
 
 __all__ = [
     "CODE_SERVER_MODULE",
+    "DERIVATIVES_SERVER_MODULE",
     "ECHO_SERVER_MODULE",
     "FIN_DATA_SERVER_MODULE",
     "FUND_SERVER_MODULE",
@@ -348,6 +362,7 @@ __all__ = [
     "US_SENTIMENT_SERVER_MODULE",
     "extract_text_content",
     "load_code_server_tools",
+    "load_derivatives_server_tools",
     "load_echo_server_tools",
     "load_fin_data_server_tools",
     "load_fund_server_tools",

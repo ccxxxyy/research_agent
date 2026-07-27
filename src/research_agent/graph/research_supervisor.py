@@ -45,6 +45,7 @@ from loguru import logger
 from research_agent.agents.specialists import (
     build_coder_expert,
     build_data_expert,
+    build_derivatives_expert,
     build_fund_expert,
     build_knowledge_expert,
     build_news_expert,
@@ -206,49 +207,56 @@ SUPERVISOR_PROMPT_SENTIMENT = """\
 """
 
 SUPERVISOR_PROMPT_FUND = """\
-  - fund_expert  ：公募基金分析专家，通过东方财富基金网获取 ETF / LOF / 开放式基金数据。
-    工具集（10 个工具，前缀 fund_）：
+  - fund_expert  ：公募基金分析专家，通过东方财富基金网获取 ETF / LOF / 开放式基金 / QDII 数据。
+    工具集（前缀 fund_）：
       市场级：
-        * fund_search_fund          — 按名称关键词搜索基金
-        * fund_get_fund_etf_spot    — ETF 实时行情排行
-        * fund_get_fund_lof_spot    — LOF 实时行情排行
-        * fund_get_fund_rating      — 基金综合评级（四家机构）
-        * fund_get_fund_rank        — 基金业绩排行（按收益率排序）
-        * fund_get_fund_daily       — 当日开放式基金净值
-
+        * fund_search_fund / fund_get_fund_etf_spot / fund_get_fund_lof_spot
+        * fund_get_fund_rating / fund_get_fund_rank / fund_get_fund_daily
+        * fund_get_fund_qdii_rank — QDII 专项排行
       单只基金：
-        * fund_get_fund_info        — 基金概况
-        * fund_get_fund_nav         — 历史净值走势
-        * fund_get_fund_etf_hist    — ETF 历史 K 线
-        * fund_get_fund_holdings    — 重仓股持仓
-
+        * fund_get_fund_info / fund_get_fund_nav / fund_get_fund_etf_hist
+        * fund_get_fund_holdings / fund_get_fund_manager
     当用户询问以下内容时委派给该专家：
-    "ETF 排行""基金推荐""沪深300ETF 走势""某基金重仓股""基金评级""今日基金涨幅榜""哪个基金收益最好""基金净值走势""LOF 行情"。
-    注意：data_expert 的 fin_get_etf_spot 工具也能查 ETF 行情，但 fund_expert 的工具更全面（含净值、持仓、评级）。
-    当用户明确需要基金层面的深度分析时，优先路由到 fund_expert。
+    "ETF 排行""基金推荐""QDII 排行""基金经理""沪深300ETF 走势""某基金重仓股""基金评级""今日基金涨幅榜"。
+    注意：data_expert 的 fin_get_etf_spot 也能查 ETF 行情，但 fund_expert 更全面（净值/持仓/评级/QDII/经理）。
+    **禁止**把美股共同基金 / 国内期货期权交给 fund_expert（分别用 us_data_expert / derivatives_expert）。
+"""
+
+SUPERVISOR_PROMPT_DERIVATIVES = """\
+  - derivatives_expert ：国内期货 + 金融/ETF 期权（akshare / 新浪；与美股 ``us_*`` 平行隔离）。
+    工具集（前缀 derivatives_）：
+        * search_futures / get_main_futures / get_futures_spot / get_futures_daily
+        * get_etf_option_list / get_etf_option_spot / get_index_option_spot
+    当用户询问螺纹钢/股指期货、IF/IH/IC/IM 主力、50ETF 期权、沪深300 股指期权时委派。
+    **禁止**把美股期货/期权或公募基金净值交给本专家。
 """
 
 SUPERVISOR_PROMPT_US_DATA = """\
-  - us_data_expert ：美股股票 / 指数 / ETF 行情（Yahoo 主路径，不可达时东财回退；与 A 股 ``fin_*`` 平行隔离）。
+  - us_data_expert ：美股股票 / 指数 / ETF / 共同基金 / 期货 / 期权行情
+    （Yahoo 主路径，不可达时东财回退；与 A 股 ``fin_*`` / ``fund_*`` 平行隔离）。
     若工具 ``source=eastmoney_us`` 或 ``proxy=true``（如 VIX→VIXY），回答必须按返回名与来源表述，禁止仍写 Yahoo / VIX 现货。
     **休市也可提问**：非交易时段仍用最近收盘/历史/概况作答并标注日期，禁止以「美股没开盘」拒绝。
     工具集（前缀 us_）：
         * us_get_market_status  — 美东交易时段状态
         * us_search_ticker      — 名称 → ticker
-        * us_get_quote          — 最新报价
+        * us_get_quote          — 最新报价（含期货 CL=F）
         * us_get_price_history  — 日线 OHLCV
-        * us_get_basic_info     — 公司 / ETF 概况
+        * us_get_basic_info     — 公司 / ETF / 共同基金概况
         * us_get_index_quotes   — 标普 / 道指 / 纳指等主要指数
-        * us_get_etf_overview   — ETF 概况
-        * us_get_etf_holdings   — ETF 重仓股
-        * us_get_etf_sector_weights — ETF 行业权重 / 资产大类
+        * us_get_etf_overview / us_get_etf_holdings / us_get_etf_sector_weights
+        * us_get_mutual_fund_overview / us_get_mutual_fund_holdings — 美国共同基金
+        * us_get_futures_quotes — 常用商品/股指期货批量报价
+        * us_get_option_expirations / us_get_option_chain — 股票期权
     路由策略：
       - 美股大盘 / 指数「今日走势」→ **只**移交 us_data_expert 一次，指令写明：
         「仅调用 get_market_status + get_index_quotes，禁止再查单票 quote/history」
       - 个股 / ETF 报价与走势 → search_ticker（如需）+ get_quote / get_price_history
       - 公司概况 → get_basic_info；ETF 概况 → get_etf_overview
       - ETF 持仓 / 行业分布 → get_etf_holdings / get_etf_sector_weights
-    禁止把美股问句交给 A 股行情 / 新闻 / 基金专家。
+      - **共同基金**（VTSAX 等）→ mutual_fund_*；**禁止**交给 A 股 fund_expert
+      - **美股/商品期货** → get_futures_quotes 或 get_quote
+      - **美股期权** → option_expirations → option_chain
+    禁止把美股问句交给 A 股行情 / 新闻 / 基金 / 国内衍生品专家。
     用户只问走势/行情时，**不要**同时移交 us_news / us_sentiment（除非明确要新闻或舆情）。
 """
 
@@ -383,6 +391,7 @@ def _build_supervisor_prompt(
     has_news: bool,
     has_sentiment: bool,
     has_fund: bool = False,
+    has_derivatives: bool = False,
     has_us_data: bool = False,
     has_us_filing: bool = False,
     has_us_news: bool = False,
@@ -415,6 +424,8 @@ def _build_supervisor_prompt(
         parts.append(SUPERVISOR_PROMPT_SENTIMENT)
     if has_fund:
         parts.append(SUPERVISOR_PROMPT_FUND)
+    if has_derivatives:
+        parts.append(SUPERVISOR_PROMPT_DERIVATIVES)
     parts.append("\n" + SUPERVISOR_PROMPT_RULES)
     return "".join(parts)
 
@@ -578,6 +589,7 @@ def build_research_supervisor(
     news_tools: Sequence[BaseTool] | None = None,
     sentiment_tools: Sequence[BaseTool] | None = None,
     fund_tools: Sequence[BaseTool] | None = None,
+    derivatives_tools: Sequence[BaseTool] | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     supervisor_tier: ModelTier = ModelTier.HEAVY,
     enable_reflection: bool = False,
@@ -603,6 +615,7 @@ def build_research_supervisor(
         news_tools: ``news_*`` 工具。省略/空 → 无 ``news_expert``。
         sentiment_tools: ``sentiment_*`` 工具。省略/空 → 无 ``sentiment_expert``。
         fund_tools: ``fund_*`` 工具。省略/空 → 无 ``fund_expert``。
+        derivatives_tools: ``derivatives_*`` 工具。省略/空 → 无 ``derivatives_expert``。
         checkpointer: 可选的 LangGraph checkpointer。
         supervisor_tier: 默认 HEAVY。
         enable_reflection: 为 True 时，将 supervisor 包装在父图中，对其最终综合运行批评者+写作者反思循环。循环在批评者评分达到或
@@ -629,6 +642,7 @@ def build_research_supervisor(
     has_news = bool(news_tools)
     has_sentiment = bool(sentiment_tools)
     has_fund = bool(fund_tools)
+    has_derivatives = bool(derivatives_tools)
 
     if not (
         has_data
@@ -642,6 +656,7 @@ def build_research_supervisor(
         or has_news
         or has_sentiment
         or has_fund
+        or has_derivatives
     ):
         raise ValueError(
             "build_research_supervisor 至少需要一个专家的工具列表非空，但所有工具组全部为空。"
@@ -683,6 +698,9 @@ def build_research_supervisor(
     if has_fund:
         agents.append(build_fund_expert(model_router, fund_tools or []))
         roster.append("fund_expert")
+    if has_derivatives:
+        agents.append(build_derivatives_expert(model_router, derivatives_tools or []))
+        roster.append("derivatives_expert")
 
     supervisor_model = model_router.get_model(supervisor_tier)
     prompt = _build_supervisor_prompt(
@@ -697,6 +715,7 @@ def build_research_supervisor(
         has_news=has_news,
         has_sentiment=has_sentiment,
         has_fund=has_fund,
+        has_derivatives=has_derivatives,
     )
 
     workflow = create_supervisor(
@@ -743,6 +762,7 @@ __all__ = [
     "SUPERVISOR_PROMPT_US_NEWS",
     "SUPERVISOR_PROMPT_US_SENTIMENT",
     "SUPERVISOR_PROMPT_FUND",
+    "SUPERVISOR_PROMPT_DERIVATIVES",
     "SUPERVISOR_PROMPT_REPORT",
     "SUPERVISOR_PROMPT_CODER",
     "SUPERVISOR_PROMPT_NEWS",

@@ -28,6 +28,14 @@ from research_agent.api.routes import (  # noqa: E402
     usage,
 )
 from research_agent.config import get_settings  # noqa: E402
+from research_agent.market.dashboard_extras import (  # noqa: E402
+    fetch_cn_etf_panel,
+    fetch_cn_futures_panel,
+    fetch_cn_qdii_panel,
+    fetch_us_etf_rank_panel,
+    fetch_us_futures_panel,
+    fetch_us_mutual_funds_panel,
+)
 from research_agent.market.theme_panels import (  # noqa: E402
     build_mainline_themes,
     build_sentiment_benchmark,
@@ -63,6 +71,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
     from research_agent.graph.research_supervisor import build_research_supervisor
     from research_agent.mcp_servers.client_factory import (
         load_code_server_tools,
+        load_derivatives_server_tools,
         load_fin_data_server_tools,
         load_fund_server_tools,
         load_knowledge_tools_inproc,
@@ -87,6 +96,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         asyncio.wait_for(load_news_server_tools(), timeout=timeout),
         asyncio.wait_for(load_news_sentiment_server_tools(), timeout=timeout),
         asyncio.wait_for(load_fund_server_tools(), timeout=timeout),
+        asyncio.wait_for(load_derivatives_server_tools(), timeout=timeout),
         asyncio.wait_for(load_us_data_server_tools(), timeout=timeout),
         asyncio.wait_for(load_us_filing_server_tools(), timeout=timeout),
         asyncio.wait_for(load_us_news_server_tools(), timeout=timeout),
@@ -101,6 +111,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         "news_server",
         "news_sentiment_server",
         "fund_server",
+        "derivatives_server",
         "us_data_server",
         "us_filing_server",
         "us_news_server",
@@ -129,6 +140,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
         "news_server": "news_expert",
         "news_sentiment_server": "sentiment_expert",
         "fund_server": "fund_expert",
+        "derivatives_server": "derivatives_expert",
         "us_data_server": "us_data_expert",
         "us_filing_server": "us_filing_expert",
         "us_news_server": "us_news_expert",
@@ -156,6 +168,7 @@ async def _try_build_research_supervisor(model_router, checkpointer, settings=No
             news_tools=tools["news_server"] or None,
             sentiment_tools=tools["news_sentiment_server"] or None,
             fund_tools=tools["fund_server"] or None,
+            derivatives_tools=tools["derivatives_server"] or None,
             checkpointer=checkpointer,
             enable_reflection=reflect,
             reflection_pass_threshold=pass_threshold,
@@ -751,7 +764,7 @@ def create_app() -> FastAPI:
             return data, _hms()
 
         idx_task = asyncio.create_task(_timed_thread(_fetch_indices_sina))
-        # 多拉涨停供主线/情绪/妖股聚合；面板仍截断为 Top15
+        # 多拉涨停供主线/情绪/妖股聚合；面板仍截断为 Top20
         zt_task = asyncio.create_task(_timed_thread(lambda: _fetch_zt_pool(limit=80)))
         extra_task = asyncio.create_task(_timed_thread(_fetch_extra_pools))
         boards_task = asyncio.create_task(_timed_thread(_fetch_boards))
@@ -761,6 +774,7 @@ def create_app() -> FastAPI:
         status_task = asyncio.create_task(_timed_thread(_fetch_market_status))
         trending_task = asyncio.create_task(get_trending(fresh=True))
         us_task = asyncio.create_task(_timed_thread(lambda: _get_us_dashboard_cached(force=fresh)))
+        # 期货/基金/ETF 双榜走 /api/dashboard/extras，避免拖慢整页
 
         indices, indices_at = await idx_task
         zt_full, zt_at = await zt_task
@@ -775,7 +789,7 @@ def create_app() -> FastAPI:
         trending_fa = (trending or {}).get("fetched_at") or {}
         us_fa = (us_dash or {}).get("fetched_at") or {}
 
-        zt_pool = (zt_full or [])[:15]
+        zt_pool = (zt_full or [])[:20]
         concept_all = (boards or {}).get("concept_all") or (boards or {}).get("concept") or []
         mainline_themes = build_mainline_themes(concept_all, zt_full or [])
         sentiment_benchmark = build_sentiment_benchmark(zt_full or [])
@@ -788,6 +802,7 @@ def create_app() -> FastAPI:
         breadth = _compute_breadth(indices, zt_pool)
         breadth_at = _hms()
         updated_at = _hms()
+        _empty_rank = {"by_volume": [], "by_change": [], "limit": 10, "source": ""}
 
         # 强势/昨涨停/炸板在同一函数内串行拉取，完成时刻用 extra_at；
         # 行业/概念同属 boards 一次请求。
@@ -843,12 +858,110 @@ def create_app() -> FastAPI:
             "changes": changes,
             "lhb": lhb,
             "tech_stocks": tech_stocks,
+            # 占位；前端另拉 /api/dashboard/extras
+            "cn_futures": dict(_empty_rank),
+            "cn_etf": dict(_empty_rank),
+            "cn_qdii": {**_empty_rank, "limit": 8},
             "breadth": breadth,
             "trending": trending,
             "us": us_dash,
             "updated_at": updated_at,
             "fetched_at": fetched_at,
+            "extras_pending": True,
         }
+
+    # 期货/基金等慢板块短缓存（独立于主看板）
+    _dash_extras_cache: dict = {"ts": 0.0, "data": None}
+    _dash_extras_ttl = 300.0  # 与前端慢板块 5 分钟刷新对齐
+
+    def _fetch_dashboard_extras() -> dict:
+        """CN/US 期货·ETF·共同基金双榜（可慢，不进主看板关键路径）。"""
+        import concurrent.futures
+
+        fetched_at: dict[str, str] = {}
+
+        def _stamp(key: str) -> None:
+            fetched_at[key] = _time.strftime("%H:%M:%S")
+
+        def _cn_fut():
+            out = fetch_cn_futures_panel(limit=10)
+            _stamp("cn_futures")
+            return out
+
+        def _cn_etf():
+            out = fetch_cn_etf_panel(limit=10)
+            _stamp("cn_etf")
+            return out
+
+        def _cn_qdii():
+            out = fetch_cn_qdii_panel(limit=8)
+            _stamp("cn_qdii")
+            return out
+
+        def _us_fut():
+            out = fetch_us_futures_panel(limit=10)
+            _stamp("us_futures")
+            return out
+
+        def _us_etf():
+            out = fetch_us_etf_rank_panel(limit=10)
+            _stamp("us_etf_rank")
+            return out
+
+        def _us_mf():
+            out = fetch_us_mutual_funds_panel(limit=10)
+            _stamp("us_mutual_funds")
+            return out
+
+        empty = {"by_volume": [], "by_change": [], "limit": 10, "source": ""}
+        results = {
+            "cn_futures": dict(empty),
+            "cn_etf": dict(empty),
+            "cn_qdii": {**empty, "limit": 8},
+            "us_futures": dict(empty),
+            "us_etf_rank": dict(empty),
+            "us_mutual_funds": dict(empty),
+        }
+        jobs = {
+            "cn_futures": _cn_fut,
+            "cn_etf": _cn_etf,
+            "cn_qdii": _cn_qdii,
+            "us_futures": _us_fut,
+            "us_etf_rank": _us_etf,
+            "us_mutual_funds": _us_mf,
+        }
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            futs = {pool.submit(fn): key for key, fn in jobs.items()}
+            for fut in concurrent.futures.as_completed(futs):
+                key = futs[fut]
+                try:
+                    results[key] = fut.result()
+                except Exception:  # noqa: BLE001
+                    logger.exception("dashboard extras %s failed", key)
+        return {**results, "fetched_at": fetched_at}
+
+    def _get_dashboard_extras_cached(*, force: bool = False) -> dict:
+        now = _time.time()
+        cached = _dash_extras_cache.get("data")
+        if (
+            not force
+            and cached is not None
+            and now - float(_dash_extras_cache.get("ts") or 0) < _dash_extras_ttl
+        ):
+            return cached
+        data = _fetch_dashboard_extras()
+        _dash_extras_cache["ts"] = now
+        _dash_extras_cache["data"] = data
+        return data
+
+    @app.get("/api/dashboard/extras", tags=["dashboard"])
+    async def get_dashboard_extras(fresh: bool = False):
+        """慢板块：国内/美股期货·ETF·共同基金双榜（与主看板解耦）。"""
+
+        def _run():
+            return _get_dashboard_extras_cached(force=fresh)
+
+        return await asyncio.to_thread(_run)
 
     # 美股看板短缓存：避免 30s 自动刷新反复打爆 Yahoo（表现为 possibly delisted）
     _us_dash_cache: dict = {"ts": 0.0, "data": None}
@@ -1420,6 +1533,7 @@ def create_app() -> FastAPI:
         us_moves = build_us_intraday_moves(gainers, losers)
         us_sentiment = build_us_sentiment(actives, gainers, mega)
         us_speculative = build_us_speculative(shorted, small_gainers, gainers)
+        # 期货/ETF/共同基金双榜改走 /api/dashboard/extras，不阻塞美股主包
         now_hms = _time.strftime("%H:%M:%S")
         fetched_at["mainline_themes"] = fetched_at.get("sectors") or now_hms
         fetched_at["intraday_moves"] = fetched_at.get("gainers") or now_hms
@@ -1444,6 +1558,9 @@ def create_app() -> FastAPI:
             "intraday_moves": us_moves,
             "sentiment": us_sentiment,
             "speculative": us_speculative,
+            "futures": {"by_volume": [], "by_change": [], "limit": 10, "source": ""},
+            "mutual_funds": {"by_volume": [], "by_change": [], "limit": 10, "source": ""},
+            "etf_rank": {"by_volume": [], "by_change": [], "limit": 10, "source": ""},
             "fetched_at": fetched_at,
         }
 

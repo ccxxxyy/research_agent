@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------
 _A_SHARE_CODE = re.compile(r"(?<!\d)([0-9]{6})(?!\d)")
 _US_TICKER_CANDIDATE = re.compile(r"(?<![A-Za-z])([A-Z]{1,5})(?![A-Za-z])")
+_US_FUTURES_TICKER = re.compile(r"(?<![A-Za-z0-9])([A-Z]{1,3}=F)(?![A-Za-z0-9])")
 
 _CN_MARKET_KEYWORDS = (
     "a股",
@@ -56,6 +57,17 @@ _CN_MARKET_KEYWORDS = (
     "巨潮",
     "沪市",
     "深市",
+    "公募基金",
+    "股指期货",
+    "商品期货",
+    "国内期货",
+    "螺纹钢期货",
+    "50etf期权",
+    "沪深300期权",
+    "中证1000期权",
+    "etf期权",
+    "期货",
+    "期权",
 )
 
 _US_MARKET_KEYWORDS = (
@@ -74,6 +86,14 @@ _US_MARKET_KEYWORDS = (
     "pre-market",
     "after-hours",
     "华尔街",
+    "共同基金",
+    "mutual fund",
+    "美股期货",
+    "美股期权",
+    "us futures",
+    "us options",
+    "futures",
+    "options",
 )
 
 _MIXED_KEYWORDS = (
@@ -140,6 +160,24 @@ _KNOWN_US: dict[str, tuple[str, AssetClass, str]] = {
     "纳指": ("^IXIC", AssetClass.INDEX, "Nasdaq Composite"),
     "道琼斯": ("^DJI", AssetClass.INDEX, "Dow Jones"),
     "道指": ("^DJI", AssetClass.INDEX, "Dow Jones"),
+    "vtsax": ("VTSAX", AssetClass.MUTUAL_FUND, "Vanguard Total Stock Market Index"),
+    "vfiax": ("VFIAX", AssetClass.MUTUAL_FUND, "Vanguard 500 Index Admiral"),
+    "vanguard total stock": ("VTSAX", AssetClass.MUTUAL_FUND, "Vanguard Total Stock Market Index"),
+    "原油期货": ("CL=F", AssetClass.FUTURE, "Crude Oil Futures"),
+    "crude oil": ("CL=F", AssetClass.FUTURE, "Crude Oil Futures"),
+    "cl=f": ("CL=F", AssetClass.FUTURE, "Crude Oil Futures"),
+    "黄金期货": ("GC=F", AssetClass.FUTURE, "Gold Futures"),
+    "gold futures": ("GC=F", AssetClass.FUTURE, "Gold Futures"),
+    "gc=f": ("GC=F", AssetClass.FUTURE, "Gold Futures"),
+    "白银期货": ("SI=F", AssetClass.FUTURE, "Silver Futures"),
+    "si=f": ("SI=F", AssetClass.FUTURE, "Silver Futures"),
+    "标普期货": ("ES=F", AssetClass.FUTURE, "E-mini S&P 500 Futures"),
+    "es=f": ("ES=F", AssetClass.FUTURE, "E-mini S&P 500 Futures"),
+    "纳指期货": ("NQ=F", AssetClass.FUTURE, "E-mini Nasdaq-100 Futures"),
+    "nq=f": ("NQ=F", AssetClass.FUTURE, "E-mini Nasdaq-100 Futures"),
+    "ym=f": ("YM=F", AssetClass.FUTURE, "E-mini Dow Futures"),
+    "rty=f": ("RTY=F", AssetClass.FUTURE, "E-mini Russell 2000 Futures"),
+    "bz=f": ("BZ=F", AssetClass.FUTURE, "Brent Crude Futures"),
 }
 
 _KNOWN_CN: dict[str, tuple[str, AssetClass, str]] = {
@@ -161,6 +199,17 @@ _KNOWN_CN: dict[str, tuple[str, AssetClass, str]] = {
     "中证500": ("000905", AssetClass.INDEX, "中证500"),
     "沪深300etf": ("510300", AssetClass.ETF, "沪深300ETF"),
     "创业板etf": ("159915", AssetClass.ETF, "创业板ETF"),
+    "螺纹钢": ("RB", AssetClass.FUTURE, "螺纹钢期货"),
+    "螺纹钢期货": ("RB", AssetClass.FUTURE, "螺纹钢期货"),
+    "沪铜": ("CU", AssetClass.FUTURE, "沪铜期货"),
+    "豆粕期货": ("M", AssetClass.FUTURE, "豆粕期货"),
+    "股指期货if": ("IF", AssetClass.FUTURE, "沪深300股指期货"),
+    "沪深300股指期货": ("IF", AssetClass.FUTURE, "沪深300股指期货"),
+    "中证500股指期货": ("IC", AssetClass.FUTURE, "中证500股指期货"),
+    "上证50股指期货": ("IH", AssetClass.FUTURE, "上证50股指期货"),
+    "中证1000股指期货": ("IM", AssetClass.FUTURE, "中证1000股指期货"),
+    "50etf期权": ("510050", AssetClass.OPTION, "50ETF期权"),
+    "沪深300etf期权": ("510300", AssetClass.OPTION, "沪深300ETF期权"),
 }
 
 _US_TICKER_STOPWORDS = frozenset(
@@ -315,24 +364,48 @@ def extract_symbols_from_query(query: str) -> list[SymbolRef]:
         )
 
     known_us_tickers = {v[0] for v in _KNOWN_US.values()}
+    known_us_by_lower = {k.lower(): v for k, v in _KNOWN_US.items()}
+
+    for m in _US_FUTURES_TICKER.finditer(query.upper()):
+        ticker = m.group(1)
+        if any(s.ticker == ticker for s in symbols):
+            continue
+        display = known_us_by_lower.get(ticker.lower(), (ticker, AssetClass.FUTURE, ticker))[2]
+        symbols.append(
+            SymbolRef(
+                market=Market.US,
+                raw=ticker,
+                ticker=ticker,
+                asset_class=AssetClass.FUTURE,
+                display_name=display,
+                confidence=0.95,
+            )
+        )
+
     for m in _US_TICKER_CANDIDATE.finditer(query):
         tok = m.group(1)
         if tok in _US_TICKER_STOPWORDS:
             continue
         if tok not in known_us_tickers and tok.lower() not in _KNOWN_US:
             continue
-        ticker = tok if tok in known_us_tickers else _KNOWN_US[tok.lower()][0]
+        meta = _KNOWN_US.get(tok.lower())
+        if meta is not None:
+            ticker, asset, display = meta
+        else:
+            ticker = tok
+            asset = AssetClass.ETF if ticker in {"SPY", "QQQ", "IWM", "VOO"} else AssetClass.EQUITY
+            display = ticker
+            if ticker.startswith("^"):
+                asset = AssetClass.INDEX
         if any(s.ticker == ticker for s in symbols):
             continue
-        asset = AssetClass.ETF if ticker in {"SPY", "QQQ", "IWM", "VOO"} else AssetClass.EQUITY
-        if ticker.startswith("^"):
-            asset = AssetClass.INDEX
         symbols.append(
             SymbolRef(
                 market=Market.US,
                 raw=tok,
                 ticker=ticker,
                 asset_class=asset,
+                display_name=display,
                 confidence=0.85,
             )
         )
@@ -564,7 +637,7 @@ def format_market_preamble(resolution: MarketResolution, *, query: str = "") -> 
     lines.append(
         "路由约束：CN_A → 使用已挂载的 A 股侧专家；"
         "US → 行情 us_* / 披露 us_filing_* / 新闻 us_news_* / 舆情 us_sentiment_*；"
-        "禁止用 fin_* / news_* / sentiment_* / 巨潮 / fund_* 查美股；"
+        "禁止用 fin_* / news_* / sentiment_* / 巨潮 / fund_* / derivatives_* 查美股；"
         "MIXED → 必须按下方 MixedOrchestration 分侧移交，最终分侧陈述再综合。"
     )
     lines.append(
