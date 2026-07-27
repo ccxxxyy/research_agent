@@ -36,8 +36,10 @@ def test_fetch_cn_futures_panel_ranked():
     assert out["limit"] == 2
     assert out["by_volume"][0]["code"] == "AU"
     assert out["by_volume"][0]["volume"] == 5000
+    assert out["by_volume"][0]["name"] == "黄金"
     assert out["by_change"][0]["code"] == "RB"
     assert out["by_change"][0]["change_pct"] > 0
+    assert out["by_change"][0]["name"] == "螺纹钢"
 
 
 def test_fetch_cn_etf_panel_dual():
@@ -70,6 +72,7 @@ def test_fetch_cn_qdii_panel_change_only():
             "基金代码": ["000041", "000043"],
             "基金简称": ["华夏全球", "嘉实海外"],
             "单位净值": [1.2, 1.1],
+            "日增长率": [0.8, 1.5],
             "近1年": [15.0, 20.0],
         }
     )
@@ -77,7 +80,7 @@ def test_fetch_cn_qdii_panel_change_only():
         out = mod.fetch_cn_qdii_panel(limit=2)
     assert out["by_volume"] == []
     assert out["by_change"][0]["code"] == "000043"
-    assert out["by_change"][0]["change_pct"] == 20.0
+    assert out["by_change"][0]["change_pct"] == 1.5
 
 
 def test_fetch_us_futures_panel_ranked():

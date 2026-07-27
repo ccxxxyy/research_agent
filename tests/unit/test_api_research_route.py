@@ -124,6 +124,7 @@ class _SpyMemory(MemoryManager):
             return {
                 "preferences": [],
                 "recent_research": self._fake_recent_research,
+                "watchlist": None,
             }
         return await super().get_user_context(user_id)
 

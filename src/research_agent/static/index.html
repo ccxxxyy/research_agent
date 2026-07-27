@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>研究助手 - Research Agent</title>
+<title>AI金融研究助手</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -33,6 +33,8 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 .section-title{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text2);padding:10px 20px 6px;font-weight:600;flex-shrink:0}
 .sidebar-section{flex:1 1 0;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--border);overflow:hidden}
 .sidebar-section:first-of-type{border-top:none}
+.sidebar-section.kb-section{flex:0.40 1 0;max-height:22%;min-height:108px}
+.sidebar-section.stats-section{flex:0 0 auto;min-height:0}
 
 /* Conversation list */
 .conv-list{padding:0 8px 8px;flex:1;min-height:0;overflow-y:auto;max-height:none}
@@ -85,11 +87,11 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 .specialist .name{flex:1;color:var(--text2);transition:color .2s}
 .specialist .name.lit{color:var(--text);font-weight:500}
 .specialist .badge{font-size:10px;color:var(--accent);opacity:0;transition:opacity .2s}
-.specialist .badge.show{opacity:1}
+.specialist .badge.show{opacity:1;animation:convPulse 1.2s infinite}
 
 /* Stats */
-.stats{padding:0 0 8px;font-size:12px;color:var(--text2);flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-.stats-body{padding:0 20px 8px;flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:transparent transparent}
+.stats{padding:0 0 10px;font-size:12px;color:var(--text2);flex:0 0 auto;display:flex;flex-direction:column;overflow:visible}
+.stats-body{padding:0 20px 2px;flex:0 0 auto;overflow:visible;scrollbar-width:thin;scrollbar-color:transparent transparent}
 .stats-body:hover{scrollbar-color:rgba(255,255,255,0.12) transparent}
 .stats-body::-webkit-scrollbar{width:3px;background:transparent}
 .stats-body::-webkit-scrollbar-track{background:transparent}
@@ -186,6 +188,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 .msg .follow-up-chip:hover{color:#7dd3fc;text-decoration:underline}
 
 .msg .phase-tag{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text2);margin-bottom:6px}
+.msg .phase-label.phase-pulse{animation:convPulse 1.2s infinite}
 
 .typing{display:inline-flex;gap:4px;padding:4px 0}
 .typing span{width:6px;height:6px;border-radius:50%;background:var(--text2);animation:bounce .6s infinite alternate}
@@ -206,7 +209,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 /* Status Bar */
 .dash-status{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px}
 .dash-status .market-badge{padding:4px 12px;border-radius:12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
-.dash-status .market-badge.trading{background:rgba(248,113,113,0.15);color:var(--red)}
+.dash-status .market-badge.trading{background:rgba(251,146,60,0.22);color:#fb923c;box-shadow:0 0 0 1px rgba(251,146,60,0.35)}
 .dash-status .market-badge.closed{background:rgba(139,143,163,0.15);color:var(--text2)}
 .dash-status .market-badge.pre{background:rgba(250,204,21,0.12);color:var(--yellow)}
 .dash-status .status-msgs{display:flex;align-items:center;gap:0;flex:1;min-width:0;flex-wrap:wrap;color:var(--text2)}
@@ -246,6 +249,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 
 .dash-row3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;align-items:stretch}
 .dash-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch}
+.dash-row2.watchlist-row{grid-template-columns:1fr}
 .app.main-narrow .dash-row3{grid-template-columns:1fr 1fr}
 .app.main-narrow .dash-row2{grid-template-columns:1fr}
 .app.main-narrow .dash-top{grid-template-columns:1fr}
@@ -262,11 +266,11 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 /* Panel */
 .dash-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
 .dash-row3 > .dash-panel{min-height:300px}
-.dash-panel .panel-title{font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap}
-.dash-panel .panel-title::before{content:'';width:3px;height:12px;background:var(--accent);border-radius:2px}
+.dash-panel .panel-title{font-size:14px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap}
+.dash-panel .panel-title::before{content:'';width:3px;height:14px;background:var(--accent);border-radius:2px}
 .panel-fetched{margin-left:auto;font-size:10px;font-weight:500;color:var(--text2);text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums;white-space:nowrap}
-.dash-indices-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px}
-.dash-indices-head::before{content:'';width:3px;height:12px;background:var(--accent);border-radius:2px}
+.dash-indices-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:14px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px}
+.dash-indices-head::before{content:'';width:3px;height:14px;background:var(--accent);border-radius:2px}
 .dash-indices-head .panel-fetched{margin-left:auto}
 .dash-section{margin-top:18px;padding-top:14px;border-top:1px dashed var(--border)}
 .dash-section-title{display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;font-weight:800;color:var(--text);letter-spacing:.3px;flex-wrap:wrap}
@@ -274,13 +278,14 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 .dash-section-title .sec-tag.cn{background:rgba(248,113,113,.12);color:var(--red)}
 .dash-section-title .sec-tag.us{background:rgba(96,165,250,.14);color:#60a5fa}
 .dash-section-title .sec-hours{font-size:11px;font-weight:500;color:var(--text2);letter-spacing:0}
-.dash-status .market-badge.us-trading{background:rgba(96,165,250,.15);color:#60a5fa}
+.dash-status .market-badge.us-trading{background:rgba(251,146,60,0.22);color:#fb923c;box-shadow:0 0 0 1px rgba(251,146,60,0.35)}
 .dash-status .market-badge.us-pre{background:rgba(250,204,21,.12);color:var(--yellow)}
 .dash-status .market-badge.us-closed{background:rgba(139,143,163,.15);color:var(--text2)}
 
 /* Pie chart */
 .pie-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.pie-stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;font-size:11px;font-weight:600;justify-content:center}
+.pie-stats{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:6px;font-size:11px;font-weight:600}
+.pie-stats-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
 .pie-stats .stat-up{color:var(--red)}
 .pie-stats .stat-down{color:var(--green)}
 .pie-stats .stat-flat{color:#6b7280}
@@ -342,7 +347,33 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 .lhb-industry{font-size:10px;color:var(--accent);font-weight:600;flex-shrink:0;white-space:nowrap}
 .lhb-comment{font-size:10px;color:var(--text2);flex:1;min-width:0;white-space:normal;overflow:visible;word-break:break-all}
 .panel-sub{margin-left:6px;font-size:10px;font-weight:500;color:var(--text2)}
-.panel-subhead{font-size:11px;font-weight:700;color:var(--accent2);margin:10px 0 6px;letter-spacing:.5px;flex-shrink:0}
+.panel-subhead{font-size:14px;font-weight:700;color:var(--accent2);margin:10px 0 6px;letter-spacing:.5px;flex-shrink:0}
+.wl-item-meta{font-size:10px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.zt-item.wl-row{display:grid;grid-template-columns:minmax(7em,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto;align-items:center;column-gap:12px}
+.zt-item.wl-row .zt-name{flex:unset;max-width:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.zt-item.wl-row .wl-item-meta{margin:0;text-align:left}
+.zt-item.wl-row .hot-price{justify-self:center;text-align:center;white-space:nowrap;flex-shrink:0}
+.zt-item.wl-row .hot-change{justify-self:center;text-align:center;min-width:3.6em;flex-shrink:0}
+.zt-item.wl-row .wl-del{justify-self:end;margin-left:0}
+.watchlist-candidates .wl-status-text{color:#7dd3fc;font-size:12px}
+.watchlist-candidates .wl-note{display:block;font-size:10px;color:var(--text2);margin-top:2px;line-height:1.3}
+.watchlist-candidates li.wl-adding{pointer-events:none;opacity:.9;cursor:wait}
+.watchlist-candidates .wl-adding-text{color:#7dd3fc;font-size:12px}
+.watchlist-panel{min-height:220px}
+.watchlist-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap}
+.watchlist-toolbar input{flex:1;min-width:140px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:12px;outline:none}
+.watchlist-toolbar input:focus{border-color:var(--accent)}
+.watchlist-toolbar button{background:var(--accent);border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:600;padding:8px 12px;cursor:pointer}
+.watchlist-toolbar button.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+.watchlist-candidates{list-style:none;padding:0;margin:0 0 8px;max-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg);display:none}
+.watchlist-candidates.open{display:block}
+.watchlist-candidates li{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)}
+.watchlist-candidates li:last-child{border-bottom:none}
+.watchlist-candidates li:hover{background:var(--surface2)}
+.watchlist-candidates .wl-add{margin-left:auto;font-size:11px;color:var(--accent);font-weight:700}
+.zt-item .wl-del{margin-left:6px;font-size:11px;color:var(--text2);cursor:pointer;padding:2px 6px;border-radius:4px}
+.zt-item .wl-del:hover{background:rgba(248,113,113,.15);color:var(--red)}
+.wl-hint{font-size:10px;color:var(--text2);margin-bottom:6px;flex-shrink:0}
 .dash-row3 .example-list{display:flex;flex-direction:column;gap:6px;flex:1 1 auto;min-height:0;max-height:none;overflow-y:auto;scrollbar-width:thin;scrollbar-color:transparent transparent}
 .dash-row3 .example-list:hover{scrollbar-color:rgba(255,255,255,0.12) transparent}
 .dash-row3 .example{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--text);cursor:pointer;transition:border-color .15s,background .15s;text-align:left;line-height:1.4}
@@ -444,7 +475,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
       <div class="section-title">专家团队</div>
       <div class="specialist-list" id="specialistList"></div>
     </div>
-    <div class="sidebar-section">
+    <div class="sidebar-section kb-section">
       <div class="kb-header">
         <div class="section-title">知识库</div>
         <button class="kb-btn" id="kbAddBtn" title="上传 PDF" onclick="toggleKbUpload()">+</button>
@@ -458,7 +489,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
       <input type="file" id="pdfFileInput" accept=".pdf,application/pdf" hidden />
       <div class="knowledge-list" id="knowledgeList">暂无集合</div>
     </div>
-    <div class="sidebar-section">
+    <div class="sidebar-section stats-section">
       <div class="stats" id="statsPanel">
         <div class="section-title">会话统计</div>
         <div class="stats-body">
@@ -499,20 +530,31 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
         <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板<span class="sec-hours">交易时间 工作日 09:30–11:30 / 13:00–15:00（北京时间）· 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟</span></div>
         <div class="dash-top">
           <div class="dash-top-left">
-            <div class="dash-indices-head">A股主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
+            <div class="dash-indices-head" title="上证/深证/创业板等主要指数实时点位与涨跌">A股主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
             <div class="dash-indices" id="dashIndices"></div>
           </div>
-          <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌分布<span class="panel-fetched" data-fetch="breadth"></span></div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div></div>
+          <div class="dash-top-right"><div class="dash-panel"><div class="panel-title" title="全市场上涨/下跌/平盘家数，以及涨停、跌停家数">涨跌分布<span class="panel-fetched" data-fetch="breadth"></span></div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div></div>
+        </div>
+        <div class="dash-row2 watchlist-row">
+          <div class="dash-panel watchlist-panel">
+            <div class="panel-title" title="按你保存的股票/ETF/场外基金/期货自选拉取行情或净值；最多每市场 40 只">我的自选（A股）<span class="panel-fetched" data-fetch="cn_watchlist"></span></div>
+            <div class="wl-hint">支持：600519 / 茅台 / 场外基金名 / 510300 / RB </div>
+            <div class="watchlist-toolbar">
+              <input id="cnWlInput" placeholder="代码或名称…" autocomplete="off" oninput="onWatchlistInput('CN_A')" onkeydown="onWatchlistKeydown(event,'CN_A')" />
+            </div>
+            <ul class="watchlist-candidates" id="cnWlCandidates"></ul>
+            <ul class="zt-list" id="cnWatchlist"></ul>
+          </div>
         </div>
         <div class="dash-row3">
           <div class="dash-panel"><div class="panel-title" title="当日触及涨停的股票">今日涨停<span class="panel-fetched" data-fetch="zt_pool"></span></div><ul class="zt-list" id="ztList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">市场热搜<span class="panel-fetched" data-fetch="trending"></span></div><div id="hotPanel"></div></div>
-          <div class="dash-panel"><div class="panel-title">热门研报<span class="panel-fetched" data-fetch="topics"></span></div><ul class="hot-list topic-list" id="topicList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="东方财富人气榜热搜标的（关注度，非涨跌榜）">市场热搜<span class="panel-fetched" data-fetch="trending"></span></div><div id="hotPanel"></div></div>
+          <div class="dash-panel"><div class="panel-title" title="近期机构研报提及较多、热度较高的标的与标题">热门研报<span class="panel-fetched" data-fetch="topics"></span></div><ul class="hot-list topic-list" id="topicList"></ul></div>
         </div>
         <div class="dash-row3">
-          <div class="dash-panel"><div class="panel-title">行业板块 TOP10<span class="panel-fetched" data-fetch="boards_industry"></span></div><ul class="zt-list" id="industryList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">概念板块 TOP10<span class="panel-fetched" data-fetch="boards_concept"></span></div><ul class="zt-list" id="conceptList"></ul></div>
-          <div class="dash-panel"><div class="panel-title" title="东财异动类型：急速拉升（火箭发射）/ 大笔买入 / 高台跳水；非行业名">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="东财行业板块当日涨幅 Top10">行业板块 TOP10<span class="panel-fetched" data-fetch="boards_industry"></span></div><ul class="zt-list" id="industryList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="东财概念板块当日涨幅 Top10">概念板块 TOP10<span class="panel-fetched" data-fetch="boards_concept"></span></div><ul class="zt-list" id="conceptList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="东财行业榜中筛选「半导/软件/计算机/通信/电子/消费电子/互联网/元件/光学光电子/自动化设备」等科技相关板块，取当日涨幅最高的一块，展示其成分股涨幅 Top10">科技股<span class="panel-fetched" data-fetch="tech_stocks"></span><span id="techBoardTag" class="panel-sub"></span></div><ul class="zt-list" id="techList"></ul></div>
         </div>
         <div class="dash-row3">
           <div class="dash-panel"><div class="panel-title" title="概念涨幅 + 匹配涨停家数合成得分（主线题材）">主线题材<span class="panel-fetched" data-fetch="mainline_themes"></span></div><ul class="zt-list" id="mainlineList"></ul></div>
@@ -520,56 +562,71 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
           <div class="dash-panel"><div class="panel-title" title="规则近似：连板高标≈妖股候选；龙虎榜机构/大额净买≈庄股/游资候选，非官方标签">妖股/庄股候选<span class="panel-fetched" data-fetch="speculative_pool"></span></div><ul class="zt-list" id="speculativeList"></ul></div>
         </div>
         <div class="dash-row3">
-          <div class="dash-panel"><div class="panel-title">强势股<span class="panel-fetched" data-fetch="strong_pool"></span></div><ul class="zt-list" id="strongList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="东财强势股池：近期持续强势的标的">强势股<span class="panel-fetched" data-fetch="strong_pool"></span></div><ul class="zt-list" id="strongList"></ul></div>
           <div class="dash-panel"><div class="panel-title" title="昨日涨停的股票，看它们今天怎么走">昨涨停今表现<span class="panel-fetched" data-fetch="previous_zt"></span></div><ul class="zt-list" id="prevZtList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">炸板股<span class="panel-fetched" data-fetch="zbgc_pool"></span></div><ul class="zt-list" id="zbgcList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="曾触及涨停后又打开（炸板）的股票">炸板股<span class="panel-fetched" data-fetch="zbgc_pool"></span></div><ul class="zt-list" id="zbgcList"></ul></div>
         </div>
         <div class="dash-row3">
           <div class="dash-panel"><div class="panel-title" title="交易所异动席位成交明细">龙虎榜<span class="panel-fetched" data-fetch="lhb"></span></div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
-          <div class="dash-panel"><div class="panel-title">科技股<span class="panel-fetched" data-fetch="tech_stocks"></span><span id="techBoardTag" class="panel-sub"></span></div><ul class="zt-list" id="techList"></ul></div>
-          <div class="dash-panel"><div class="panel-title" title="QDII 近一年收益 Top（无可靠成交量）">QDII 收益榜<span class="panel-fetched" data-fetch="cn_qdii"></span></div><ul class="zt-list" id="cnQdiiList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="东财异动类型：急速拉升（火箭发射）/ 大笔买入 / 高台跳水；非行业名">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
+          <div class="dash-panel"><div class="panel-title" title="场外开放式 QDII（天天基金排行）：按最近净值日「日增长率」Top15，非盘中实时；场外无成交量。">QDII 日涨幅榜<span class="panel-fetched" data-fetch="cn_qdii"></span></div><ul class="zt-list" id="cnQdiiList"></ul></div>
         </div>
         <div class="dash-row3">
           <div class="dash-panel"><div class="panel-title" title="场内 ETF：成交额 Top + 涨跌幅 Top（新浪实时）· 约 5 分钟刷新">ETF 双榜<span class="panel-fetched" data-fetch="cn_etf"></span></div><ul class="zt-list" id="cnEtfList"></ul></div>
           <div class="dash-panel"><div class="panel-title" title="全市场主力连续：成交量 Top + 涨跌幅 Top（新浪）· 约 5 分钟刷新">国内期货双榜<span class="panel-fetched" data-fetch="cn_futures"></span></div><ul class="zt-list" id="cnFuturesList"></ul></div>
           <div class="dash-panel">
-            <div class="panel-title">快捷提问</div>
+            <div class="panel-title" title="点击后填入输入框，可一键发起研究提问">快捷提问</div>
             <div class="example-list" id="quickQueries">
               <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
               <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？</div>
               <div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行</div>
-              <div class="example" onclick="fillQuery(this)">QDII基金近一年收益排行</div>
+              <div class="example" onclick="fillQuery(this)">QDII基金日涨幅排行</div>
               <div class="example" onclick="fillQuery(this)">螺纹钢期货主力合约行情</div>
               <div class="example" onclick="fillQuery(this)">沪深300股指期货与50ETF期权近况</div>
               <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
+              <div class="example" onclick="fillQuery(this)">今日龙虎榜机构净买和解读要点</div>
             </div>
             <div class="panel-subhead">期权快捷</div>
             <div class="example-list">
               <div class="example" onclick="fillQuery(this)">50ETF 期权近月到期日有哪些</div>
               <div class="example" onclick="fillQuery(this)">沪深300股指期权近月行情摘要</div>
               <div class="example" onclick="fillQuery(this)">上证50ETF 期权隐含波动大致如何</div>
+              <div class="example" onclick="fillQuery(this)">持有沪深300ETF，用认沽期权做下行保护怎么选到期与行权价</div>
+              <div class="example" onclick="fillQuery(this)">比较50ETF近月虚值认购与认沽的权利金和杠杆差异</div>
+              <div class="example" onclick="fillQuery(this)">股指期权临近到期周有哪些 gamma/时间衰减风险要注意</div>
             </div>
           </div>
         </div>
 
         <div class="dash-section" id="usDashboardSection">
-          <div class="dash-section-title"><span class="sec-tag us">US</span> 美股看板<span class="sec-hours">交易时间 工作日 09:30–16:00（美东）· 盘前 04:00 · 盘后至 20:00 · 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟</span></div>
+          <div class="dash-section-title"><span class="sec-tag us">US</span> 美股看板<span class="sec-hours">交易时间 工作日 09:30–16:00（美东）· 盘前 04:00 · 盘后至 20:00 · 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟 · 当前美东 <span id="usEtNow">--</span></span></div>
           <div class="dash-top">
             <div class="dash-top-left">
-              <div class="dash-indices-head">美股主要指数<span class="panel-fetched" data-fetch="us_indices"></span></div>
+              <div class="dash-indices-head" title="标普/道指/纳指等主要指数实时点位与涨跌">美股主要指数<span class="panel-fetched" data-fetch="us_indices"></span></div>
               <div class="dash-indices" id="usDashIndices"></div>
             </div>
-            <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌概览<span class="panel-fetched" data-fetch="us_breadth"></span></div><div class="pie-wrap"><div id="usPieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="usPieStats"></div></div></div></div>
+            <div class="dash-top-right"><div class="dash-panel"><div class="panel-title" title="美股样本上涨/下跌家数概览（Yahoo 或东财统计）">涨跌概览<span class="panel-fetched" data-fetch="us_breadth"></span></div><div class="pie-wrap"><div id="usPieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="usPieStats"></div></div></div></div>
+          </div>
+          <div class="dash-row2 watchlist-row">
+            <div class="dash-panel watchlist-panel">
+              <div class="panel-title" title="按你保存的美股/ETF/期货等自选单独拉报价；最多 40 只">我的自选（美股）<span class="panel-fetched" data-fetch="us_watchlist"></span></div>
+              <div class="wl-hint">支持：AAPL / 苹果 / SPY / CL=F / VTSAX </div>
+              <div class="watchlist-toolbar">
+                <input id="usWlInput" placeholder="Ticker 或名称…" autocomplete="off" oninput="onWatchlistInput('US')" onkeydown="onWatchlistKeydown(event,'US')" />
+              </div>
+              <ul class="watchlist-candidates" id="usWlCandidates"></ul>
+              <ul class="zt-list" id="usWatchlist"></ul>
+            </div>
           </div>
           <div class="dash-row3">
-            <div class="dash-panel"><div class="panel-title">日内涨幅榜<span class="panel-fetched" data-fetch="us_gainers"></span></div><ul class="zt-list" id="usGainersList"></ul></div>
-            <div class="dash-panel"><div class="panel-title">成交最活跃<span class="panel-fetched" data-fetch="us_actives"></span></div><ul class="zt-list" id="usActivesList"></ul></div>
-            <div class="dash-panel"><div class="panel-title">成长科技股<span class="panel-fetched" data-fetch="us_growth"></span></div><ul class="zt-list" id="usGrowthList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="美股当日涨幅榜（Yahoo 筛选，失败则东财美股榜）">日内涨幅榜<span class="panel-fetched" data-fetch="us_gainers"></span></div><ul class="zt-list" id="usGainersList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="美股当日成交量最活跃标的">成交最活跃<span class="panel-fetched" data-fetch="us_actives"></span></div><ul class="zt-list" id="usActivesList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="成长科技股筛选榜（Yahoo growth_technology，失败则东财涨幅榜兜底；榜单价可能非逐票实时）">成长科技股<span class="panel-fetched" data-fetch="us_growth"></span></div><ul class="zt-list" id="usGrowthList"></ul></div>
           </div>
           <div class="dash-row3">
-            <div class="dash-panel"><div class="panel-title">行业板块 ETF<span class="panel-fetched" data-fetch="us_sectors"></span></div><ul class="zt-list" id="usSectorsList"></ul></div>
-            <div class="dash-panel"><div class="panel-title">主题概念 ETF<span class="panel-fetched" data-fetch="us_theme_etfs"></span></div><ul class="zt-list" id="usThemeList"></ul></div>
-            <div class="dash-panel"><div class="panel-title">小盘异动<span class="panel-fetched" data-fetch="us_small_gainers"></span></div><ul class="zt-list" id="usSmallList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="美股行业板块 ETF（如 XLK/XLF）当日涨跌">行业板块 ETF<span class="panel-fetched" data-fetch="us_sectors"></span></div><ul class="zt-list" id="usSectorsList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="美股主题概念 ETF（如 QQQ/SMH 等）当日涨跌">主题概念 ETF<span class="panel-fetched" data-fetch="us_theme_etfs"></span></div><ul class="zt-list" id="usThemeList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="美股小盘股涨幅榜（small_cap_gainers）">小盘异动<span class="panel-fetched" data-fetch="us_small_gainers"></span></div><ul class="zt-list" id="usSmallList"></ul></div>
           </div>
           <div class="dash-row3">
             <div class="dash-panel"><div class="panel-title" title="行业/主题 ETF 涨幅 + 关联龙头命中（近似 A 股主线题材）">美股主线<span class="panel-fetched" data-fetch="us_mainline_themes"></span></div><ul class="zt-list" id="usMainlineList"></ul></div>
@@ -577,12 +634,12 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
             <div class="dash-panel"><div class="panel-title" title="高换手活跃 + 强势涨幅；接近 52 周高标近新高">情绪标杆<span class="panel-fetched" data-fetch="us_sentiment"></span></div><ul class="zt-list" id="usSentimentList"></ul></div>
           </div>
           <div class="dash-row3">
-            <div class="dash-panel"><div class="panel-title">七巨头<span class="panel-fetched" data-fetch="us_mega"></span></div><ul class="zt-list" id="usMegaList"></ul></div>
-            <div class="dash-panel"><div class="panel-title">低估值大盘<span class="panel-fetched" data-fetch="us_undervalued"></span></div><ul class="zt-list" id="usUnderList"></ul></div>
-            <div class="dash-panel"><div class="panel-title">日内跌幅榜<span class="panel-fetched" data-fetch="us_losers"></span></div><ul class="zt-list" id="usLosersList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="美股科技七巨头（AAPL/MSFT/NVDA/GOOGL/AMZN/META/TSLA）当日行情">七巨头<span class="panel-fetched" data-fetch="us_mega"></span></div><ul class="zt-list" id="usMegaList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="低估值大盘股筛选榜（undervalued_large_caps）">低估值大盘<span class="panel-fetched" data-fetch="us_undervalued"></span></div><ul class="zt-list" id="usUnderList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="美股当日跌幅榜">日内跌幅榜<span class="panel-fetched" data-fetch="us_losers"></span></div><ul class="zt-list" id="usLosersList"></ul></div>
           </div>
           <div class="dash-row3">
-            <div class="dash-panel"><div class="panel-title">空头最重<span class="panel-fetched" data-fetch="us_shorted"></span></div><ul class="zt-list" id="usShortedList"></ul></div>
+            <div class="dash-panel"><div class="panel-title" title="空头关注度较高的美股（most_shorted，失败则东财关注列表兜底）">空头最重<span class="panel-fetched" data-fetch="us_shorted"></span></div><ul class="zt-list" id="usShortedList"></ul></div>
             <div class="dash-panel"><div class="panel-title" title="高空头关注 + 小盘/极端暴涨，规则近似投机拥挤（非官方妖股）">投机/拥挤<span class="panel-fetched" data-fetch="us_speculative"></span></div><ul class="zt-list" id="usSpeculativeList"></ul></div>
             <div class="dash-panel"><div class="panel-title" title="扩大共同基金池后按 YTD 排（无日成交量）· 约 5 分钟刷新">共同基金 YTD<span class="panel-fetched" data-fetch="us_mutual_funds"></span></div><ul class="zt-list" id="usMutualFundsList"></ul></div>
           </div>
@@ -590,7 +647,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
             <div class="dash-panel"><div class="panel-title" title="扩大 Yahoo =F 池后按成交量/涨跌幅动态排· 约 5 分钟刷新">商品/股指期货双榜<span class="panel-fetched" data-fetch="us_futures"></span></div><ul class="zt-list" id="usFuturesList"></ul></div>
             <div class="dash-panel"><div class="panel-title" title="热门 ETF 池：成交量 Top + 涨跌幅 Top· 约 5 分钟刷新">ETF 双榜<span class="panel-fetched" data-fetch="us_etf_rank"></span></div><ul class="zt-list" id="usEtfRankList"></ul></div>
             <div class="dash-panel">
-              <div class="panel-title">美股快捷提问</div>
+              <div class="panel-title" title="点击后填入输入框，可一键发起研究提问">快捷提问</div>
               <div class="example-list" id="usQuickQueries">
                 <div class="example" onclick="fillQuery(this)">分析标普500与纳斯达克今日走势</div>
                 <div class="example" onclick="fillQuery(this)">美股科技板块和七巨头今日表现如何？</div>
@@ -606,6 +663,9 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
                 <div class="example" onclick="fillQuery(this)">AAPL 近月期权到期日与看涨看跌链</div>
                 <div class="example" onclick="fillQuery(this)">SPY 最近期权到期日有哪些</div>
                 <div class="example" onclick="fillQuery(this)">特斯拉近期期权隐含波动大致如何</div>
+                <div class="example" onclick="fillQuery(this)">持有 AAPL，用保护性认沽（protective put）怎么选行权价</div>
+                <div class="example" onclick="fillQuery(this)">对 SPY 做备兑开仓（covered call）近月虚值权利金大概怎样</div>
+                <div class="example" onclick="fillQuery(this)">财报前特斯拉期权隐含波动抬升与会后 IV crush 风险怎么看</div>
               </div>
             </div>
           </div>
@@ -621,7 +681,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
         </button>
       </div>
       <div class="input-meta">
-        <label>用户 ID: <input id="userIdInput" value="demo_user" onchange="refreshKnowledgeCollections();loadConversations()" /></label>
+        <label>用户 ID: <input id="userIdInput" value="demo_user" onchange="refreshKnowledgeCollections();loadConversations();reloadWatchlists()" /></label>
         <label>知识库集合: <input id="collectionInput" value="default" title="上传 PDF 时写入的集合名称" /></label>
       </div>
     </div>
@@ -655,10 +715,10 @@ const ALL_SPECIALISTS = [
   {id:'coder_expert',        label:'代码专家',   desc:'共享 · Python 计算', group:'shared'},
   {id:'knowledge_expert',    label:'知识库专家', desc:'共享 · 用户 PDF', group:'shared'},
   // 美股专属
-  {id:'us_data_expert',      label:'美股数据专家', desc:'股票/ETF/共同基金/期货/期权', group:'us'},
-  {id:'us_filing_expert',    label:'美股披露专家', desc:'SEC EDGAR', group:'us'},
-  {id:'us_news_expert',      label:'美股新闻专家', desc:'Yahoo 新闻', group:'us'},
-  {id:'us_sentiment_expert', label:'美股舆情专家', desc:'英文舆情', group:'us'},
+  {id:'us_data_expert',      label:'数据专家', desc:'股票/ETF/共同基金/期货/期权', group:'us'},
+  {id:'us_filing_expert',    label:'披露专家', desc:'美股SEC EDGAR', group:'us'},
+  {id:'us_news_expert',      label:'新闻专家', desc:'美股Yahoo 新闻', group:'us'},
+  {id:'us_sentiment_expert', label:'舆情专家', desc:'美股英文舆情', group:'us'},
 ];
 const SPECIALIST_GROUPS = [
   {id:'cn', label:'A 股'},
@@ -1031,6 +1091,10 @@ function _setPhaseText(phaseTag, text, color) {
     if (chip) phaseTag.appendChild(chip);
   }
   label.textContent = text;
+  label.classList.toggle(
+    'phase-pulse',
+    /处理中|思考中|回答中|等待审核/.test(String(text || ''))
+  );
   if (color !== undefined) phaseTag.style.color = color;
 }
 
@@ -1418,22 +1482,33 @@ function _dashboardInnerHtml() {
     <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板<span class="sec-hours">交易时间 工作日 09:30–11:30 / 13:00–15:00（北京时间）· 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟</span></div>
     <div class="dash-top">
       <div class="dash-top-left">
-        <div class="dash-indices-head">A股主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
+        <div class="dash-indices-head" title="上证/深证/创业板等主要指数实时点位与涨跌">A股主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
         <div class="dash-indices" id="dashIndices"></div>
       </div>
       <div class="dash-top-right">
-        <div class="dash-panel"><div class="panel-title">涨跌分布<span class="panel-fetched" data-fetch="breadth"></span></div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div>
+        <div class="dash-panel"><div class="panel-title" title="全市场上涨/下跌/平盘家数，以及涨停、跌停家数">涨跌分布<span class="panel-fetched" data-fetch="breadth"></span></div><div class="pie-wrap"><div id="pieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="pieStats"></div></div></div>
+      </div>
+    </div>
+    <div class="dash-row2 watchlist-row">
+      <div class="dash-panel watchlist-panel">
+        <div class="panel-title" title="按你保存的股票/ETF/场外基金/期货自选拉取行情或净值；最多每市场 40 只">我的自选（A股）<span class="panel-fetched" data-fetch="cn_watchlist"></span></div>
+        <div class="wl-hint">支持：600519 / 茅台 / 场外基金名 / 510300 / RB </div>
+        <div class="watchlist-toolbar">
+          <input id="cnWlInput" placeholder="代码或名称…" autocomplete="off" oninput="onWatchlistInput('CN_A')" onkeydown="onWatchlistKeydown(event,'CN_A')" />
+        </div>
+        <ul class="watchlist-candidates" id="cnWlCandidates"></ul>
+        <ul class="zt-list" id="cnWatchlist"></ul>
       </div>
     </div>
     <div class="dash-row3">
       <div class="dash-panel"><div class="panel-title" title="当日触及涨停的股票">今日涨停<span class="panel-fetched" data-fetch="zt_pool"></span></div><ul class="zt-list" id="ztList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">市场热搜<span class="panel-fetched" data-fetch="trending"></span></div><div id="hotPanel"></div></div>
-      <div class="dash-panel"><div class="panel-title">热门研报<span class="panel-fetched" data-fetch="topics"></span></div><ul class="hot-list topic-list" id="topicList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="东方财富人气榜热搜标的（关注度，非涨跌榜）">市场热搜<span class="panel-fetched" data-fetch="trending"></span></div><div id="hotPanel"></div></div>
+      <div class="dash-panel"><div class="panel-title" title="近期机构研报提及较多、热度较高的标的与标题">热门研报<span class="panel-fetched" data-fetch="topics"></span></div><ul class="hot-list topic-list" id="topicList"></ul></div>
     </div>
     <div class="dash-row3">
-      <div class="dash-panel"><div class="panel-title">行业板块 TOP10<span class="panel-fetched" data-fetch="boards_industry"></span></div><ul class="zt-list" id="industryList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">概念板块 TOP10<span class="panel-fetched" data-fetch="boards_concept"></span></div><ul class="zt-list" id="conceptList"></ul></div>
-      <div class="dash-panel"><div class="panel-title" title="东财异动类型：急速拉升（火箭发射）/ 大笔买入 / 高台跳水；非行业名">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="东财行业板块当日涨幅 Top10">行业板块 TOP10<span class="panel-fetched" data-fetch="boards_industry"></span></div><ul class="zt-list" id="industryList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="东财概念板块当日涨幅 Top10">概念板块 TOP10<span class="panel-fetched" data-fetch="boards_concept"></span></div><ul class="zt-list" id="conceptList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="东财行业榜中筛选「半导/软件/计算机/通信/电子/消费电子/互联网/元件/光学光电子/自动化设备」等科技相关板块，取当日涨幅最高的一块，展示其成分股涨幅 Top10">科技股<span class="panel-fetched" data-fetch="tech_stocks"></span><span id="techBoardTag" class="panel-sub"></span></div><ul class="zt-list" id="techList"></ul></div>
     </div>
     <div class="dash-row3">
       <div class="dash-panel"><div class="panel-title" title="概念涨幅 + 匹配涨停家数合成得分（主线题材）">主线题材<span class="panel-fetched" data-fetch="mainline_themes"></span></div><ul class="zt-list" id="mainlineList"></ul></div>
@@ -1441,55 +1516,70 @@ function _dashboardInnerHtml() {
       <div class="dash-panel"><div class="panel-title" title="规则近似：连板高标≈妖股候选；龙虎榜机构/大额净买≈庄股/游资候选，非官方标签">妖股/庄股候选<span class="panel-fetched" data-fetch="speculative_pool"></span></div><ul class="zt-list" id="speculativeList"></ul></div>
     </div>
     <div class="dash-row3">
-      <div class="dash-panel"><div class="panel-title">强势股<span class="panel-fetched" data-fetch="strong_pool"></span></div><ul class="zt-list" id="strongList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="东财强势股池：近期持续强势的标的">强势股<span class="panel-fetched" data-fetch="strong_pool"></span></div><ul class="zt-list" id="strongList"></ul></div>
       <div class="dash-panel"><div class="panel-title" title="昨日涨停的股票，看它们今天怎么走">昨涨停今表现<span class="panel-fetched" data-fetch="previous_zt"></span></div><ul class="zt-list" id="prevZtList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">炸板股<span class="panel-fetched" data-fetch="zbgc_pool"></span></div><ul class="zt-list" id="zbgcList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="曾触及涨停后又打开（炸板）的股票">炸板股<span class="panel-fetched" data-fetch="zbgc_pool"></span></div><ul class="zt-list" id="zbgcList"></ul></div>
     </div>
     <div class="dash-row3">
       <div class="dash-panel"><div class="panel-title" title="交易所异动席位成交明细">龙虎榜<span class="panel-fetched" data-fetch="lhb"></span></div><ul class="zt-list lhb-list" id="lhbList"></ul></div>
-      <div class="dash-panel"><div class="panel-title">科技股<span class="panel-fetched" data-fetch="tech_stocks"></span><span id="techBoardTag" class="panel-sub"></span></div><ul class="zt-list" id="techList"></ul></div>
-      <div class="dash-panel"><div class="panel-title" title="QDII 近一年收益 Top（无可靠成交量）">QDII 收益榜<span class="panel-fetched" data-fetch="cn_qdii"></span></div><ul class="zt-list" id="cnQdiiList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="东财异动类型：急速拉升（火箭发射）/ 大笔买入 / 高台跳水；非行业名">盘中异动<span class="panel-fetched" data-fetch="changes"></span></div><ul class="zt-list" id="changesList"></ul></div>
+      <div class="dash-panel"><div class="panel-title" title="场外开放式 QDII（天天基金排行）：按最近净值日「日增长率」Top15，非盘中实时；场外无成交量。">QDII 日涨幅榜<span class="panel-fetched" data-fetch="cn_qdii"></span></div><ul class="zt-list" id="cnQdiiList"></ul></div>
     </div>
     <div class="dash-row3">
       <div class="dash-panel"><div class="panel-title" title="场内 ETF：成交额 Top + 涨跌幅 Top（新浪实时）· 约 5 分钟刷新">ETF 双榜<span class="panel-fetched" data-fetch="cn_etf"></span></div><ul class="zt-list" id="cnEtfList"></ul></div>
       <div class="dash-panel"><div class="panel-title" title="全市场主力连续：成交量 Top + 涨跌幅 Top（新浪）· 约 5 分钟刷新">国内期货双榜<span class="panel-fetched" data-fetch="cn_futures"></span></div><ul class="zt-list" id="cnFuturesList"></ul></div>
       <div class="dash-panel">
-        <div class="panel-title">A股快捷提问</div>
+        <div class="panel-title" title="点击后填入输入框，可一键发起 A 股相关提问">A股快捷提问</div>
         <div class="example-list" id="quickQueries">
           <div class="example" onclick="fillQuery(this)">分析今日收盘情况，预测明天走势</div>
           <div class="example" onclick="fillQuery(this)">今天哪些板块和个股涨得最好？</div>
           <div class="example" onclick="fillQuery(this)">ETF基金今日涨幅排行</div>
-          <div class="example" onclick="fillQuery(this)">QDII基金近一年收益排行</div>
+          <div class="example" onclick="fillQuery(this)">QDII基金日涨幅排行</div>
           <div class="example" onclick="fillQuery(this)">螺纹钢期货主力合约行情</div>
           <div class="example" onclick="fillQuery(this)">沪深300股指期货与50ETF期权近况</div>
           <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
+          <div class="example" onclick="fillQuery(this)">今日龙虎榜机构净买和解读要点</div>
         </div>
         <div class="panel-subhead">期权快捷</div>
         <div class="example-list">
           <div class="example" onclick="fillQuery(this)">50ETF 期权近月到期日有哪些</div>
           <div class="example" onclick="fillQuery(this)">沪深300股指期权近月行情摘要</div>
           <div class="example" onclick="fillQuery(this)">上证50ETF 期权隐含波动大致如何</div>
+          <div class="example" onclick="fillQuery(this)">持有沪深300ETF，用认沽期权做下行保护怎么选到期与行权价</div>
+          <div class="example" onclick="fillQuery(this)">比较50ETF近月虚值认购与认沽的权利金和杠杆差异</div>
+          <div class="example" onclick="fillQuery(this)">股指期权临近到期周有哪些 gamma/时间衰减风险要注意</div>
         </div>
       </div>
     </div>
     <div class="dash-section" id="usDashboardSection">
-      <div class="dash-section-title"><span class="sec-tag us">US</span> 美股看板<span class="sec-hours">交易时间 工作日 09:30–16:00（美东）· 盘前 04:00 · 盘后至 20:00 · 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟</span></div>
+      <div class="dash-section-title"><span class="sec-tag us">US</span> 美股看板<span class="sec-hours">交易时间 工作日 09:30–16:00（美东）· 盘前 04:00 · 盘后至 20:00 · 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟 · 当前美东 <span id="usEtNow">--</span></span></div>
       <div class="dash-top">
         <div class="dash-top-left">
-          <div class="dash-indices-head">美股主要指数<span class="panel-fetched" data-fetch="us_indices"></span></div>
+          <div class="dash-indices-head" title="标普/道指/纳指等主要指数实时点位与涨跌">美股主要指数<span class="panel-fetched" data-fetch="us_indices"></span></div>
           <div class="dash-indices" id="usDashIndices"></div>
         </div>
-        <div class="dash-top-right"><div class="dash-panel"><div class="panel-title">涨跌概览<span class="panel-fetched" data-fetch="us_breadth"></span></div><div class="pie-wrap"><div id="usPieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="usPieStats"></div></div></div></div>
+        <div class="dash-top-right"><div class="dash-panel"><div class="panel-title" title="美股样本上涨/下跌家数概览（Yahoo 或东财统计）">涨跌概览<span class="panel-fetched" data-fetch="us_breadth"></span></div><div class="pie-wrap"><div id="usPieChart" style="width:180px;height:160px"></div><div class="pie-stats" id="usPieStats"></div></div></div></div>
+      </div>
+      <div class="dash-row2 watchlist-row">
+        <div class="dash-panel watchlist-panel">
+          <div class="panel-title" title="按你保存的美股/ETF/期货等自选单独拉报价；最多 40 只">我的自选（美股）<span class="panel-fetched" data-fetch="us_watchlist"></span></div>
+          <div class="wl-hint">支持：AAPL / 苹果 / SPY / CL=F / VTSAX </div>
+          <div class="watchlist-toolbar">
+            <input id="usWlInput" placeholder="Ticker 或名称…" autocomplete="off" oninput="onWatchlistInput('US')" onkeydown="onWatchlistKeydown(event,'US')" />
+          </div>
+          <ul class="watchlist-candidates" id="usWlCandidates"></ul>
+          <ul class="zt-list" id="usWatchlist"></ul>
+        </div>
       </div>
       <div class="dash-row3">
-        <div class="dash-panel"><div class="panel-title">日内涨幅榜<span class="panel-fetched" data-fetch="us_gainers"></span></div><ul class="zt-list" id="usGainersList"></ul></div>
-        <div class="dash-panel"><div class="panel-title">成交最活跃<span class="panel-fetched" data-fetch="us_actives"></span></div><ul class="zt-list" id="usActivesList"></ul></div>
-        <div class="dash-panel"><div class="panel-title">成长科技股<span class="panel-fetched" data-fetch="us_growth"></span></div><ul class="zt-list" id="usGrowthList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="美股当日涨幅榜（Yahoo 筛选，失败则东财美股榜）">日内涨幅榜<span class="panel-fetched" data-fetch="us_gainers"></span></div><ul class="zt-list" id="usGainersList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="美股当日成交量最活跃标的">成交最活跃<span class="panel-fetched" data-fetch="us_actives"></span></div><ul class="zt-list" id="usActivesList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="成长科技股筛选榜（Yahoo growth_technology，失败则东财涨幅榜兜底；榜单价可能非逐票实时）">成长科技股<span class="panel-fetched" data-fetch="us_growth"></span></div><ul class="zt-list" id="usGrowthList"></ul></div>
       </div>
       <div class="dash-row3">
-        <div class="dash-panel"><div class="panel-title">行业板块 ETF<span class="panel-fetched" data-fetch="us_sectors"></span></div><ul class="zt-list" id="usSectorsList"></ul></div>
-        <div class="dash-panel"><div class="panel-title">主题概念 ETF<span class="panel-fetched" data-fetch="us_theme_etfs"></span></div><ul class="zt-list" id="usThemeList"></ul></div>
-        <div class="dash-panel"><div class="panel-title">小盘异动<span class="panel-fetched" data-fetch="us_small_gainers"></span></div><ul class="zt-list" id="usSmallList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="美股行业板块 ETF（如 XLK/XLF）当日涨跌">行业板块 ETF<span class="panel-fetched" data-fetch="us_sectors"></span></div><ul class="zt-list" id="usSectorsList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="美股主题概念 ETF（如 QQQ/SMH 等）当日涨跌">主题概念 ETF<span class="panel-fetched" data-fetch="us_theme_etfs"></span></div><ul class="zt-list" id="usThemeList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="美股小盘股涨幅榜（small_cap_gainers）">小盘异动<span class="panel-fetched" data-fetch="us_small_gainers"></span></div><ul class="zt-list" id="usSmallList"></ul></div>
       </div>
       <div class="dash-row3">
         <div class="dash-panel"><div class="panel-title" title="行业/主题 ETF 涨幅 + 关联龙头命中（近似 A 股主线题材）">美股主线<span class="panel-fetched" data-fetch="us_mainline_themes"></span></div><ul class="zt-list" id="usMainlineList"></ul></div>
@@ -1497,12 +1587,12 @@ function _dashboardInnerHtml() {
         <div class="dash-panel"><div class="panel-title" title="高换手活跃 + 强势涨幅；接近 52 周高标近新高">情绪标杆<span class="panel-fetched" data-fetch="us_sentiment"></span></div><ul class="zt-list" id="usSentimentList"></ul></div>
       </div>
       <div class="dash-row3">
-        <div class="dash-panel"><div class="panel-title">七巨头<span class="panel-fetched" data-fetch="us_mega"></span></div><ul class="zt-list" id="usMegaList"></ul></div>
-        <div class="dash-panel"><div class="panel-title">低估值大盘<span class="panel-fetched" data-fetch="us_undervalued"></span></div><ul class="zt-list" id="usUnderList"></ul></div>
-        <div class="dash-panel"><div class="panel-title">日内跌幅榜<span class="panel-fetched" data-fetch="us_losers"></span></div><ul class="zt-list" id="usLosersList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="美股科技七巨头（AAPL/MSFT/NVDA/GOOGL/AMZN/META/TSLA）当日行情">七巨头<span class="panel-fetched" data-fetch="us_mega"></span></div><ul class="zt-list" id="usMegaList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="低估值大盘股筛选榜（undervalued_large_caps）">低估值大盘<span class="panel-fetched" data-fetch="us_undervalued"></span></div><ul class="zt-list" id="usUnderList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="美股当日跌幅榜">日内跌幅榜<span class="panel-fetched" data-fetch="us_losers"></span></div><ul class="zt-list" id="usLosersList"></ul></div>
       </div>
       <div class="dash-row3">
-        <div class="dash-panel"><div class="panel-title">空头最重<span class="panel-fetched" data-fetch="us_shorted"></span></div><ul class="zt-list" id="usShortedList"></ul></div>
+        <div class="dash-panel"><div class="panel-title" title="空头关注度较高的美股（most_shorted，失败则东财关注列表兜底）">空头最重<span class="panel-fetched" data-fetch="us_shorted"></span></div><ul class="zt-list" id="usShortedList"></ul></div>
         <div class="dash-panel"><div class="panel-title" title="高空头关注 + 小盘/极端暴涨，规则近似投机拥挤（非官方妖股）">投机/拥挤<span class="panel-fetched" data-fetch="us_speculative"></span></div><ul class="zt-list" id="usSpeculativeList"></ul></div>
         <div class="dash-panel"><div class="panel-title" title="扩大共同基金池后按 YTD 排（无日成交量）· 约 5 分钟刷新">共同基金 YTD<span class="panel-fetched" data-fetch="us_mutual_funds"></span></div><ul class="zt-list" id="usMutualFundsList"></ul></div>
       </div>
@@ -1510,7 +1600,7 @@ function _dashboardInnerHtml() {
         <div class="dash-panel"><div class="panel-title" title="扩大 Yahoo =F 池后按成交量/涨跌幅动态排· 约 5 分钟刷新">商品/股指期货双榜<span class="panel-fetched" data-fetch="us_futures"></span></div><ul class="zt-list" id="usFuturesList"></ul></div>
         <div class="dash-panel"><div class="panel-title" title="热门 ETF 池：成交量 Top + 涨跌幅 Top· 约 5 分钟刷新">ETF 双榜<span class="panel-fetched" data-fetch="us_etf_rank"></span></div><ul class="zt-list" id="usEtfRankList"></ul></div>
         <div class="dash-panel">
-          <div class="panel-title">美股快捷提问</div>
+          <div class="panel-title" title="点击后填入输入框，可一键发起研究提问">快捷提问</div>
           <div class="example-list" id="usQuickQueries">
             <div class="example" onclick="fillQuery(this)">分析标普500与纳斯达克今日走势</div>
             <div class="example" onclick="fillQuery(this)">美股科技板块和七巨头今日表现如何？</div>
@@ -1526,6 +1616,9 @@ function _dashboardInnerHtml() {
             <div class="example" onclick="fillQuery(this)">AAPL 近月期权到期日与看涨看跌链</div>
             <div class="example" onclick="fillQuery(this)">SPY 最近期权到期日有哪些</div>
             <div class="example" onclick="fillQuery(this)">特斯拉近期期权隐含波动大致如何</div>
+            <div class="example" onclick="fillQuery(this)">持有 AAPL，用保护性认沽（protective put）怎么选行权价</div>
+            <div class="example" onclick="fillQuery(this)">对 SPY 做备兑开仓（covered call）近月虚值权利金大概怎样</div>
+            <div class="example" onclick="fillQuery(this)">财报前特斯拉期权隐含波动抬升与会后 IV crush 风险怎么看</div>
           </div>
         </div>
       </div>
@@ -1544,6 +1637,31 @@ function initDashboard() {
   _dashTimer = setInterval(() => refreshDashboard(false), DASH_CORE_MS);
   _dashExtrasTimer = setInterval(() => refreshDashboardExtras(false), DASH_EXTRAS_MS);
   _startCountdown();
+  reloadWatchlists();
+  _startUsEtClock();
+}
+
+function _startUsEtClock() {
+  const tick = () => {
+    document.querySelectorAll('#usEtNow').forEach((el) => {
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: false, weekday: 'short',
+        }).formatToParts(new Date());
+        const get = (t) => (parts.find(p => p.type === t) || {}).value || '';
+        const wdMap = {Sun:'周日',Mon:'周一',Tue:'周二',Wed:'周三',Thu:'周四',Fri:'周五',Sat:'周六'};
+        el.textContent = `${get('year')}-${get('month')}-${get('day')} ${wdMap[get('weekday')] || ''} ${get('hour')}:${get('minute')}:${get('second')}`;
+      } catch {
+        el.textContent = '--';
+      }
+    });
+  };
+  tick();
+  if (window._usEtClockTimer) clearInterval(window._usEtClockTimer);
+  window._usEtClockTimer = setInterval(tick, 1000);
 }
 
 function _startCountdown() {
@@ -1644,6 +1762,273 @@ async function refreshDashboardExtras(forceFresh) {
   } catch { /* silent */ }
 }
 
+/* ---------- 我的自选 ---------- */
+const _wlItems = { CN_A: [], US: [] };
+const _wlQuotes = { CN_A: {}, US: {} };
+const _wlSearchTimers = { CN_A: null, US: null };
+const _wlSearchSeq = { CN_A: 0, US: 0 };
+
+const _WL_ASSET_ZH = {
+  equity: '股票',
+  etf: 'ETF',
+  future: '期货',
+  mutual_fund: '场外基金',
+  fund: '场外基金',
+  index: '指数',
+  forex: '外汇',
+  crypto: '加密货币',
+  unknown: '其他',
+};
+
+function _wlAssetLabel(ac) {
+  const key = String(ac || '').toLowerCase();
+  return _WL_ASSET_ZH[key] || (ac ? String(ac) : '其他');
+}
+
+function _wlUserId() {
+  return (document.getElementById('userIdInput')?.value || 'demo_user').trim() || 'anonymous';
+}
+
+function _wlEls(market) {
+  if (market === 'US') {
+    return {
+      input: document.getElementById('usWlInput'),
+      cand: document.getElementById('usWlCandidates'),
+      list: document.getElementById('usWatchlist'),
+      fetchKey: 'us_watchlist',
+    };
+  }
+  return {
+    input: document.getElementById('cnWlInput'),
+    cand: document.getElementById('cnWlCandidates'),
+    list: document.getElementById('cnWatchlist'),
+    fetchKey: 'cn_watchlist',
+  };
+}
+
+function onWatchlistInput(market) {
+  const els = _wlEls(market);
+  const q = (els.input?.value || '').trim();
+  if (_wlSearchTimers[market]) clearTimeout(_wlSearchTimers[market]);
+  if (q.length < 1) {
+    els.cand.classList.remove('open');
+    els.cand.innerHTML = '';
+    els.cand._results = [];
+    return;
+  }
+  els.cand.classList.add('open');
+  els.cand.innerHTML = '<li class="wl-status-text">搜索中…</li>';
+  _wlSearchTimers[market] = setTimeout(() => searchWatchlist(market), 280);
+}
+
+function onWatchlistKeydown(event, market) {
+  if (event.key === 'Escape') {
+    const els = _wlEls(market);
+    els.cand.classList.remove('open');
+    return;
+  }
+  // 仅点选候选可加入；Enter 不自动加入
+  if (event.key === 'Enter') event.preventDefault();
+}
+
+async function reloadWatchlists() {
+  await Promise.all([loadWatchlist('CN_A'), loadWatchlist('US')]);
+}
+
+async function loadWatchlist(market) {
+  try {
+    const uid = encodeURIComponent(_wlUserId());
+    const resp = await fetch(`/api/watchlist?user_id=${uid}&market=${market}`, { cache: 'no-store' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    _wlItems[market] = data.items || [];
+    _renderWatchlist(market);
+    await refreshWatchlistQuotes(market);
+  } catch { /* silent */ }
+}
+
+async function searchWatchlist(market) {
+  const els = _wlEls(market);
+  const q = (els.input?.value || '').trim();
+  if (!q) {
+    els.cand.classList.remove('open');
+    els.cand.innerHTML = '';
+    return;
+  }
+  const seq = ++_wlSearchSeq[market];
+  try {
+    const resp = await fetch('/api/watchlist/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ market, q, limit: 8 }),
+    });
+    if (seq !== _wlSearchSeq[market]) return;
+    const data = await resp.json();
+    const results = data.results || [];
+    if (!results.length) {
+      els.cand.innerHTML = '<li style="color:var(--text2)">无匹配结果</li>';
+      els.cand.classList.add('open');
+      els.cand._results = [];
+      return;
+    }
+    els.cand.innerHTML = results.map((r, i) => {
+      const name = r.name || r.symbol;
+      const typeZh = _wlAssetLabel(r.asset_class_zh || r.asset_class);
+      const mid = name && name !== r.symbol ? ` · ${escHtml(r.symbol)}` : '';
+      const note = r.note ? `<span class="wl-note">${escHtml(r.note)}</span>` : '';
+      const label = `${escHtml(name)}${mid} · ${escHtml(typeZh)}${note}`;
+      return `<li onclick="addWatchlistItem('${market}', ${i})">${label}<span class="wl-add">加入</span></li>`;
+    }).join('');
+    els.cand._results = results;
+    els.cand.classList.add('open');
+  } catch {
+    if (seq !== _wlSearchSeq[market]) return;
+    els.cand.innerHTML = '<li style="color:var(--text2)">搜索失败</li>';
+    els.cand.classList.add('open');
+  }
+}
+
+async function addWatchlistItem(market, idx) {
+  const els = _wlEls(market);
+  if (els.cand?._adding) return;
+  const r = (els.cand._results || [])[idx];
+  if (!r) return;
+  els.cand._adding = true;
+  const li = els.cand.querySelectorAll('li')[idx];
+  const prevHtml = li ? li.innerHTML : '';
+  if (li) {
+    li.classList.add('wl-adding');
+    li.innerHTML = `<span class="wl-adding-text">正在加入 ${escHtml(r.symbol)}…</span>`;
+  }
+  try {
+    const resp = await fetch('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: _wlUserId(),
+        market,
+        symbol: r.symbol,
+        asset_class: r.asset_class || 'unknown',
+        display_name: r.name || r.symbol,
+        exchange: r.exchange || '',
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      showToast(typeof err.detail === 'string' ? err.detail : '加入失败');
+      if (li) li.innerHTML = prevHtml;
+      return;
+    }
+    els.cand.classList.remove('open');
+    els.cand.innerHTML = '';
+    els.cand._results = [];
+    if (els.input) els.input.value = '';
+    showToast(`已加入 ${r.symbol}`);
+    await loadWatchlist(market);
+  } catch {
+    showToast('加入失败');
+    if (li) li.innerHTML = prevHtml;
+  } finally {
+    els.cand._adding = false;
+  }
+}
+
+async function removeWatchlistItem(market, symbol, displayName) {
+  const label = displayName || symbol;
+  const ok = await appDialog({
+    title: '移除自选',
+    message: `确定将「${label}」（${symbol}）从自选中移除？`,
+    okText: '移除',
+    cancelText: '取消',
+  });
+  if (!ok) return;
+  const key = `${market}:${symbol}`;
+  if (window._wlRemoving && window._wlRemoving[key]) return;
+  window._wlRemoving = window._wlRemoving || {};
+  window._wlRemoving[key] = true;
+  try {
+    const uid = encodeURIComponent(_wlUserId());
+    const mkt = encodeURIComponent(market);
+    const sym = encodeURIComponent(symbol);
+    const resp = await fetch(`/api/watchlist?user_id=${uid}&market=${mkt}&symbol=${sym}`, {
+      method: 'DELETE',
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      showToast(typeof err.detail === 'string' ? err.detail : '移除失败');
+      return;
+    }
+    await loadWatchlist(market);
+  } catch {
+    showToast('移除失败');
+  } finally {
+    window._wlRemoving[key] = false;
+  }
+}
+
+async function refreshWatchlistQuotes(market) {
+  const items = _wlItems[market] || [];
+  if (!items.length) {
+    _renderWatchlist(market);
+    return;
+  }
+  try {
+    const resp = await fetch('/api/watchlist/quotes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ market, symbols: items.map(i => i.symbol) }),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const map = {};
+    for (const q of data.quotes || []) map[q.symbol] = q;
+    _wlQuotes[market] = map;
+    const now = new Date();
+    const hms = [now.getHours(), now.getMinutes(), now.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+    if (_dashData) {
+      _dashData.fetched_at = { ...(_dashData.fetched_at || {}), [market === 'US' ? 'us_watchlist' : 'cn_watchlist']: hms };
+      _applyFetchedAt(_dashData.fetched_at);
+    }
+    _renderWatchlist(market);
+  } catch { /* silent */ }
+}
+
+function _renderWatchlist(market) {
+  const els = _wlEls(market);
+  if (!els.list) return;
+  const items = _wlItems[market] || [];
+  if (!items.length) {
+    els.list.innerHTML = '<li style="font-size:11px;color:var(--text2);padding:8px">暂无自选，上方输入后点选加入</li>';
+    return;
+  }
+  const quotes = _wlQuotes[market] || {};
+  els.list.innerHTML = items.map(it => {
+    const q = quotes[it.symbol] || {};
+    const name = q.name || it.display_name || it.symbol;
+    const ac = q.asset_class || it.asset_class || 'unknown';
+    const typeZh = _wlAssetLabel(q.asset_class_zh || ac);
+    const industry = q.industry || '';
+    const change = q.change_pct != null ? parseFloat(q.change_pct) : null;
+    const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
+    const changeText = change !== null ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '—';
+    const priceKind = q.price_kind === 'nav' ? '净值' : '现价';
+    const priceText = q.price != null
+      ? `${priceKind} ${Number(q.price).toFixed(q.price_kind === 'nav' ? 4 : 2)}`
+      : '';
+    const metaParts = [typeZh, industry, it.symbol].filter(Boolean);
+    const query = `分析${name}(${it.symbol})的最新走势和市场表现`;
+    const delSym = String(it.symbol).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const delName = String(name).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `<li class="zt-item wl-row" onclick="fillQuery(this)" data-query="${escHtmlAttr(query)}">
+      <span class="zt-name" title="${escHtmlAttr(name)}">${escHtml(name)}</span>
+      <span class="wl-item-meta" title="${escHtmlAttr(metaParts.join(' · '))}">${escHtml(metaParts.join(' · '))}</span>
+      ${priceText ? `<span class="hot-price" title="${escHtmlAttr(priceKind)}">${escHtml(priceText)}</span>` : '<span class="hot-price">—</span>'}
+      <span class="hot-change ${cls}">${changeText}</span>
+      <span class="wl-del" onclick="event.stopPropagation();removeWatchlistItem('${market}','${delSym}','${delName}')" title="移除">×</span>
+    </li>`;
+  }).join('');
+}
+
 function _applyFetchedAt(fetched) {
   const map = fetched || {};
   document.querySelectorAll('[data-fetch]').forEach(el => {
@@ -1704,6 +2089,9 @@ function _renderDashboard() {
   _applyFetchedAt(_dashData.fetched_at);
   const timeEl = document.getElementById('dashTime');
   if (timeEl) timeEl.textContent = _dashData.updated_at || '';
+  // 自选随主看板刷新行情
+  refreshWatchlistQuotes('CN_A');
+  refreshWatchlistQuotes('US');
 }
 
 function _renderUsDashboard(us) {
@@ -1817,10 +2205,14 @@ function _renderStatusBar(status, usStatus) {
     const msg = document.getElementById('dashMsg');
     if (badge && msg) {
       const s = status.status || 'unknown';
-      badge.className = 'market-badge ' + (s === 'trading' ? 'trading' : s === 'pre_market' || s === 'lunch_break' ? 'pre' : 'closed');
-      const labels = {trading:'交易中',closed:'已收盘',pre_market:'盘前',lunch_break:'午休',non_trading_day:'休市'};
+      badge.className = 'market-badge ' + (s === 'trading' ? 'trading' : s === 'pre_market' || s === 'lunch_break' || s === 'call_auction' ? 'pre' : 'closed');
+      const labels = {
+        trading:'交易中', closed:'已收盘', pre_market:'盘前', lunch_break:'午休',
+        non_trading_day:'休市', not_yet_open:'未开盘', call_auction:'集合竞价'
+      };
       badge.textContent = 'A股 · ' + (labels[s] || s);
-      msg.textContent = status.message || '';
+      // 状态行用 CSS · 分隔 A/美股，去掉句末「。」避免「）。·」
+      msg.textContent = String(status.message || '').replace(/[。．.]+$/u, '');
     }
   }
   if (usStatus) {
@@ -1996,7 +2388,7 @@ function _renderPieChart(breadth) {
   const stats = document.getElementById('pieStats');
   if (stats) {
     const flat = breadth.flat > 0 ? `<span class="stat-flat">平 ${breadth.flat}</span>` : '';
-    stats.innerHTML = `<span class="stat-up">涨 ${breadth.up}</span><span class="stat-down">跌 ${breadth.down}</span>${flat}<span class="stat-zt">涨停 ${breadth.zt}</span><span class="stat-dt">跌停 ${breadth.dt}</span>`;
+    stats.innerHTML = `<div class="pie-stats-row"><span class="stat-up">涨 ${breadth.up}</span><span class="stat-down">跌 ${breadth.down}</span>${flat}</div><div class="pie-stats-row"><span class="stat-zt">涨停 ${breadth.zt}</span><span class="stat-dt">跌停 ${breadth.dt}</span></div>`;
   }
 }
 
@@ -2057,8 +2449,8 @@ function _renderHotList() {
       <span class="hot-name">${escHtml(s.name)}</span>
       ${ind ? `<span class="zt-industry" title="${escHtmlAttr(ind)}">${escHtml(ind)}</span>` : ''}
       <span class="hot-code">${s.code}</span>
-      ${priceText ? `<span class="hot-price">${priceText}</span>` : ''}
-      <span class="hot-change ${cls}">${changeText}</span>
+      ${priceText ? `<span class="hot-price" title="最新价">${priceText}</span>` : ''}
+      <span class="hot-change ${cls}" title="涨跌幅">${changeText}</span>
     </li>`;
   }).join('');
 }
@@ -2145,12 +2537,12 @@ function _renderDualRank(elId, payload, label) {
   }).join('');
   let html = '';
   if (byVol.length) {
-    html += `<li class="zt-subhead" style="font-size:11px;color:var(--text2);padding:6px 8px 2px;list-style:none">成交量 Top</li>`;
+    html += `<li class="zt-subhead" style="font-size:14px;color:var(--text2);padding:6px 8px 2px;list-style:none">成交量 Top</li>`;
     html += renderItems(byVol, 'volume');
   }
   if (byChg.length) {
-    const chgLabel = (label === 'QDII' || label === '共同基金') ? '收益/YTD Top' : '涨跌幅 Top';
-    html += `<li class="zt-subhead" style="font-size:11px;color:var(--text2);padding:8px 8px 2px;list-style:none">${chgLabel}</li>`;
+    const chgLabel = label === 'QDII' ? '日涨幅 Top' : (label === '共同基金' ? '收益/YTD Top' : '涨跌幅 Top');
+    html += `<li class="zt-subhead" style="font-size:14px;color:var(--text2);padding:8px 8px 2px;list-style:none">${chgLabel}</li>`;
     html += renderItems(byChg, 'change');
   }
   el.innerHTML = html;
@@ -2314,6 +2706,7 @@ function _renderDynamicQueries(data) {
   const fixed = [
     '分析今日收盘情况，预测明天走势',
     '今天哪些板块和个股涨得最好？',
+    '今日龙虎榜机构净买和解读要点',
   ];
   const dynamic = [];
   const topBoard = data.boards?.concept?.[0];
@@ -2941,11 +3334,12 @@ function renderSpecialists(availableList) {
 }
 
 function highlightSpecialist(name) {
+  const sid = String(name || '').trim();
   ALL_SPECIALISTS.forEach(s => {
     const dot = document.querySelector(`#spec-${s.id} .dot`);
     const nm = document.querySelector(`#spec-${s.id} .name`);
     const badge = document.getElementById(`badge-${s.id}`);
-    if (s.id === name) {
+    if (s.id === sid) {
       if (dot) dot.className = 'dot active';
       if (nm) nm.classList.add('lit');
       if (badge) badge.classList.add('show');
@@ -2955,6 +3349,11 @@ function highlightSpecialist(name) {
       if (badge) badge.classList.remove('show');
     }
   });
+  // 正在调用的专家滚入可视区中部
+  const activeEl = document.getElementById(`spec-${sid}`);
+  if (activeEl) {
+    activeEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+  }
 }
 
 function clearHighlights() {

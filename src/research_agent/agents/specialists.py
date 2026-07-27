@@ -154,7 +154,7 @@ DATA_EXPERT_PROMPT = """\
    必须首先调用 ``get_market_status``。根据返回的 ``status`` 和 ``hint`` 字段：
    - ``trading`` → 数据为盘中实时，可称"截至 HH:MM 的实时行情"
    - ``closed`` → 数据为今日收盘，可称"今日收盘数据"
-   - ``pre_market`` / ``non_trading_day`` → 数据为上一个交易日，必须标注"以下为 YYYY-MM-DD 收盘数据"，绝不说"今日收盘"
+   - ``pre_market`` / ``not_yet_open`` / ``non_trading_day`` → 数据为上一个交易日，必须标注"以下为 YYYY-MM-DD 收盘数据"，绝不说"今日收盘"
    - ``lunch_break`` → 上午盘已结束，可称"截至午间休市"
    将 ``get_market_status`` 的结果原样包含在你的回复中，以便 supervisor 准确标注时效。
 1. 判断用户意图是"宏观/市场级"还是"个股级"：

@@ -10,6 +10,7 @@ from langgraph.graph.state import CompiledStateGraph
 from research_agent.config import Settings
 from research_agent.llm.provider import ModelRouter
 from research_agent.memory.manager import MemoryManager
+from research_agent.memory.watchlist_store import WatchlistStore
 from research_agent.security.token_quota import TokenQuotaManager
 
 
@@ -67,9 +68,15 @@ def get_token_quota(request: Request) -> TokenQuotaManager:
     return quota
 
 
+def get_watchlist_store(request: Request) -> WatchlistStore | None:
+    """看板自选 SQLite 存储；未初始化时返回 None（研究前导可跳过）。"""
+    return getattr(request.app.state, "watchlist_store", None)
+
+
 SupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_supervisor_graph)]
 ResearchSupervisorGraphDep = Annotated[CompiledStateGraph, Depends(get_research_supervisor_graph)]
 ModelRouterDep = Annotated[ModelRouter, Depends(get_model_router)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 MemoryDep = Annotated[MemoryManager, Depends(get_memory_manager)]
 TokenQuotaDep = Annotated[TokenQuotaManager, Depends(get_token_quota)]
+WatchlistStoreDep = Annotated[WatchlistStore | None, Depends(get_watchlist_store)]
