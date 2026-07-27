@@ -27,7 +27,7 @@ CN_A（A 股）                                  US（美股）
 ─────────────────                        ─────────────────
 akshare → 东财/新浪/雪球等            报价：Yahoo Chart → 东财 ulist → yfinance
 巨潮 cninfo（披露 PDF）               SEC EDGAR（10-K… + ETF: NPORT-P/N-CSR/485BPOS）
-东财/财联社/雪球（新闻）               新闻：Yahoo Search HTTP → yfinance
+东财/财联社/雪球（新闻）               新闻：Yahoo → 可选 Finnhub → 过滤/聚类/标签
 SnowNLP（中文舆情）                   VADER + 金融词表增强（本地打分）
 知识库 FAISS（跨市场共享引擎）         同上（共享 RAG 引擎，内容按集合隔离）
 ```
@@ -105,37 +105,30 @@ get_quote / get_index_quotes / _quote_from_ticker
 - 公司概况 / ETF sector weights：仍以 **yfinance** 为主。
 - ETF holdings（提问触发）：yfinance → Yahoo quoteSummary；东财无稳定美股 ETF 持仓公开兜底。
 
-#### 舆情新闻（`us_sentiment_server`）
+#### 舆情新闻（`us_sentiment_server`）与新闻专家（`us_news_server`）
+
+概要见下图；**技术细节与 Finnhub 操作指南见 [§4.4](#44-美股新闻管道技术实现与-finnhub-操作指南)**。
 
 ```
-get_ticker_sentiment_report
+拉新闻（共用 us_news_pipeline.collect_us_news）
     │
-    ├─① 优先：Yahoo Search HTTP
-    │     .../v1/finance/search?q={ticker}&newsCount=...
+    ├─① Yahoo Search HTTP → 失败再 yfinance.Ticker.news
+    ├─② 可选 Finnhub company-news（FINNHUB_API_KEY；无 key 则跳过）
     │
-    └─② 失败再：yfinance.Ticker.news
+    └─清洗：垃圾源过滤 → 标题相似度聚类 → 关键词事件标签
+         代表条带 cluster_size / event_type / event_label_zh
 
-打分（本地，不走 LLM）：
+舆情打分（本地，不走 LLM）：
     文本 = 标题 + 摘要；摘要过短且有 URL 时再抓页面 meta/正文前段（非全文）
     sentiment_score = clip(0.6 * VADER.compound + 0.4 * finlex_adjustment, -1, 1)
     model_version = en_vader_finlex_v2
-    条目字段 score_text_basis ∈ title / title+summary / title+body / …
 ```
 
-#### 新闻专家（`us_news_server`）
-
-```
-get_ticker_news / get_market_news / get_etf_news
-    │
-    ├─① 优先：Yahoo Search HTTP（与舆情对齐）
-    └─② 失败再：yfinance.Ticker.news
-```
-
-- 可选 8-K 标题仍走 EDGAR submissions（`get_recent_8k_headlines`）。
+- 可选 8-K 标题仍走 EDGAR submissions（`get_recent_8k_headlines`），与 Yahoo/Finnhub 列表并行，不经过聚类管道。
 
 #### 披露（不变）
 
-- **仅 SEC EDGAR**，与 Yahoo 无关。
+- **仅 SEC EDGAR**，与 Yahoo / Finnhub 无关。
 
 ### 4.3 名称对照（避免误解）
 
@@ -143,10 +136,159 @@ get_ticker_news / get_market_news / get_etf_news
 |------|--------|---------|--------------|
 | **yfinance** | Python 库，封装 Yahoo | 历史/概况/ETF 持仓等仍为主；报价与新闻上多为**后备** | 否 |
 | **Yahoo Chart HTTP** | 直连 Yahoo 图表 API | 报价/指数的**优先快路径** | 否（行情接口） |
-| **Yahoo Search HTTP** | 直连 Yahoo 搜索接口的 news | 新闻 + 舆情的**优先快路径** | 否（金融域新闻，不是 Google/Bing） |
+| **Yahoo Search HTTP** | 直连 Yahoo 搜索接口的 news | 新闻主源之一 | 否（金融域新闻，不是 Google/Bing） |
+| **Finnhub company-news** | Finnhub REST，需 API Key | 新闻**第二源**（可选） | 否 |
 | **SEC EDGAR** | 美国证监会披露 | 披露主路径 | 否 |
 
-三者（yfinance / Chart / Search）= **同一数据商（Yahoo）的不同访问方式**，不是三家独立行情商。
+yfinance / Chart / Search = **同一数据商（Yahoo）的不同访问方式**。Finnhub 是**另一家供应商**，目前仅用于新闻，不用于报价主备。
+
+### 4.4 美股新闻管道：技术实现与 Finnhub 操作指南
+
+实现入口：`src/research_agent/mcp_servers/us_news_pipeline.py`。  
+调用方：`us_news_server`（`get_ticker_news` / `get_market_news` / `get_etf_news`）与 `us_sentiment_server`（`get_ticker_sentiment_report`）先拉 Yahoo 条目，再交给 `collect_us_news(yahoo_items=...)`；管道内按需再拉 Finnhub 并完成清洗。
+
+#### 4.4.1 端到端流程
+
+```
+Yahoo 条目（Search → 失败则 yfinance）
+        +
+Finnhub 条目（仅当 FINNHUB_API_KEY 非空）
+        │
+        ▼
+   合并（每条带 provider / source）
+        │
+        ▼
+   垃圾源过滤（is_junk_item）——丢掉促销/仙股类
+        │
+        ▼
+   标题/URL 相似度聚类（cluster_news_items）
+        │  同簇选「代表条」（权威 publisher 优先）
+        │  写出 cluster_size、cluster_urls、providers_in_cluster
+        ▼
+   关键词事件标签（tag_event）
+        │  event_type + event_label_zh
+        ▼
+   截断到 limit，返回给新闻工具 / 舆情打分
+```
+
+| 返回字段（代表条上） | 含义 |
+|----------------------|------|
+| `title` / `summary` / `publisher` / `url` / `published_at` | 展示与跳转 |
+| `provider` / `source` | 该代表条来自哪条拉取通路（如 `yahoo_search`、`finnhub`） |
+| `providers_used`（响应顶层） | 本次实际用到的源列表，如 `["yahoo","finnhub"]` |
+| `cluster_size` | 簇内原始条数；`>1` 表示多家转载同一事件 |
+| `cluster_urls` | 同簇其他链接（最多 3 个），不是删光只留一条 |
+| `event_type` | `earnings` / `m_and_a` / `sec_8k` / `analyst` / `legal` / `other` |
+| `event_label_zh` | 财报 / 并购 / SEC披露 / 分析师 / 诉讼监管 / 其他 |
+| `note`（可选） | 未配置 Finnhub 时的提示文案 |
+
+#### 4.4.2 垃圾源过滤（方案）
+
+函数：`is_junk_item`。命中任一条即丢弃，不进入聚类。
+
+| 规则类型 | 实现要点（见代码常量） |
+|----------|------------------------|
+| Publisher 黑名单子串 | 如含 `penny stock`、`stockstotrade` 等 |
+| URL host 片段 | 如 `pennystock`、`stockpromoter`、`getrich` 等 |
+| 标题启发式 | `!!!` ≥ 3；含 `penny stock` / `guaranteed` / `get rich` / `secret stock`；较长全大写英文字母标题 |
+
+目的：减少营销稿与仙股软文污染列表与舆情样本。黑名单可按运营反馈在 `us_news_pipeline.py` 中扩展。
+
+#### 4.4.3 聚类（方案）
+
+- **同簇条件**：URL 完全相同，**或** 标题规范化后 `difflib.SequenceMatcher` 比例 ≥ **0.72**（`_CLUSTER_THRESHOLD`）。
+- **标题规范化**：小写、去 URL、去掉标点、压缩空白（保留中英文与数字）。
+- **代表条选择**：按 `_TRUSTED_PUBLISHERS` 排序（Reuters / Bloomberg / WSJ / AP / FT / CNBC / MarketWatch 等优先），再看 `published_at`。
+- **与「简单去重」的区别**：简单去重只删到一行；聚类保留 `cluster_size` 与 `cluster_urls`，便于判断「是否被多家转载」。
+
+依赖：仅 Python 标准库，无额外 ML 包。
+
+#### 4.4.4 事件标签（方案）
+
+函数：`tag_event`。对 `title + summary` 做英文关键词匹配（**不是** LLM 抽取「谁收购了什么」）。
+
+| `event_type` | 中文标签 | 典型关键词（节选） |
+|--------------|----------|-------------------|
+| `earnings` | 财报 | earnings, guidance, eps, quarterly results, q1–q4 |
+| `m_and_a` | 并购 | acquire, acquisition, merger, buyout, takeover |
+| `sec_8k` | SEC披露 | 8-k, sec filing, edgar；或 provider/form 标明 SEC |
+| `analyst` | 分析师 | upgrade, downgrade, price target, analyst |
+| `legal` | 诉讼监管 | lawsuit, litigation, probe, antitrust, investigation |
+| `other` | 其他 | 未命中以上规则 |
+
+误标可能：关键词命中但语境无关；漏标：同义改写未进词表。后续若要「事件抽取」需另上模型，不在本管道范围。
+
+#### 4.4.5 双源合并与降级
+
+| 场景 | 行为 |
+|------|------|
+| 已配置 `FINNHUB_API_KEY` | Yahoo 与 Finnhub **都拉**（各多拉若干条再聚类），合并后过滤/聚类 |
+| 未配置 Key | 只走 Yahoo；响应可带 `note`：未配置第二源 |
+| Yahoo 失败、Finnhub 成功 | 仍可能返回新闻（第二源的稳定价值） |
+| 两源都失败 | 空列表；工具不因缺 Key 而抛配置异常 |
+
+Finnhub 接口：`GET https://finnhub.io/api/v1/company-news?symbol={T}&from={YYYY-MM-DD}&to={YYYY-MM-DD}&token={KEY}`  
+默认窗口约近 **7** 日；字段映射：`headline`→title，`summary`→summary，`source`→publisher，`url`→url，`datetime`→UTC ISO。
+
+配置读取：`Settings.finnhub_api_key` ← 环境变量 `FINNHUB_API_KEY`（见 `config.py` / `.env.example`）。
+
+#### 4.4.6 Finnhub 第二新闻源：操作指南
+
+**1. 申请 Key**
+
+1. 打开 [https://finnhub.io/](https://finnhub.io/) 注册账号。  
+2. Dashboard 中复制 **API Key**（免费档通常有每日调用上限，以官网为准）。  
+3. 确认套餐含 **company-news**（免费档一般可用；超额会 HTTP 非 200，管道会打日志并跳过该源）。
+
+**2. 写入本机配置**
+
+```bash
+# 在项目根目录
+cp .env.example .env   # 若尚无 .env
+
+# 编辑 .env，增加或填写：
+FINNHUB_API_KEY=你的_finnhub_key
+```
+
+保存后**重启** FastAPI / MCP 进程（`get_settings` 有缓存，不重启不会读到新 Key）。
+
+**3. 验证是否生效**
+
+```bash
+# 重启服务后，用研究问答或工具：
+# 「英伟达最近有哪些新闻？」
+# 成功时工具结果常见字段：
+#   providers_used: ["yahoo", "finnhub"]  （或其一）
+#   news[].cluster_size / event_type / event_label_zh
+```
+
+也可用离线单测确认管道逻辑（不依赖真实 Key）：
+
+```bash
+uv run pytest tests/unit/test_us_news_pipeline.py -q
+```
+
+**4. 配额与排错**
+
+| 现象 | 可能原因 | 处理 |
+|------|----------|------|
+| 只有 `yahoo`，且有 `note` 说未配置 | `.env` 未写或未重启 | 检查 Key、重启进程 |
+| 配置了 Key 仍无 finnhub | Key 错、配额用尽、网络拦截 | 看日志 `finnhub company-news HTTP …`；浏览器/ curl 直连 Finnhub 自测 |
+| 列表变短 | 过滤 + 聚类压缩 | 正常；看 `raw_count` vs `count` |
+| 标签不准 | 关键词规则局限 | 改 `_EVENT_RULES`，或后续上模型抽取 |
+
+**5. 安全注意**
+
+- **不要**把 Key 提交进 Git；只放在本地 `.env` 或部署密钥库。  
+- CI / 公开仓库默认不设 Key，测试用 mock，行为与「Yahoo-only」一致。
+
+#### 4.4.7 单测索引
+
+| 文件 | 覆盖 |
+|------|------|
+| `tests/unit/test_us_news_pipeline.py` | 垃圾过滤、事件标签、聚类代表条、无 Key 降级、Finnhub mock 合并 |
+| `tests/unit/test_us_news_offline.py` | `get_ticker_news` 等工具层 mock |
+| `tests/unit/test_us_sentiment_offline.py` | 舆情拉新闻 + 打分 |
 
 ---
 
@@ -154,16 +296,14 @@ get_ticker_news / get_market_news / get_etf_news
 
 ### 5.1 区别在哪
 
-| 维度 | 当前（Yahoo 单栈） | Finnhub / Polygon / Alpha Vantage 等 |
-|------|-------------------|-------------------------------------|
-| 供应商数量 | 行情侧实质 **1 家**（Yahoo） | 可配置 **多家**，故障可切换 |
-| 接入形态 | 非官方库 + 非官方 HTTP（易限流/改版/假 delisted） | 多为**正式 REST API + Key**，有配额与文档契约 |
-| 配置方式 | 代码写死优先顺序 | 通常 `.env` 配 `PROVIDER=...` / 多 Key |
-| 主备含义 | 同源不同通路（Chart vs yfinance） | **异源**：A 挂了用 B 的报价 |
-| 合规与 SLA | 免费 PoC，无 SLA | 可买付费档，延迟/完整性更可控 |
-| 覆盖面 | 股票/指数/ETF 够用；期权/逐笔等弱 | 各家强弱不同（期权、外汇、基本面字段等） |
+| 维度 | 报价侧（当前） | 新闻侧（当前） | 完整真·多源（行情） |
+|------|----------------|----------------|---------------------|
+| 供应商 | 实质 Yahoo + 东财报价兜底 | **Yahoo + 可选 Finnhub** | Polygon / Finnhub 等可配链 |
+| 接入形态 | Chart / yfinance / 东财 HTTP | Yahoo Search + Finnhub REST Key | 正式 REST + Key + 配额 |
+| 主备含义 | 报价异源已有东财；Yahoo 内多通路 | 新闻异源已可选 Finnhub | 报价/历史/期权等整链可切换 |
 
-「真·多源」指的是：**独立供应商冗余**，不是「同一个 Yahoo 再开一条 HTTP」。
+「真·多源」在**行情**上仍指：可配置的多家独立供应商冗余。  
+**新闻**已实现「Yahoo + Finnhub」异源可选；**报价全链 Finnhub/Polygon 配置化**仍属后续（见 §5.3）。
 
 ### 5.2 是否一定更准确？
 
@@ -180,7 +320,9 @@ get_ticker_news / get_market_news / get_etf_news
 因此：引入 Finnhub 等，主要价值是 **稳定性、配额、延迟、字段完整性与可运维的主备**，而不是默认「数字一定比 Yahoo 更对」。  
 日线研究 PoC 用 Yahoo 通常够用；要做生产级实时或强 SLA，再上多源更合适。
 
-### 5.3 若未来接入多源，建议形态（尚未实现）
+### 5.3 若未来接入**行情**多源，建议形态（尚未实现）
+
+新闻侧 Finnhub 已按 §4.4 落地；下表是**报价/历史**配置化主备的目标形态（当前仓库**无** `US_QUOTE_PROVIDERS`）：
 
 ```
 get_quote(symbol)
@@ -189,11 +331,12 @@ get_quote(symbol)
   → 响应带 source / as_of / latency
 ```
 
-配置示例（示意，**当前仓库无此配置**）：
+配置示例（示意）：
 
 ```env
 US_QUOTE_PROVIDERS=polygon,finnhub,yahoo_chart
 POLYGON_API_KEY=...
+# FINNHUB_API_KEY 现已用于新闻第二源；未来也可复用于行情链
 FINNHUB_API_KEY=...
 ```
 
@@ -218,8 +361,9 @@ FINNHUB_API_KEY=...
 |------|------|
 | 美股报价主备 | `mcp_servers/us_data_server.py`（Chart → 东财 → yfinance） |
 | 代理/来源诚实性 | `market/us_source_honesty.py` |
-| 美股舆情新闻主备 | `mcp_servers/us_sentiment_server.py`（`_fetch_news_via_yahoo_search`） |
-| 美股新闻主备（已与舆情对齐） | `mcp_servers/us_news_server.py`（Search HTTP → yfinance） |
+| 美股新闻管道（双源/过滤/聚类/标签） | `mcp_servers/us_news_pipeline.py` |
+| 美股新闻工具 | `mcp_servers/us_news_server.py`（Yahoo → Finnhub → pipeline） |
+| 美股舆情（共用 pipeline + VADER） | `mcp_servers/us_sentiment_server.py` |
 | 美股披露 | `mcp_servers/us_filing_server.py` |
 | A 股行情 | `mcp_servers/fin_data_server.py` |
 | 市场隔离 ADR | `docs/adr/0006-us-market-parallel-isolation.md` |
@@ -235,7 +379,7 @@ FINNHUB_API_KEY=...
 |----|------|
 | 通用联网搜索（Tavily 等） | 未挂载；仅有 `retriever.py` 文案；**不应用作行情主源** |
 | 美股共同基金 / 期权 | 明确不在一期范围 |
-| Finnhub / Polygon 等多供应商 | 未接入 |
+| Finnhub / Polygon 等**行情**多供应商配置链 | 未接入（新闻侧 Finnhub 已可选，见 §4.4） |
 | 英文舆情 FinBERT / 专用 Transformer | 可选；当前为 VADER + 金融词表 + 标题/摘要/正文前段（`en_vader_finlex_v2`） |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
 | 左侧知识库栏按「当前集合」过滤显示 | 无；列出该用户全部集合的 PDF |
@@ -266,3 +410,4 @@ FINNHUB_API_KEY=...
 | 报价链写入东财 ulist；代理诚实性；文档与 ADR-0006 / README 漂移对齐（粘性市场、免责去重、来源链接等） |
 | 美股舆情打分：词典 PoC → VADER + 金融词表（`en_vader_finlex_v1`） |
 | 舆情打分文本：标题+摘要；摘要短则补抓页面前段（`en_vader_finlex_v2`） |
+| §4.4：美股新闻管道技术说明（过滤/聚类/标签）+ Finnhub 第二源操作指南 |

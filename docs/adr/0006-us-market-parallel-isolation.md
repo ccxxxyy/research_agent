@@ -72,8 +72,9 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 
 ### 7. P3 行为（已落地）
 
-- `us_news_server`：Yahoo Search HTTP 优先，失败再 yfinance；可选 8-K 标题；暴露 `us_news_*`；
-- `us_sentiment_server`：同上拉新闻 + **VADER + 金融词表**打分（`en_vader_finlex_v2`，标题/摘要/必要时正文前段）；暴露 `us_sentiment_*`；
+- `us_news_server`：Yahoo Search HTTP → yfinance；可选 **Finnhub company-news**（`FINNHUB_API_KEY`）；经 `us_news_pipeline` 做垃圾过滤、标题聚类、事件标签；可选 8-K 标题；暴露 `us_news_*`；
+- `us_sentiment_server`：同上管道拉新闻 + **VADER + 金融词表**打分（`en_vader_finlex_v2`，标题/摘要/必要时正文前段）；暴露 `us_sentiment_*`；
+- 管道细节与 Finnhub 操作见 [数据来源说明 §4.4](../data-sources.md#44-美股新闻管道技术实现与-finnhub-操作指南)；
 - **禁止**用 A 股 `news_*` / `sentiment_*`（SnowNLP）处理美股新闻舆情。
 
 ### 8. P4-语义缓存 US 域（已落地）
@@ -130,8 +131,8 @@ US:   us_data（含 ETF 持仓工具）/ us_filing / us_news / us_sentiment / kn
 
 一期 P0～P5 **已全部完成**。可选增强见 [数据来源说明 §8](../data-sources.md)：
 
-- Finnhub / Polygon 等多供应商行情（真·多源）
+- Finnhub / Polygon 等多供应商**行情**（真·多源）；新闻侧 Finnhub 已可选（见 data-sources §4.4）
 - 美股共同基金 / 期权（明确不在一期）
-- 英文舆情再升级 FinBERT / 专用模型（当前 VADER+finlex 已够用）
+- 英文舆情再升级 FinBERT / 专用模型（当前 VADER+finlex 已够用）；事件标签仍为关键词，非 LLM 抽取
 - 通用联网搜索（非核心；不能替代行情 API）
 - EDGAR 整篇精读 / 回答自动续写（见 data-sources §8；当前为有界窗口 + `MAX_OUTPUT_TOKENS`）

@@ -178,6 +178,14 @@ class Settings(BaseSettings):
         description="会话历史持久化 SQLite 路径，存储用户对话记录和消息。",
     )
 
+    finnhub_api_key: str = Field(
+        default="",
+        description=(
+            "Finnhub API key，用于美股新闻第二源（company-news）。"
+            "为空时新闻/舆情仅走 Yahoo，不报错中断。环境变量 ``FINNHUB_API_KEY``。"
+        ),
+    )
+
     llm: LLMConfig = LLMConfig()
     database: DatabaseConfig = DatabaseConfig()
     observability: ObservabilityConfig = ObservabilityConfig()
