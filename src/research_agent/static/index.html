@@ -527,7 +527,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
           <span class="status-time" id="dashTime">--:--:--</span>
           <button class="refresh-btn" onclick="refreshDashboard(true)" id="dashRefreshBtn">刷新</button>
         </div>
-        <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板<span class="sec-hours">交易时间 工作日 09:30–11:30 / 13:00–15:00（北京时间）· 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟</span></div>
+        <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板<span class="sec-hours">交易日 09:15–09:25 开盘集合竞价 · 09:30–11:30 / 13:00–14:57 连续竞价 · 14:57–15:00 收盘竞价（北京时间）· 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟</span></div>
         <div class="dash-top">
           <div class="dash-top-left">
             <div class="dash-indices-head" title="上证/深证/创业板等主要指数实时点位与涨跌">A股主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
@@ -1479,7 +1479,7 @@ function _dashboardInnerHtml() {
       <span class="status-time" id="dashTime">--:--:--</span>
       <button class="refresh-btn" onclick="refreshDashboard(true)" id="dashRefreshBtn">刷新</button>
     </div>
-    <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板<span class="sec-hours">交易时间 工作日 09:30–11:30 / 13:00–15:00（北京时间）· 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟</span></div>
+    <div class="dash-section-title"><span class="sec-tag cn">A股</span> A 股看板<span class="sec-hours">交易日 09:15–09:25 开盘集合竞价 · 09:30–11:30 / 13:00–14:57 连续竞价 · 14:57–15:00 收盘竞价（北京时间）· 主看板约 60 秒刷新 · 期货/ETF/基金约 5 分钟</span></div>
     <div class="dash-top">
       <div class="dash-top-left">
         <div class="dash-indices-head" title="上证/深证/创业板等主要指数实时点位与涨跌">A股主要指数<span class="panel-fetched" data-fetch="indices"></span></div>
@@ -2205,10 +2205,12 @@ function _renderStatusBar(status, usStatus) {
     const msg = document.getElementById('dashMsg');
     if (badge && msg) {
       const s = status.status || 'unknown';
-      badge.className = 'market-badge ' + (s === 'trading' ? 'trading' : s === 'pre_market' || s === 'lunch_break' || s === 'call_auction' ? 'pre' : 'closed');
+      badge.className = 'market-badge ' + (s === 'trading' ? 'trading' : (s === 'call_auction' || s === 'closing_auction' || s === 'lunch_break' ? 'pre' : 'closed'));
       const labels = {
-        trading:'交易中', closed:'已收盘', pre_market:'盘前', lunch_break:'午休',
-        non_trading_day:'休市', not_yet_open:'未开盘', call_auction:'集合竞价'
+        trading:'交易中', closed:'已收盘', lunch_break:'午休',
+        non_trading_day:'休市', not_yet_open:'未开盘',
+        call_auction:'盘前', pre_open_silence:'静默', closing_auction:'收盘竞价',
+        pre_market:'盘前'  // 兼容旧字段；A 股已改为 call_auction
       };
       badge.textContent = 'A股 · ' + (labels[s] || s);
       // 状态行用 CSS · 分隔 A/美股，去掉句末「。」避免「）。·」

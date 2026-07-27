@@ -1,43 +1,59 @@
 # 金融多智能体研究助手
 
 > **基于 LangGraph + MCP + Agentic RAG 的多智能体深度研究系统**
-> 面向 A 股二级市场研究：行情、基金、披露公告、新闻舆情、研究报告知识库 —— 一个 supervisor + 七个 specialist 协作完成。
+> 面向 **中国 + 美国** 金融市场交易研究：行情、基金/衍生品、披露公告、新闻舆情、研究报告知识库、看板自选 —— 一个 supervisor + 中/美平行 specialist 协作完成。
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-287%20passing-brightgreen.svg)](#评估体系)
+[![Tests](https://img.shields.io/badge/tests-707%20passing-brightgreen.svg)](#评估体系)
 [![Eval Dataset](https://img.shields.io/badge/eval-146%20examples-blueviolet.svg)](#评估体系)
 
 ---
 
 ## 一、它解决什么问题
 
-「**给我做一份宁德时代 2023 年的业绩简评，对比一下行业平均，再看下最近一周市场对它的舆情情况，并参考我之前上传过的 ESG 报告里讲的碳中和承诺。**」
+「**给我做一份宁德时代 2023 年的业绩简评，对比一下行业平均，再看下最近一周市场对它的舆情情况，并参考我之前上传过的 ESG 报告里讲的碳中和承诺。**」  
+或：「**AAPL 最新财报里怎么写指引？对比一下同日上证和标普的走势，顺带看看我自选里那几只美股 ETF。**」
 
-回答这种**混合数据源、混合粒度的研究问题**，传统做法是：
-1. 一个 Agent 拿着一堆工具，靠 prompt 自己分配先调谁——容易乱套，或者一个写死流程的 pipeline——不灵活，加新工具就要重写编排逻辑。
+回答这种**跨市场、混合数据源、混合粒度**的研究问题，传统做法容易踩坑：
+1. 一个 Agent 拿着全部工具靠 prompt 自己排程——路由混乱、中/美工具互相误用；
+2. 或写死 pipeline——加新能力就要重写编排，且难处理「只问一边 / 双边对照 / 跟进句沿用市场」等粘性场景。
 
-本项目用 **LangGraph Supervisor 模式 + 7 个能力解耦的 specialist** 的方式，让 supervisor 只做"读用户需求 → 拆任务 → 选 specialist → 串联结果"，而 specialist 只做"我擅长这一种事，给我参数我就跑"。
+本项目用 **LangGraph Supervisor + 中美平行 specialist（约 12 个，能力解耦）**：supervisor 先做 **市场判定（`CN_A` / `US` / `MIXED`）**，再拆任务、移交、综合；各 specialist 只接本侧工具集（见 [ADR-0006](docs/adr/0006-us-market-parallel-isolation.md)），共享的只有编排壳与 `coder` / `knowledge`。
 
-业务侧实打实接了真实数据源：
-- **行情/基本面** —— akshare 抓东方财富、雪球、新浪（含分时、龙虎榜、融资融券、股东持仓、概念/行业板块、资金流、港股通等 18 个工具）；
-- **基金分析** —— akshare 抓天天基金/东方财富基金频道（ETF/LOF 实时行情、基金净值、持仓、评级、排名等 10 个工具）；
-- **披露公告 PDF** —— 巨潮资讯（cninfo）；
-- **市场新闻 & 舆情** —— 东方财富、财联社快讯、雪球热度榜、百度财经早晚报；
-- **量化情感** —— A 股 SnowNLP + 金融词典；美股 **VADER + 金融词表**（确定性，不走 LLM 打分）；
-- **私有 PDF 知识库** —— FAISS（向量）+ BM25（关键词）+ bge-reranker（cross-encoder 重排），Corrective-RAG 闭环。
+业务侧已接真实数据与产品面：
+
+**中国金融市场**
+- **行情/基本面** —— `data_expert` ← akshare（东财/雪球/新浪等；含市场状态、指数/板块、分时、龙虎榜、两融、股东、资金流、港股通等）
+- **公募基金** —— `fund_expert` ← 天天基金/东财（ETF/LOF/开放式/QDII、净值、持仓、评级、经理）
+- **国内期货/期权** —— `derivatives_expert` ← 新浪期货/期权（akshare）
+- **披露 PDF** —— `report_expert` ← 巨潮资讯（cninfo）
+- **新闻** —— `news_expert` ← 东财 / 财联社 / 雪球 / 百度财经
+- **量化舆情** —— `sentiment_expert` ← SnowNLP + 中文金融词典（确定性打分）
+
+**美国金融市场**
+- **行情（股/指/ETF/共同基金/期货/期权）** —— `us_data_expert` ← Yahoo Chart → 东财美股 → yfinance
+- **披露** —— `us_filing_expert` ← SEC EDGAR（10-K/10-Q/8-K 等；ETF 另含 NPORT 等）
+- **新闻** —— `us_news_expert` ← Yahoo（+ 可选 Finnhub）
+- **量化舆情** —— `us_sentiment_expert` ← VADER + 金融词表（确定性，不走 LLM 打分）
+
+**共享**
+- **计算** —— `coder_expert` ← 沙箱 Python（MCP）
+- **私有知识库** —— `knowledge_expert` ← FAISS + BM25 + bge-reranker，Corrective-RAG（进程内）
+
+**交互面**：首页中/美看板 + **我的自选**（按用户持久化，研究 preamble 注入）+ SSE 流式研究 / 可选 HITL 审批。
 
 ---
 
 ## 二、架构
 
 ```
-                                   ┌─────────────────────────────────────────┐
-                                   │            FastAPI + SSE                │
-                                   │  /api/supervisor/research        (sync) │
-                                   │  /api/supervisor/research/stream (SSE)  │
-                                   │  /api/knowledge/*  /api/memory/*  ...   │
-                                   └────────────────────┬────────────────────┘
+                                   ┌──────────────────────────────────────────────────────────┐
+                                   │            FastAPI + SSE                                 │
+                                   │  /api/supervisor/research        (sync)                  │
+                                   │  /api/supervisor/research/stream (SSE)                   │
+                                   │  /api/knowledge/*  /api/memory/*  /api/watchlist/* ...   │
+                                   └────────────────────┬─────────────────────────────────────┘
                                                         │ messages: list[BaseMessage]
                                                         ▼
                                    ┌──────────────────────────────────────────────────┐
@@ -100,7 +116,7 @@
 | Web | `fastapi` + `uvicorn` + `sse-starlette`，Pydantic v2 严格校验 |
 | 数据源 | `akshare`（A 股行情/基本面/分时/龙虎榜/融资融券/概念板块/行业板块/资金流/港股通 + 基金净值/ETF/LOF/持仓/评级/排名）+ `httpx` + `pypdf`（cninfo PDF 解析）+ `snownlp`（中文情感） |
 | 可观测 | `loguru` 结构化日志 + `langsmith` tracing |
-| 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（281 tests） |
+| 工程化 | `uv` 包管理 + `ruff`（lint）+ `mypy --strict` + `pytest`（707+ tests，CI 跳过 network/slow/eval） |
 | 安全 | Prompt 注入检测（`security/prompt_guard.py`）+ 代码沙箱 subprocess 隔离 |
 | 协议 | MCP（Agent→Tool，已有）+ A2A（Agent→Agent，`/.well-known/agent.json`） |
 
@@ -148,8 +164,8 @@ FINNHUB_API_KEY=
 ### 4.2 测试
 
 ```bash
-.venv/Scripts/python.exe -m pytest -m "not network and not slow" -q
-# 期望：281 passed, 14 deselected（不带 network/slow）
+.venv/Scripts/python.exe -m pytest -m "not network and not slow and not eval" -q
+# 期望：约 707 passed（与 CI 一致；不带 network/slow/eval）
 ```
 
 `network` 标记下的测试会真打 akshare/cninfo 等外网，`slow` 标记下的测试会下载 bge embedder 权重（~100MB）。这两组在 CI 里默认跳过。
@@ -206,7 +222,7 @@ docker compose logs -f app
 
 | 指标 | 实测 |
 |---|---|
-| 单元测试 | **281 passed, 14 deselected**（`-m "not network and not slow"`），耗时 ~26 s |
+| 单元测试 | **约 707 passed**（`-m "not network and not slow and not eval"`），含覆盖率门禁 ≥50% |
 | 启动到 ready | ~13 s（首次拉 MCP-stdio + 编译 supervisor，含 4 个子进程冷启） |
 | `/health` | 单机无 PG / 无 Redis：`status=degraded`，自动落到 `AsyncSqliteSaver` + `InMemoryStore`，**功能完整** |
 | Specialist 在线数 | **7 / 7**（fin_data:18 / fund:10 / pdf_report:4 / code:1 / knowledge:4 / news:5 / sentiment:2 = **44 个工具**） |
@@ -258,18 +274,30 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 | POST | `/api/knowledge/search` | 在指定 collection 做 Hybrid + Rerank 检索 |
 | GET | `/api/knowledge/collections` | 列出已建索引 |
 | DELETE | `/api/knowledge/collections/{name}` | 删除指定 collection |
-| GET | `/api/memory/context` | 取该 user 的长期偏好 + 最近研究摘要（拼到 supervisor preamble） |
+| GET | `/api/memory/context` | 取该 user 的长期偏好 + 最近研究摘要 + **自选摘要**（拼到 supervisor preamble） |
 | GET | `/api/memory/history` | 该 user 的历次研究记录（thread_id + 查询 + 简介） |
 | POST | `/api/memory/preferences` | 写入用户偏好（KV，namespace 按 user_id 隔离） |
 | DELETE | `/api/memory/preferences/{key}` | 删除指定偏好 |
 | POST | `/api/sentiment/analyze` | 对一段或一批中文文本做 SnowNLP + 金融词典量化情感 |
 | GET | `/api/sentiment/report/{symbol}` | 综合舆情报告（拉取相关新闻 + 量化打分） |
 
-请求/响应 Pydantic schema 在 `src/research_agent/api/schemas.py`。HTTP 响应头一律带 `X-Request-ID`，可与 loguru 日志和 LangSmith trace 一一对应。
+### 5.3.1 看板自选（Watchlist）
+
+按 `user_id` + `market`（`CN_A` / `US`）持久化到 SQLite（`./data/watchlist.db`），每市场最多 40 只；加减仓后同步到长期记忆，研究流 preamble 会注入自选上下文。
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/watchlist?user_id=&market=` | 列出该用户该市场自选 |
+| POST | `/api/watchlist/search` | 宽松搜码（代码/名称；CN 含场外基金名；US 过滤外汇 `=X`） |
+| POST | `/api/watchlist` | 加入自选（body：`user_id` / `market` / `symbol` / …） |
+| DELETE | `/api/watchlist?user_id=&market=&symbol=` | 删除自选（query 参数，避免 body DELETE 兼容问题） |
+| POST | `/api/watchlist/quotes` | 批量行情（CN：新浪/净值；US：与 `us_data_server._quote_from_ticker` 同源） |
+
+请求/响应 Pydantic schema 在 `src/research_agent/api/schemas.py`（自选路由内另有局部 Body 模型）。HTTP 响应头一律带 `X-Request-ID`，可与 loguru 日志和 LangSmith trace 一一对应。
 
 ### 5.4 前端 Chat UI
 
-`src/research_agent/static/index.html` 自带一个零依赖的单文件 Chat UI（HTML + 原生 JS + Fetch+SSE），访问 `http://localhost:8080/` 。侧栏会从 `app.state.available_specialists` 实时显示 specialist 在线状态；触发 HITL 时弹审核面板，Approve / Revise 调用对应 REST 路由。支持多会话并行管理、一键停止正在进行的查询、数据来源可点击跳转至具体页面。
+`src/research_agent/static/index.html` 自带一个零依赖的单文件 Chat UI（HTML + 原生 JS + Fetch+SSE），访问 `http://localhost:8080/` 。浏览器标签名为 **AI金融研究助手**。侧栏会从 `app.state.available_specialists` 实时显示 specialist 在线状态（调度中脉动）；触发 HITL 时弹审核面板。首页看板含 中/美面板、**我的自选**、涨跌分布说明换行等；支持多会话并行、一键停止、数据来源可点击跳转。
 
 ### 5.5 MCP 工具清单
 
@@ -306,7 +334,7 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 国内期货搜码/主力/现货/日线；50ETF 等期权列表与现货；沪深300/上证50/中证1000 股指期权。
 
-首页看板同步展示：A 股区 **ETF 涨幅 / 国内期货 / QDII**；美股区 **商品·股指期货 / 共同基金**；期权以快捷提问进入研究流。
+首页看板同步展示：中区 **ETF 双榜 / 国内期货 / QDII 日涨幅榜（场外开放式，按日增长率）/ 我的自选**；美区 **商品·股指期货 / 共同基金 / 我的自选**；期权以快捷提问进入研究流。
 
 | 工具 | 功能 |
 |---|---|
@@ -433,20 +461,20 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
 
 载入项目的非显然决策都写成了 ADR，存放于 [`docs/adr/`](docs/adr/)。完整索引见 [`docs/adr/README.md`](docs/adr/README.md)。
 
-| # | 决定 | 何时该读 |
-|---|---|---|
-| [0001](docs/adr/0001-faiss-over-chroma.md) | 向量库从 ChromaDB 迁到 FAISS | "为什么不用 Chroma" |
+| # | 决定                                         | 何时该读 |
+|---|--------------------------------------------|---|
+| [0001](docs/adr/0001-faiss-over-chroma.md) | 向量库从 ChromaDB 迁到 FAISS                     | "为什么不用 Chroma" |
 | [0002](docs/adr/0002-knowledge-server-inprocess.md) | knowledge_expert 走 in-process 不走 MCP-stdio | "为什么 6 个 server 里偏偏这一个不走子进程" |
-| [0003](docs/adr/0003-reflection-loop.md) | Reflection 作为子图挂 supervisor 后面 | "为什么不把反思放 supervisor prompt 里" |
-| [0004](docs/adr/0004-guardrails-security-layers.md) | 多层 Guardrails | "输入/输出怎么防注入与泄密" |
-| [0005](docs/adr/0005-pgvector-migration-path.md) | pgvector 迁移路径 | "何时从 FAISS 迁到 Postgres ANN" |
-| [0006](docs/adr/0006-us-market-parallel-isolation.md) | A 股 / 美股平行隔离 | "为什么不在 fin_* 上加 market=US" |
+| [0003](docs/adr/0003-reflection-loop.md) | Reflection 作为子图挂 supervisor 后面             | "为什么不把反思放 supervisor prompt 里" |
+| [0004](docs/adr/0004-guardrails-security-layers.md) | 多层 Guardrails                              | "输入/输出怎么防注入与泄密" |
+| [0005](docs/adr/0005-pgvector-migration-path.md) | pgvector 迁移路径                              | "何时从 FAISS 迁到 Postgres ANN" |
+| [0006](docs/adr/0006-us-market-parallel-isolation.md) | 中 / 美平行隔离                                  | "为什么不在 fin_* 上加 market=US" |
 
 ---
 
 ## 八、评估体系
 
-本项目具备完整的量化评估流水线，覆盖路由准确率、回复质量、关键词命中、记忆持久化、工具选择精确度，以及美股市场判定 / 跨市场隔离。
+本项目具备完整的量化评估流水线，覆盖路由准确率、回复质量、关键词命中、记忆持久化、工具选择精确度，以及国市场判定 / 跨市场隔离。
 
 ### 评估指标
 
@@ -527,7 +555,7 @@ Metric                       Mean      Min      Max      Std     N
 
 | 流水线 | 触发条件 | 内容 |
 |---|---|---|
-| **CI** (`.github/workflows/ci.yml`) | 每次 PR / push main | ruff lint + format check → pytest 单元测试 → 覆盖率 ≥60% |
+| **CI** (`.github/workflows/ci.yml`) | 每次 PR / push main | ruff lint + format check → pytest 单元测试 → 覆盖率 ≥50%（`--cov-fail-under=50`） |
 | **Eval & Network** (`.github/workflows/nightly.yml`) | 手动触发（workflow_dispatch） | `pytest -m network` MCP 烟测；勾选 `run_eval=true` 时额外跑 LangSmith 路由评估 |
 | **Docker** (`.github/workflows/docker.yml`) | tag push (`v*`) | Docker 构建 + 缓存（GHCR push 已预留配置） |
 
@@ -601,6 +629,7 @@ src/research_agent/
 │   │   ├── health.py    # /health
 │   │   ├── knowledge.py # /api/knowledge/{ingest,search,collections}
 │   │   ├── memory.py    # /api/memory/{context,history,preferences}
+│   │   ├── watchlist.py # /api/watchlist（列表/搜索/加减/行情）
 │   │   ├── sentiment.py # /api/sentiment/{analyze, report/{symbol}}
 │   │   ├── supervisor.py# /api/supervisor/{chat,research,research/stream,research/{tid}/approve,…}
 │   │   └── usage.py     # /api/usage + /metrics
@@ -620,11 +649,17 @@ src/research_agent/
 │   ├── checkpointer.py  # PG → SQLite → Memory 三级 fallback
 │   ├── _pg_reachability.py  # TCP 探测预检
 │   ├── store.py         # 长期 InMemoryStore / SqliteStore / PostgresStore
-│   └── manager.py
+│   ├── manager.py
+│   ├── conversation_store.py  # 会话列表 SQLite
+│   └── watchlist_store.py     # 看板自选 SQLite（按 user_id+market）
+├── market/
+│   ├── detect.py / orchestrate.py / theme_panels.py / us_theme_panels.py
+│   ├── dashboard_extras.py    # 期货/ETF/QDII/美股共同基金等看板扩展
+│   └── watchlist_resolve.py   # 自选搜码与批量行情
 ├── mcp_servers/         # 6 个走 stdio + 1 个 in-process（详见 ADR-0002）
 │   ├── code_server.py             # Python 沙箱执行
 │   ├── echo_server.py             # 调试用
-│   ├── fin_data_server.py         # akshare A 股行情/基本面（18 工具：K 线、分时、龙虎榜、融资融券、股东、ETF、宏观、概念/行业板块、资金流、港股通等）
+│   ├── fin_data_server.py         # akshare A 股行情/基本面（市场状态：未开盘/开盘集合竞价·盘前/静默/盘中/午休/收盘竞价/已收盘…）
 │   ├── fund_server.py             # akshare 基金（含 QDII 排行、基金经理）
 │   ├── derivatives_server.py      # 国内期货 + ETF/股指期权
 │   ├── us_data_server.py          # 美股股票/指数/ETF/共同基金/期货/期权
@@ -645,12 +680,12 @@ src/research_agent/
 │   ├── embedder.py / chunker.py / loader.py
 │   └── __init__.py      # 全公开 API re-export
 ├── static/
-│   └── index.html       # 零依赖单文件 Chat UI（HTML + 原生 JS + SSE + HITL 审核面板）
+│   └── index.html       # 零依赖单文件 Chat UI + 中/美看板 + 自选（HTML + 原生 JS + SSE + HITL）
 ├── tools/
 │   ├── native.py        # toy @tool（calculate / time / word_count）
 │   └── knowledge_tools.py  # in-process 暴露 knowledge_server 同名 4 工具
 ├── config.py            # pydantic-settings（LLM/Database/Observability 三层子配置）
-└── main.py              # FastAPI app factory + lifespan + CLI 入口
+└── main.py              # FastAPI app factory + lifespan + CLI 入口 + 看板聚合
 
 evals/                    # 量化评估套件
 ├── datasets/
@@ -677,7 +712,7 @@ benchmark_results/        # 性能基准测试报告输出目录
 docs/
 ├── architecture.md       # 系统架构设计文档
 ├── failure-modes.md      # 故障模式分析
-├── data-sources.md       # A/美股数据源与主备（Yahoo / 东财 / EDGAR）
+├── data-sources.md       # 中/美数据源与主备（Yahoo / 东财 / EDGAR）
 └── adr/                  # 架构决策记录（0001～0006）
 tests/                    # unit + integration
 ```
@@ -713,17 +748,17 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 
 ## 十三、架构文档
 
-| 文档 | 内容 |
-|---|---|
-| [系统架构设计](docs/architecture.md) | 全景图、核心设计决策矩阵、数据流详解、可靠性设计、安全层、可扩展性 |
-| [故障模式分析](docs/failure-modes.md) | 12+ 种故障模式矩阵、三级降级策略、可观测性信号、灾难恢复 |
-| [数据来源说明](docs/data-sources.md) | A/美股数据源、Yahoo→东财→yfinance 主备、与 Finnhub 等多源及通用搜索的区别 |
-| [ADR-0001: FAISS > Chroma](docs/adr/0001-faiss-over-chroma.md) | 向量存储选型 |
-| [ADR-0002: Knowledge in-process](docs/adr/0002-knowledge-server-inprocess.md) | MCP stdio 死锁规避 |
-| [ADR-0003: Reflection Loop](docs/adr/0003-reflection-loop.md) | 反思循环设计 |
-| [ADR-0004: Guardrails](docs/adr/0004-guardrails-security-layers.md) | 多层安全防御体系 |
-| [ADR-0005: pgvector](docs/adr/0005-pgvector-migration-path.md) | Postgres ANN 迁移路径 |
-| [ADR-0006: 美股隔离](docs/adr/0006-us-market-parallel-isolation.md) | A/美股平行专家与市场判定 |
+| 文档 | 内容                                                |
+|---|---------------------------------------------------|
+| [系统架构设计](docs/architecture.md) | 全景图、核心设计决策矩阵、数据流详解、可靠性设计、安全层、可扩展性                 |
+| [故障模式分析](docs/failure-modes.md) | 12+ 种故障模式矩阵、三级降级策略、可观测性信号、灾难恢复                    |
+| [数据来源说明](docs/data-sources.md) | 中/美数据源、Yahoo→东财→yfinance 主备、与 Finnhub 等多源及通用搜索的区别 |
+| [ADR-0001: FAISS > Chroma](docs/adr/0001-faiss-over-chroma.md) | 向量存储选型                                            |
+| [ADR-0002: Knowledge in-process](docs/adr/0002-knowledge-server-inprocess.md) | MCP stdio 死锁规避                                    |
+| [ADR-0003: Reflection Loop](docs/adr/0003-reflection-loop.md) | 反思循环设计                                            |
+| [ADR-0004: Guardrails](docs/adr/0004-guardrails-security-layers.md) | 多层安全防御体系                                          |
+| [ADR-0005: pgvector](docs/adr/0005-pgvector-migration-path.md) | Postgres ANN 迁移路径                                 |
+| [ADR-0006: 美股隔离](docs/adr/0006-us-market-parallel-isolation.md) | 中/美平行专家与市场判定                                      |
 
 ## 十四、Roadmap
 
@@ -739,7 +774,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 
 ### 待做 / 可选
 
-- 增加更多业务 specialist（如 `bond_expert` 债券）；美股期权/期货与国内衍生品已接入 `us_data` / `derivatives_expert`
+- 增加更多业务 specialist（如 `bond_expert` 债券）；美国期权/期货与国内衍生品已接入 `us_data` / `derivatives_expert`
 - Finnhub / Polygon 等真·多源行情（可选；见 data-sources §5/§8）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）
