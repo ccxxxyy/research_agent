@@ -1616,8 +1616,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
             "today": today_str,
             "last_trading_day": last_td,
             "message": (
-                f"开盘前静默空档（{now.strftime('%H:%M')}，"
-                f"09:25–09:30 不可申报，09:30 开盘）。"
+                f"开盘前静默空档（{now.strftime('%H:%M')}，09:25–09:30 不可申报，09:30 开盘）。"
             ),
             "hint": (
                 f"静默阶段无连续竞价；可用上一交易日（{last_td}）收盘或集合竞价参考价，"
@@ -1659,9 +1658,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
             "is_trading_day": True,
             "current_time": current_time,
             "today": today_str,
-            "message": (
-                f"收盘集合竞价（{now.strftime('%H:%M')}，14:57–15:00）。"
-            ),
+            "message": (f"收盘集合竞价（{now.strftime('%H:%M')}，14:57–15:00）。"),
             "hint": "收盘集合竞价阶段；正式收盘价以 15:00 撮合结果为准。",
         }
     return {
