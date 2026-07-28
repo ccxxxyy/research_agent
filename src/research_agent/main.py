@@ -1769,7 +1769,6 @@ def create_app() -> FastAPI:
         out: dict = {"industry": [], "concept": []}
         # f104/f105 = 上涨/下跌家数，供主线题材辅助展示
         fields = "f2,f3,f4,f12,f14,f104,f105"
-        board_fs = [("industry", "m:90+t:2", 10), ("concept", "m:90+t:3", 30)]
         hosts = (
             "https://push2delay.eastmoney.com/api/qt/clist/get",
             "https://88.push2.eastmoney.com/api/qt/clist/get",
@@ -1790,11 +1789,11 @@ def create_app() -> FastAPI:
                 if it.get("f14")
             ]
 
-        def _query_params(fs_code: str, pz: int = 10) -> dict:
+        def _query_params(fs_code: str, pz: int = 10, *, pn: int = 1, po: int = 1) -> dict:
             return {
-                "pn": "1",
+                "pn": str(pn),
                 "pz": str(pz),
-                "po": "1",
+                "po": str(po),
                 "np": "1",
                 "fltt": "2",
                 "invt": "2",
@@ -1804,12 +1803,12 @@ def create_app() -> FastAPI:
                 "ut": "7eea3edcaed734bea9cbfc24409ed989",
             }
 
-        def _via_curl(fs_code: str, pz: int = 10) -> list[dict]:
+        def _via_curl(fs_code: str, pz: int = 10, *, po: int = 1) -> list[dict]:
             try:
                 from curl_cffi import requests as curl_requests
             except ImportError:
                 return []
-            qs = urlencode(_query_params(fs_code, pz=pz))
+            qs = urlencode(_query_params(fs_code, pz=pz, pn=1, po=po))
             for base in hosts:
                 try:
                     resp = curl_requests.get(f"{base}?{qs}", impersonate="chrome", timeout=10)
@@ -1823,12 +1822,11 @@ def create_app() -> FastAPI:
                     continue
             return []
 
-        def _via_requests(fs_code: str, pz: int = 10) -> list[dict]:
-            # Windows 会从注册表读系统代理；push2 走代理常被断开
+        def _via_requests(fs_code: str, pz: int = 10, *, po: int = 1) -> list[dict]:
             sess = requests.Session()
             sess.trust_env = False
             try:
-                params = _query_params(fs_code, pz=pz)
+                params = _query_params(fs_code, pz=pz, pn=1, po=po)
                 headers = {
                     "User-Agent": "Mozilla/5.0",
                     "Referer": "https://quote.eastmoney.com/",
@@ -1882,9 +1880,13 @@ def create_app() -> FastAPI:
                 pass
             return result
 
-        for key, fs_code, pz in board_fs:
-            items = _via_curl(fs_code, pz=pz) or _via_requests(fs_code, pz=pz)
-            out[key] = items
+        # 与东财「行业板块」列表页一致：全量按涨跌幅截 Top（含细分行业）
+        out["industry"] = _via_curl("m:90+t:2", pz=10, po=1) or _via_requests(
+            "m:90+t:2", pz=10, po=1
+        )
+        out["concept"] = _via_curl("m:90+t:3", pz=30, po=1) or _via_requests(
+            "m:90+t:3", pz=30, po=1
+        )
 
         if not out["industry"] and not out["concept"]:
             out = _via_akshare()
@@ -1894,7 +1896,6 @@ def create_app() -> FastAPI:
                 out["industry"] = fb["industry"]
             if not out["concept"]:
                 out["concept"] = fb["concept"]
-        # 概念多拉用于主线题材；面板仍只展示 TOP10
         out["concept_all"] = list(out.get("concept") or [])
         out["concept"] = (out.get("concept") or [])[:10]
         out["industry"] = (out.get("industry") or [])[:10]
@@ -2252,6 +2253,8 @@ def cli() -> None:
         host=settings.app_host,
         port=settings.app_port,
         reload=settings.is_dev,
+        access_log=True,
+        log_level=str(settings.observability.log_level or "info").lower(),
     )
 
 

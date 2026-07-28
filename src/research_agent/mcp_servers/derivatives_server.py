@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from typing import Any
 
@@ -36,6 +37,20 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 mcp = FastMCP("CnDerivatives")
+
+_AK_CALL_TIMEOUT_SECONDS = float(os.environ.get("DERIVATIVES_AK_TIMEOUT_SECONDS", "30"))
+
+
+async def _to_thread_timeout(fn, *, context: str, timeout: float | None = None) -> dict[str, Any]:
+    limit = float(_AK_CALL_TIMEOUT_SECONDS if timeout is None else timeout)
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn), timeout=limit)
+    except TimeoutError:
+        return _fmt_error(
+            TimeoutError(f"derivatives call exceeded {limit:.0f}s"),
+            context=context,
+        )
+
 
 # 品种代码 → 显示名（搜码与主力列表）
 _FUTURES_CATALOG: tuple[tuple[str, str, str], ...] = (
@@ -262,7 +277,7 @@ async def get_etf_option_list(underlying: str = "50ETF") -> dict:
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        return await _to_thread_timeout(_call, context=f"get_etf_option_list({underlying!r})")
     except Exception as e:
         return _fmt_error(e, context=f"get_etf_option_list({underlying!r})")
 
@@ -293,7 +308,7 @@ async def get_etf_option_spot(contract: str) -> dict:
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        return await _to_thread_timeout(_call, context=f"get_etf_option_spot({code!r})")
     except Exception as e:
         return _fmt_error(e, context=f"get_etf_option_spot({code!r})")
 
@@ -363,7 +378,9 @@ async def get_index_option_spot(symbol: str = "沪深300", contract: str = "") -
         return out
 
     try:
-        return await asyncio.to_thread(_call)
+        return await _to_thread_timeout(
+            _call, context=f"get_index_option_spot({symbol!r},{contract!r})"
+        )
     except Exception as e:
         return _fmt_error(e, context=f"get_index_option_spot({symbol!r},{contract!r})")
 

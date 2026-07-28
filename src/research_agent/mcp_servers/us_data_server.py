@@ -1058,7 +1058,7 @@ async def get_price_history(symbol: str, period: str = "1mo", interval: str = "1
     """获取美股日线（或指定周期）OHLCV 历史。
 
     Args:
-        symbol: ticker，如 ``TSLA``、``QQQ``。
+        symbol: ticker，如 ``TSLA``、``QQQ``、``^IXIC``。
         period: yfinance period，如 ``5d`` / ``1mo`` / ``3mo`` / ``1y`` / ``5y``。
         interval: ``1d`` / ``1wk`` / ``1mo``（盘中分时可用 ``1h`` / ``5m``，注意延迟）。
     """
@@ -1068,6 +1068,28 @@ async def get_price_history(symbol: str, period: str = "1mo", interval: str = "1
             "error": f"period 必须是 {sorted(allowed_periods)} 之一",
             "context": "get_price_history()",
         }
+
+    # 快路径优先：Yahoo Chart / 东财（秒级、有 HTTP timeout）。
+    # yfinance 放最后：国内常挂起，即使有 wait_for 也会占满线程池。
+    try:
+        chart = await asyncio.wait_for(
+            asyncio.to_thread(_history_via_yahoo_chart, symbol, period=period, interval=interval),
+            timeout=15.0,
+        )
+        if chart and (chart.get("bars") or []):
+            return chart
+    except TimeoutError:
+        logger.warning("get_price_history yahoo_chart timed out (%s)", symbol)
+
+    try:
+        em = await asyncio.wait_for(
+            asyncio.to_thread(_history_via_eastmoney, symbol, period=period, interval=interval),
+            timeout=15.0,
+        )
+        if em and (em.get("bars") or []):
+            return em
+    except TimeoutError:
+        logger.warning("get_price_history eastmoney timed out (%s)", symbol)
 
     def _call() -> dict[str, Any]:
         import yfinance as yf
@@ -1091,18 +1113,9 @@ async def get_price_history(symbol: str, period: str = "1mo", interval: str = "1
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/history",
         }
 
-    # 提问触发（非看板）：yfinance → Yahoo Chart HTTP → 东财美股 K 线
-    primary = await _yf_call(_call, context=f"get_price_history({symbol!r})")
+    primary = await _yf_call(_call, context=f"get_price_history({symbol!r})", timeout=30.0)
     if "error" not in primary and (primary.get("bars") or []):
         return primary
-    chart = await asyncio.to_thread(
-        _history_via_yahoo_chart, symbol, period=period, interval=interval
-    )
-    if chart and (chart.get("bars") or []):
-        return chart
-    em = await asyncio.to_thread(_history_via_eastmoney, symbol, period=period, interval=interval)
-    if em and (em.get("bars") or []):
-        return em
     return (
         primary
         if isinstance(primary, dict)

@@ -702,6 +702,7 @@ async def _research_event_stream(
     available_specialists: list[str] | None = None,
     conversation_store: Any | None = None,
     market_resolution: MarketResolution | None = None,
+    http_request: FastAPIRequest | None = None,
 ) -> AsyncIterator[str]:
     """为单次研究调用生成 SSE 帧的异步生成器。
 
@@ -1093,13 +1094,25 @@ async def _research_event_stream(
     runner = asyncio.create_task(pump())
     try:
         while True:
+            if http_request is not None:
+                try:
+                    if await http_request.is_disconnected():
+                        logger.info(
+                            "Research stream client disconnected: thread={} — cancelling graph",
+                            thread_id,
+                        )
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
             if heartbeat_interval > 0:
                 try:
                     item = await asyncio.wait_for(frames.get(), timeout=heartbeat_interval)
                 except TimeoutError:
                     logger.info(
-                        "Research stream idle heartbeat: thread={} (waiting for LLM/tools)",
+                        "Research stream idle heartbeat: thread={} (no SSE for {:.0f}s; "
+                        "usually waiting on LLM round or MCP tool — check UI tool bubbles)",
                         thread_id,
+                        heartbeat_interval,
                     )
                     yield _format_sse(
                         ResearchSupervisorSSEEvent(
@@ -1281,6 +1294,7 @@ async def supervisor_research_stream(
             available_specialists=specialists,
             conversation_store=conv_store,
             market_resolution=market_resolution,
+            http_request=raw_request,
         ),
         media_type="text/event-stream",
         headers={

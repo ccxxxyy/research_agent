@@ -13,9 +13,11 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_push2_cache():
-    """每个测试前重置 push2 探测缓存。"""
+    """每个测试前重置 push2 探测缓存与工具结果缓存。"""
     import research_agent.mcp_servers.fund_server as mod
+    from research_agent.cache.tool_cache import reset_tool_cache_for_tests
 
+    reset_tool_cache_for_tests()
     orig_push2 = mod._PUSH2_AVAILABLE
     orig_push2his = mod._PUSH2HIS_AVAILABLE
     mod._PUSH2_AVAILABLE = None
@@ -23,6 +25,7 @@ def _reset_push2_cache():
     yield
     mod._PUSH2_AVAILABLE = orig_push2
     mod._PUSH2HIS_AVAILABLE = orig_push2his
+    reset_tool_cache_for_tests()
 
 
 def test_df_to_records_basic():
@@ -335,53 +338,100 @@ async def test_get_fund_manager_invalid_code():
 
 
 @pytest.mark.asyncio
-async def test_search_private_fund_filters():
+async def test_search_private_manager_keyword_api():
     import research_agent.mcp_servers.fund_server as mod
 
-    mock_df = pd.DataFrame(
-        {
-            "基金名称": ["高毅晓峰2号", "景林稳健", "其他产品"],
-            "私募基金管理人名称": ["上海高毅", "景林资产", "某某资本"],
-            "运行状态": ["正在运作", "正在运作", "正在运作"],
-            "备案时间": ["2020-01-01", "2019-06-01", "2021-01-01"],
-        }
-    )
-    with patch.object(mod, "_load_amac_fund_df", return_value=mock_df):
+    payload = {
+        "totalElements": 2,
+        "content": [
+            {
+                "managerName": "红杉资本股权投资管理(天津）有限公司",
+                "artificialPersonName": "张三",
+                "primaryInvestType": "私募股权、创业投资基金管理人",
+                "registerProvince": "天津市",
+                "registerNo": "P1000265",
+                "establishDate": 1262304000000,
+                "registerDate": 1293840000000,
+            },
+            {
+                "managerName": "北京红杉坤德投资管理中心（有限合伙）",
+                "registerNo": "P1000999",
+            },
+        ],
+    }
+    with patch.object(mod, "_amac_post_keyword", return_value=payload) as post:
+        result = await mod.search_private_manager("红杉", limit=5)
+    assert result["source"] == "amac"
+    assert result["query_mode"] == "server_keyword"
+    assert result["count"] == 2
+    assert "红杉" in result["matches"][0]["私募基金管理人名称"]
+    assert "无实时净值" in result["note"]
+    post.assert_called()
+    assert post.call_args.args[0] == mod._AMAC_MANAGER_API
+    assert post.call_args.args[1] == "红杉"
+
+
+@pytest.mark.asyncio
+async def test_search_private_fund_keyword_api():
+    import research_agent.mcp_servers.fund_server as mod
+
+    payload = {
+        "totalElements": 1,
+        "content": [
+            {
+                "fundName": "高毅晓峰2号",
+                "managerName": "上海高毅",
+                "managerType": "私募证券投资基金管理人",
+                "workingState": "正在运作",
+                "putOnRecordDate": 1577836800000,
+                "establishDate": 1575158400000,
+                "mandatorName": "某某银行",
+            }
+        ],
+    }
+    with patch.object(mod, "_amac_post_keyword", return_value=payload):
         result = await mod.search_private_fund("高毅", limit=5)
     assert result["source"] == "amac"
     assert result["count"] == 1
-    assert "高毅" in result["matches"][0]["基金名称"]
+    assert result["matches"][0]["基金名称"] == "高毅晓峰2号"
     assert "无实时净值" in result["note"]
 
 
 @pytest.mark.asyncio
-async def test_search_private_manager_filters():
+async def test_search_private_fund_api_5xx_returns_error_note():
     import research_agent.mcp_servers.fund_server as mod
 
-    mock_df = pd.DataFrame(
-        {
-            "基金管理人名称": ["上海高毅资产管理合伙企业", "景林资产管理"],
-            "登记编号": ["P1000265", "P1000123"],
-        }
-    )
-    with patch.object(mod, "_load_amac_manager_df", return_value=mock_df):
-        result = await mod.search_private_manager("高毅", limit=5)
+    with patch.object(
+        mod,
+        "_amac_post_keyword",
+        side_effect=RuntimeError("AMAC API HTTP 500（协会接口不可用或间歇故障）"),
+    ):
+        result = await mod.search_private_fund("高毅", limit=5)
+    assert "error" in result
     assert result["source"] == "amac"
-    assert result["count"] == 1
+    assert "search_private_manager" in result["note"]
 
 
 @pytest.mark.asyncio
 async def test_get_private_fund_info_exact():
     import research_agent.mcp_servers.fund_server as mod
 
-    mock_df = pd.DataFrame(
-        {
-            "基金名称": ["高毅晓峰2号", "景林稳健"],
-            "私募基金管理人名称": ["上海高毅", "景林资产"],
-            "运行状态": ["正在运作", "正在运作"],
-        }
-    )
-    with patch.object(mod, "_load_amac_fund_df", return_value=mock_df):
+    payload = {
+        "totalElements": 2,
+        "content": [
+            {
+                "fundName": "景林稳健",
+                "managerName": "景林资产",
+                "workingState": "正在运作",
+            },
+            {
+                "fundName": "高毅晓峰2号",
+                "managerName": "上海高毅",
+                "workingState": "正在运作",
+            },
+        ],
+    }
+    with patch.object(mod, "_amac_post_keyword", return_value=payload):
         result = await mod.get_private_fund_info("高毅晓峰2号")
     assert result["found"] is True
     assert result["source"] == "amac"

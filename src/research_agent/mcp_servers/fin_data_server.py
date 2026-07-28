@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -98,6 +99,21 @@ _requests.Session.__init__ = _patched_session_init  # type: ignore[method-assign
 
 mcp = FastMCP("FinDataAShare")
 
+# akshare / 东财在 SSL 重试时可能卡住数十秒；给 to_thread 统一上限，避免研究流空转数分钟。
+_AK_CALL_TIMEOUT_SECONDS = float(os.environ.get("FIN_AK_TIMEOUT_SECONDS", "30"))
+
+
+async def _to_thread_timeout(fn, *, context: str, timeout: float | None = None) -> dict[str, Any]:
+    limit = float(_AK_CALL_TIMEOUT_SECONDS if timeout is None else timeout)
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn), timeout=limit)
+    except TimeoutError:
+        return _fmt_error(
+            TimeoutError(f"data call exceeded {limit:.0f}s"),
+            context=context,
+        )
+
+
 # ---------------------------------------------------------------------------
 # push2 连通性检测 + curl_cffi 直连助手
 # ---------------------------------------------------------------------------
@@ -124,20 +140,43 @@ def _curl_get_json(url: str, *, timeout: int = 10) -> dict | None:
     return None
 
 
+# 部分时段 ``N.push2.eastmoney.com`` TLS 全挂，``push2delay`` 仍可用（行情略延迟，涨跌幅仍正确）。优先 delay。
+_PUSH2_HOSTS: tuple[str, ...] = (
+    "push2delay.eastmoney.com",
+    "push2.eastmoney.com",
+    "88.push2.eastmoney.com",
+    "79.push2.eastmoney.com",
+    "17.push2.eastmoney.com",
+)
+
+
+def _curl_get_json_push2(path_qs: str, *, timeout: int = 8) -> dict | None:
+    """对多个东财 push2 主机轮询；``path_qs`` 形如 ``/api/qt/clist/get?...``。"""
+    if not path_qs.startswith("/"):
+        path_qs = "/" + path_qs
+    for host in _PUSH2_HOSTS:
+        data = _curl_get_json(f"https://{host}{path_qs}", timeout=timeout)
+        if isinstance(data, dict) and data.get("data") is not None:
+            return data
+    return None
+
+
 def _probe_push2_connectivity() -> bool:
-    """探测 push2 实时端点是否可达（先 curl_cffi 再 requests）。"""
-    url = "https://88.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=1&fs=b:MK0021&fields=f12"
-    data = _curl_get_json(url, timeout=8)
+    """探测 push2 实时端点是否可达（先 curl_cffi 多主机，再 requests）。"""
+    path = "/api/qt/clist/get?pn=1&pz=1&fs=b:MK0021&fields=f12"
+    data = _curl_get_json_push2(path, timeout=6)
     if data and data.get("data"):
-        logger.info("push2 实时端点探测成功 (curl_cffi)")
+        logger.info("push2 实时端点探测成功 (curl_cffi multi-host)")
         return True
-    try:
-        resp = _requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        if resp.status_code == 200 and resp.text:
-            logger.info("push2 实时端点探测成功 (requests)")
-            return True
-    except Exception:
-        pass
+    for host in _PUSH2_HOSTS[:3]:
+        url = f"https://{host}{path}"
+        try:
+            resp = _requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code == 200 and resp.text:
+                logger.info("push2 实时端点探测成功 (requests %s)", host)
+                return True
+        except Exception:
+            continue
     return False
 
 
@@ -261,12 +300,12 @@ def _fetch_realtime_quotes_via_curl(fs: str, *, limit: int = 50) -> pd.DataFrame
     if not _HAS_CURL_CFFI:
         return None
 
-    url = (
-        f"https://88.push2.eastmoney.com/api/qt/clist/get?pn=1&pz={limit}&po=1&np=1"
+    path = (
+        f"/api/qt/clist/get?pn=1&pz={limit}&po=1&np=1"
         f"&fltt=2&invt=2&fid=f3&fs={fs}"
         f"&fields=f2,f3,f4,f5,f6,f7,f12,f14,f15,f16,f17,f18,f20,f21"
     )
-    data = _curl_get_json(url, timeout=10)
+    data = _curl_get_json_push2(path, timeout=8)
     if not data or not data.get("data") or not data["data"].get("diff"):
         return None
 
@@ -294,6 +333,211 @@ def _fetch_realtime_quotes_via_curl(fs: str, *, limit: int = 50) -> pd.DataFrame
             rec[cn] = val if val != "-" else None
         records.append(rec)
     return pd.DataFrame(records)
+
+
+# 东财行情中心「行业板块」展示的是约 90 个二级行业，不是 m:90+t:2 返回的 400+ 细分行业。
+# 过滤规则：
+# - 排除名称含「Ⅲ」的三级
+# - 保留名称含「Ⅱ」的二级
+# - 保留 BK0* 且不是申万一级大类名
+# - 另保留一批无罗马数字的常用二级（半导体、饮料乳品等）
+_SW1_INDUSTRY_NAMES: frozenset[str] = frozenset(
+    {
+        "农林牧渔",
+        "基础化工",
+        "钢铁",
+        "有色金属",
+        "电子",
+        "汽车",
+        "家用电器",
+        "食品饮料",
+        "纺织服饰",
+        "轻工制造",
+        "医药生物",
+        "公用事业",
+        "交通运输",
+        "房地产",
+        "商贸零售",
+        "社会服务",
+        "银行",
+        "非银金融",
+        "综合",
+        "建筑材料",
+        "建筑装饰",
+        "电力设备",
+        "机械设备",
+        "国防军工",
+        "计算机",
+        "传媒",
+        "通信",
+        "煤炭",
+        "石油石化",
+        "环保",
+        "美容护理",
+    }
+)
+_EM_INDUSTRY_EXTRA: frozenset[str] = frozenset(
+    {
+        "半导体",
+        "饮料乳品",
+        "休闲食品",
+        "酒店餐饮",
+        "商用车",
+        "数字媒体",
+        "汽车服务",
+        "服装家纺",
+        "小金属",
+        "其他电源设备",
+        "金属新材料",
+        "光伏设备",
+        "电池",
+        "消费电子",
+        "游戏",
+        "中药",
+        "白酒",
+        "啤酒",
+        "煤炭开采",
+        "油气开采",
+        "工业金属",
+        "白色家电",
+        "黑色家电",
+        "光学光电子",
+        "互联网服务",
+        "广告营销",
+        "出版",
+        "电视广播",
+        "电机",
+        "风电设备",
+        "储能",
+        "医疗器械",
+    }
+)
+
+
+def _is_em_display_industry(name: str, code: str) -> bool:
+    """是否属于东财行情中心行业板块页展示口径。"""
+    name = str(name or "").strip()
+    code = str(code or "").strip().upper()
+    if not name:
+        return False
+    if "Ⅲ" in name or "III" in name.upper():
+        return False
+    if "Ⅱ" in name or re.search(r"(?<![A-Z])II(?![A-Z])", name):
+        return True
+    if code.startswith("BK0") and name not in _SW1_INDUSTRY_NAMES:
+        return True
+    return name in _EM_INDUSTRY_EXTRA
+
+
+def _fetch_em_board_ranks_via_curl(
+    *, kind: str, limit: int = 20, universe: str = "all"
+) -> dict[str, Any] | None:
+    """行业/概念板块涨跌幅双榜（curl_cffi → push2）。
+
+    ``universe=all``：东财「行业板块」列表页全量排序（含文字媒体等细分，对齐图四）。
+    ``universe=l2``：约 90 个二级行业（更接近首页领涨/领跌，对齐图三）。默认 all。
+    """
+    if not _HAS_CURL_CFFI:
+        return None
+    kind_norm = (kind or "industry").strip().lower()
+    if kind_norm not in {"industry", "concept"}:
+        return None
+    fs = "m:90+t:2" if kind_norm == "industry" else "m:90+t:3"
+    type_label = "行业板块列表" if kind_norm == "industry" else "概念板块列表"
+    limit_n = max(1, min(int(limit), 50))
+    use_l2 = kind_norm == "industry" and (universe or "all").strip().lower() in {
+        "l2",
+        "level2",
+        "二级",
+        "display",
+    }
+    # 全量榜一页即可；二级口径需多页再过滤
+    page_size = 100 if use_l2 else max(limit_n, 40)
+    max_pages = 5 if use_l2 else 1
+
+    def _page(po: int) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for pn in range(1, max_pages + 1):
+            path = (
+                f"/api/qt/clist/get?pn={pn}&pz={page_size}&po={po}&np=1"
+                f"&fltt=2&invt=2&fid=f3&fs={fs}"
+                f"&fields=f12,f14,f2,f3,f4,f6"
+            )
+            data = _curl_get_json_push2(path, timeout=8)
+            diff = ((data or {}).get("data") or {}).get("diff") or []
+            if not diff:
+                break
+            for r in diff:
+                if not isinstance(r, dict):
+                    continue
+                out.append(
+                    {
+                        "板块名称": r.get("f14"),
+                        "板块代码": r.get("f12"),
+                        "最新价": r.get("f2"),
+                        "涨跌幅": r.get("f3"),
+                        "涨跌额": r.get("f4"),
+                        "成交额": r.get("f6"),
+                    }
+                )
+            if len(diff) < page_size:
+                break
+        return out
+
+    raw_gainers = _page(1)
+    raw_losers = _page(0)
+    if use_l2:
+        gainers = [
+            r
+            for r in raw_gainers
+            if _is_em_display_industry(str(r.get("板块名称") or ""), str(r.get("板块代码") or ""))
+        ][:limit_n]
+        losers = [
+            r
+            for r in raw_losers
+            if _is_em_display_industry(str(r.get("板块名称") or ""), str(r.get("板块代码") or ""))
+        ][:limit_n]
+        board_note = (
+            "行业口径=二级（约90个），接近行情中心首页领涨/领跌；"
+            "与「行业板块」完整列表页（含文字媒体等细分）不同。"
+        )
+        board_universe = "eastmoney_industry_l2"
+    elif kind_norm == "industry":
+        gainers = raw_gainers[:limit_n]
+        losers = raw_losers[:limit_n]
+        board_note = (
+            "行业口径=东财「行业板块」列表全量按涨跌幅排序（含细分行业，如文字媒体）。"
+            "同时返回涨幅榜与跌幅榜。"
+        )
+        board_universe = "eastmoney_industry_all"
+    else:
+        gainers = raw_gainers[:limit_n]
+        losers = raw_losers[:limit_n]
+        board_note = (
+            "同时返回涨幅榜(gainers)与跌幅榜(losers)。"
+            "回答今日收盘/大盘/科技股表现时必须两边对照；"
+            "禁止只根据涨幅榜推断全市场普涨。"
+        )
+        board_universe = "eastmoney_concept"
+    if not gainers and not losers:
+        return None
+    return {
+        "type": type_label,
+        "gainers": gainers,
+        "losers": losers,
+        "boards": gainers,
+        "count": len(gainers),
+        "count_gainers": len(gainers),
+        "count_losers": len(losers),
+        "source": "eastmoney_push2_curl",
+        "source_url": (
+            "https://quote.eastmoney.com/center/boardlist.html#industry_board"
+            if kind_norm == "industry"
+            else "https://quote.eastmoney.com/center/boardlist.html#concept_board"
+        ),
+        "note": board_note + " 数据可能来自 push2delay（略延迟）。",
+        "board_universe": board_universe,
+    }
 
 
 _ALL_STOCKS_CACHE: pd.DataFrame | None = None
@@ -785,11 +1029,8 @@ async def get_index_quotes() -> dict:
             secids.append(f"{prefix}.{code}")
         fs = ",".join(secids)
 
-        url = (
-            f"https://88.push2.eastmoney.com/api/qt/ulist.np/get?"
-            f"fltt=2&fields=f2,f3,f4,f6,f12,f14&secids={fs}"
-        )
-        data = _curl_get_json(url, timeout=8)
+        path = f"/api/qt/ulist.np/get?fltt=2&fields=f2,f3,f4,f6,f12,f14&secids={fs}"
+        data = _curl_get_json_push2(path, timeout=8)
         if not data or not data.get("data") or not data["data"].get("diff"):
             return None
         records = []
@@ -899,37 +1140,41 @@ async def get_index_quotes() -> dict:
 @mcp.tool()
 @cached_tool(ttl=TTL_MEDIUM, namespace="fin")
 async def get_sector_fund_flow(sector_type: str = "行业", limit: int = 15) -> dict:
-    """返回 A 股板块资金流向排行。
+    """返回 A 股板块涨跌幅双榜（行业或概念）。
 
     Args:
         sector_type: ``"行业"``（申万一级行业）或 ``"概念"``（东方财富概念板块）。
-        limit: 返回条目数（默认 15，上限 50）。
+        limit: 涨幅榜/跌幅榜各自条数（默认 15，上限 50）。
 
     Returns:
-        包含板块名称、主力净流入、涨跌幅等排行的字典。
-        适合回答"今天哪些板块最强"、"科技板块资金流向"等问题。
+        ``gainers`` / ``losers`` 双榜（含板块名称、涨跌幅等）。
+        适合回答"今天哪些板块最强/最弱"、"科技板块表现"等问题。
+        **注意**：暴跌日涨幅榜仍可能全为正数（相对抗跌），必须同时看跌幅榜。
     """
     limit = max(1, min(limit, 50))
+    kind = "concept" if (sector_type or "").strip() == "概念" else "industry"
 
-    def _call() -> dict[str, Any]:
-        import akshare as ak
-
-        if sector_type == "概念":
-            df = ak.stock_board_concept_name_em()
-        else:
-            df = ak.stock_board_industry_name_em()
-        df = df.head(limit)
-        records = _df_to_records(df)
-        sector_slug = "concept" if sector_type == "概念" else "industry"
-        return {
-            "sector_type": sector_type,
-            "sectors": records,
-            "source": "eastmoney",
-            "source_url": f"https://data.eastmoney.com/bkzj/{sector_slug}.html",
-        }
+    def _call_curl() -> dict[str, Any] | None:
+        return _fetch_em_board_ranks_via_curl(kind=kind, limit=limit)
 
     try:
-        return await asyncio.to_thread(_call)
+        curl_result = await asyncio.to_thread(_call_curl)
+        if curl_result:
+            curl_result["sector_type"] = sector_type
+            return curl_result
+        # akshare 的 board_*_name_em 走 push2，本环境常 SSL 重试数十秒；
+        # curl 多主机已失败时不再回退，避免把 SSLError 抛给模型。
+        return {
+            "error": "板块涨跌幅暂不可用（东财 push2 TLS 不可达）",
+            "sector_type": sector_type,
+            "context": f"get_sector_fund_flow(sector_type={sector_type!r})",
+            "hint": "请稍后重试，或让用户直接查看东方财富行业/概念板块涨跌榜页面。",
+            "source_url": (
+                "https://quote.eastmoney.com/center/boardlist.html#industry_board"
+                if kind == "industry"
+                else "https://quote.eastmoney.com/center/boardlist.html#concept_board"
+            ),
+        }
     except Exception as e:
         return _fmt_error(e, context=f"get_sector_fund_flow(sector_type={sector_type!r})")
 
@@ -1316,11 +1561,11 @@ async def get_concept_board(board_name: str = "", limit: int = 20) -> dict:
 
     Args:
         board_name: 概念板块名称，如 ``"人工智能"`` / ``"芯片"``。
-            留空返回所有概念板块排行。
+            留空返回涨幅榜+跌幅榜双榜。
         limit: 返回条目数（默认 20，上限 50）。
 
     Returns:
-        板块行情列表（含板块名、涨跌幅、领涨股）或指定板块的成分股列表。
+        留空时含 ``gainers``/``losers``；指定名称时返回成分股列表。
     """
     limit = max(1, min(limit, 50))
 
@@ -1328,17 +1573,14 @@ async def get_concept_board(board_name: str = "", limit: int = 20) -> dict:
         import akshare as ak
 
         if not board_name:
-            df = ak.stock_board_concept_name_em()
-            df = (
-                df.sort_values("涨跌幅", ascending=False).head(limit)
-                if "涨跌幅" in df.columns
-                else df.head(limit)
-            )
+            curl = _fetch_em_board_ranks_via_curl(kind="concept", limit=limit)
+            if curl:
+                return curl
             return {
-                "type": "概念板块列表",
-                "boards": _df_to_records(df),
-                "count": len(df),
-                "source": "eastmoney",
+                "error": "概念板块列表暂不可用（东财 push2 TLS 不可达）",
+                "context": "get_concept_board(board_name='')",
+                "hint": "请稍后重试，或打开东方财富概念板块涨跌榜。",
+                "source_url": "https://quote.eastmoney.com/center/boardlist.html#concept_board",
             }
         df = ak.stock_board_concept_cons_em(symbol=board_name)
         df = df.head(limit)
@@ -1351,7 +1593,9 @@ async def get_concept_board(board_name: str = "", limit: int = 20) -> dict:
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        return await _to_thread_timeout(
+            _call, context=f"get_concept_board(board_name={board_name!r})"
+        )
     except Exception as e:
         return _fmt_error(e, context=f"get_concept_board(board_name={board_name!r})")
 
@@ -1366,11 +1610,11 @@ async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
 
     Args:
         board_name: 行业名称，如 ``"半导体"`` / ``"白酒"``。
-                    留空返回所有行业板块排行。
+                    留空返回涨幅榜+跌幅榜双榜。
         limit: 返回条目数（默认 20，上限 50）。
 
     Returns:
-        行业列表（含板块名、涨跌幅、领涨股）或指定行业的成分股列表。
+        留空时含 ``gainers``/``losers``；指定名称时返回成分股列表。
     """
     limit = max(1, min(limit, 50))
 
@@ -1378,17 +1622,14 @@ async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
         import akshare as ak
 
         if not board_name:
-            df = ak.stock_board_industry_name_em()
-            df = (
-                df.sort_values("涨跌幅", ascending=False).head(limit)
-                if "涨跌幅" in df.columns
-                else df.head(limit)
-            )
+            curl = _fetch_em_board_ranks_via_curl(kind="industry", limit=limit)
+            if curl:
+                return curl
             return {
-                "type": "行业板块列表",
-                "boards": _df_to_records(df),
-                "count": len(df),
-                "source": "eastmoney",
+                "error": "行业板块列表暂不可用（东财 push2 TLS 不可达）",
+                "context": "get_industry_board(board_name='')",
+                "hint": "请稍后重试，或打开东方财富行业板块涨跌榜。",
+                "source_url": "https://quote.eastmoney.com/center/boardlist.html#industry_board",
             }
         df = ak.stock_board_industry_cons_em(symbol=board_name)
         df = df.head(limit)
@@ -1401,7 +1642,9 @@ async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        return await _to_thread_timeout(
+            _call, context=f"get_industry_board(board_name={board_name!r})"
+        )
     except Exception as e:
         return _fmt_error(e, context=f"get_industry_board(board_name={board_name!r})")
 

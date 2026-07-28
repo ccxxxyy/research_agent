@@ -290,3 +290,130 @@ async def test_search_filings_form_d():
 
     assert result["count"] == 1
     assert result["filings"][0]["form"] == "D"
+    assert "IAPD" in result["note"]
+
+
+@pytest.mark.asyncio
+async def test_search_investment_adviser_mocked():
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    payload = {
+        "hits": {
+            "total": 1,
+            "hits": [
+                {
+                    "_source": {
+                        "firm_source_id": "157373",
+                        "firm_name": "SEQUOIA CAPITAL OPERATIONS, LLC",
+                        "firm_other_names": ["SEQUOIA CAPITAL OPERATIONS, LLC"],
+                        "firm_ia_full_sec_number": "801-122957",
+                        "firm_ia_scope": "ACTIVE",
+                        "firm_ia_disclosure_fl": "N",
+                        "firm_branches_count": 1,
+                        "firm_ia_address_details": (
+                            '{"officeAddress": {"city": "MENLO PARK", "state": "CA"}}'
+                        ),
+                    }
+                }
+            ],
+        }
+    }
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return payload
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params=None):
+            assert "adviserinfo.sec.gov" in url
+            assert params["query"] == "Sequoia Capital"
+            return _Resp()
+
+    with patch.object(mod.httpx, "AsyncClient", return_value=_Client()):
+        result = await mod.search_investment_adviser("Sequoia Capital", limit=5)
+
+    assert result["source"] == "iapd"
+    assert result["count"] == 1
+    assert result["matches"][0]["firm_id"] == "157373"
+    assert "SEQUOIA" in result["matches"][0]["firm_name"]
+    assert "IAPD" in result["note"]
+
+
+@pytest.mark.asyncio
+async def test_get_investment_adviser_overview_mocked():
+    import json
+
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    iacontent = {
+        "basicInformation": {
+            "firmId": 157373,
+            "firmName": "SEQUOIA CAPITAL OPERATIONS, LLC",
+            "otherNames": ["SEQUOIA CAPITAL OPERATIONS, LLC"],
+            "iaScope": "ACTIVE",
+            "advFilingDate": "07/17/2026",
+            "hasPdf": "Y",
+            "iaSECNumber": "122957",
+            "iaSECNumberType": "801",
+        },
+        "registrationStatus": [{"secJurisdiction": "SEC", "status": "Approved"}],
+        "brochures": {
+            "brochuredetails": [
+                {
+                    "brochureVersionID": 1,
+                    "brochureName": "FORM ADV PART 2.A",
+                    "dateSubmitted": "3/31/2026",
+                }
+            ]
+        },
+    }
+    payload = {
+        "hits": {
+            "total": 1,
+            "hits": [{"_source": {"iacontent": json.dumps(iacontent)}}],
+        }
+    }
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return payload
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params=None):
+            assert url.endswith("/157373")
+            return _Resp()
+
+    with patch.object(mod.httpx, "AsyncClient", return_value=_Client()):
+        result = await mod.get_investment_adviser_overview("157373")
+
+    assert result["found"] is True
+    assert result["source"] == "iapd"
+    assert result["overview"]["firm_name"] == "SEQUOIA CAPITAL OPERATIONS, LLC"
+    assert result["overview"]["sec_number"] == "801-122957"
+    assert result["overview"]["brochures"][0]["name"] == "FORM ADV PART 2.A"
+
+
+@pytest.mark.asyncio
+async def test_search_investment_adviser_empty_keyword():
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    result = await mod.search_investment_adviser("  ")
+    assert "error" in result

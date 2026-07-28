@@ -13,7 +13,7 @@ from research_agent.market.types import Market, MarketResolution, SymbolRef
 _COMPARE_RE = re.compile(r"(对比|比较|对照|vs\.?|versus|横比|孰优|谁更)", re.I)
 _FILING_RE = re.compile(r"(年报|季报|公告|披露|10-?\s*k|10-?\s*q|8-?\s*k|edgar|巨潮)", re.I)
 _PRIVATE_FUND_RE = re.compile(
-    r"(私募|中基协|协会备案|amac|form\s*d|form\s*adv|adv\s*披露|private\s*equity|private\s*fund)",
+    r"(私募|中基协|协会备案|amac|form\s*d|form\s*adv|adv\s*披露|iapd|investment\s*adviser|private\s*equity|private\s*fund)",
     re.I,
 )
 _NEWS_RE = re.compile(r"(新闻|快讯|资讯|headline|news)", re.I)
@@ -110,8 +110,8 @@ def _instruction_for(side: Market, focus: str, intent: str) -> str:
     if intent == "private_fund":
         if side == Market.US:
             return (
-                f"仅用 {side_name} us_filing_expert 查 {focus} 的 EDGAR 概况 / Form D·ADV；"
-                f"禁止编造私募净值，勿用 us_data 共同基金接口"
+                f"仅用 {side_name} us_filing_expert：Form ADV 走 IAPD 工具，Form D/上市公司概况走 EDGAR；"
+                f"禁止编造私募净值，勿用 us_data 共同基金接口，勿用 company_tickers 冒充 ADV"
             )
         return (
             f"仅用 {side_name} fund_expert 的 AMAC 私募备案工具查 {focus}；"

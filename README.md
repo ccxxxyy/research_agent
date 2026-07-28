@@ -603,7 +603,7 @@ docker compose up -d
 | 项 | 现状 | 计划 |
 |---|---|---|
 | **knowledge_server 不走 MCP-stdio** | 🟡 工程取舍：Windows + Python 3.13 + asyncio + heavy ML import 链有系统性死锁，已切到 in-process 同源代码——业务逻辑不变，MCP 协议契约保留在 `@mcp.tool` 装饰器上作为文档。详见 [ADR-0002](docs/adr/0002-knowledge-server-inprocess.md) | 若未来需跨进程/跨语言，可换 fastmcp 的 SSE/HTTP transport 绕开 stdio JSON-RPC 帧 |
-| **fund_server 公募 + AMAC 私募备案** | ✅ 公募：开放式/ETF/LOF/QDII/经理；私募：协会公示查询（**无实时净值**） | 美股私募走 `us_filing` 概况 + Form D/ADV，不做免费 NAV |
+| **fund_server 公募 + AMAC 私募备案** | ✅ 公募：开放式/ETF/LOF/QDII/经理；私募：协会服务端 keyword（优先管理人，**无实时净值**；产品列表可能间歇 5xx） | 美股私募：EDGAR Form D + IAPD ADV（`us_filing_*`），不做免费 NAV |
 | **derivatives_server** | ✅ 国内期货合约行情 + ETF/股指期权 | 商品期权全历史可按需加深 |
 | **LangSmith 评估集已上 CI** | ✅ `evals/` 下有 100 条标注样本 + 5 个评估器 + 离线评估 runner + regression 对比工具；Nightly CI 自动跑路由评估 | 持续扩充样本 + 增加 RAG 召回率评估 |
 | **pgvector 引擎装了但未用作向量搜索后端** | 🟡 设计取舍：docker-compose 用 `pgvector/pgvector:pg16` 是为给 Postgres checkpointer + KV-style 长期记忆提供后端；RAG 走本地 FAISS 因为 demo 不依赖外部服务 | 当用户研究量 >100 条时，把"语义相似历史研究召回"切到 pgvector + ANN |

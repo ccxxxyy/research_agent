@@ -1,11 +1,16 @@
-"""MCP Server — 美股 SEC EDGAR 披露（与巨潮 ``pdf_report_server`` 平行隔离）。
+"""MCP Server — 美股 SEC EDGAR 披露 + IAPD 投资顾问（与巨潮 ``pdf_report_server`` 平行隔离）。
 
-默认表单
---------
+默认表单（EDGAR）
+-----------------
 - 普通股 / ADR：``10-K`` / ``10-Q`` / ``8-K`` / ``DEF 14A``（修订件如 ``10-K/A`` 也会匹配）
 - ETF / 注册投资公司：``NPORT-P``（月度持仓）、``N-CSR`` / ``N-CSRS``（股东报告）、
   ``485BPOS``（招股书更新；``485APOS`` 作别名匹配）
-- 私募相关（需显式 ``forms``）：``D``（Form D 私募发行）、``ADV`` / ``ADV-E``（投资顾问）
+- 私募发行（需显式 ``forms``）：``D`` / ``D/A``（Form D）
+
+投资顾问 Form ADV
+-----------------
+- **不在 EDGAR**；走 SEC IAPD：``search_investment_adviser`` / ``get_investment_adviser_overview``。
+- 勿用 ``company_tickers.json`` / ``search_filings(forms=ADV)`` 冒充 ADV 顾问检索。
 
 工具
 ----
@@ -14,12 +19,15 @@
 3. ``download_filing`` — 下载主文档到 ``./data/edgar_cache/``（按 URL 哈希缓存）
 4. ``extract_filing_metadata`` — 本地文件元数据（类型 / 大小 / PDF 页数）
 5. ``parse_filing_text`` — 有界正文提取（PDF 按页；HTML/TXT 按字符窗口）
-6. ``get_entity_overview`` — CIK/ticker → submissions 主体概况（私募/顾问无 NAV 时用）
-7. ``search_entity_by_name`` — 在 company_tickers 上按名称模糊（无 ticker 时）
+6. ``get_entity_overview`` — CIK/ticker → submissions 主体概况（无 NAV）
+7. ``search_entity_by_name`` — 在 company_tickers 上按名称模糊（上市公司；非 RIA）
+8. ``search_investment_adviser`` — IAPD 按名搜索投资顾问（Form ADV）
+9. ``get_investment_adviser_overview`` — IAPD 顾问概况（CRD / SEC number / brochure 元数据）
 
 设计说明
 --------
-- 数据来源：``company_tickers.json`` + ``data.sec.gov/submissions`` + Archives 文档。
+- EDGAR：``company_tickers.json`` + ``data.sec.gov/submissions`` + Archives。
+- IAPD：``api.adviserinfo.sec.gov``（免费公开检索；无实时 NAV）。
 - SEC 要求每个请求带可识别的 ``User-Agent``（可用环境变量 ``SEC_USER_AGENT`` 覆盖）。
 - 错误一律 ``{"error": "...", "context": "..."}``，不抛异常以免弄死 stdio。
 - 搜索结果走 ``cached_tool`` TTL（namespace=``us_filing``）。
@@ -30,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import json
 import logging
 import os
 import re
@@ -55,6 +64,12 @@ DEFAULT_CACHE_DIR = Path("./data/edgar_cache").resolve()
 COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 ARCHIVES_BASE = "https://www.sec.gov/Archives/edgar/data"
+IAPD_SEARCH_URL = "https://api.adviserinfo.sec.gov/search/firm"
+IAPD_FIRM_URL = "https://api.adviserinfo.sec.gov/search/firm/{firm_id}"
+IAPD_NOTE = (
+    "Form ADV 来自 SEC IAPD（Investment Adviser Public Disclosure），不是 EDGAR；"
+    "仅含顾问登记/brochure 元数据，无私募实时 NAV。"
+)
 
 # 普通股 + ETF/基金专属表单；查 AAPL 时 ETF 表单通常无命中，查 QQQ 时则不再「稀疏」。
 DEFAULT_FORMS = (
@@ -410,8 +425,10 @@ async def search_filings(
             "source": "data.sec.gov/submissions",
             "source_url": SUBMISSIONS_URL.format(cik10=cik10),
             "note": (
-                "私募/顾问场景可设 forms='D,ADV'；Form D 为私募发行备案，"
-                "ADV 为投资顾问披露。本工具不提供私募实时 NAV。"
+                "Form D 私募发行可设 forms='D'。"
+                "投资顾问 Form ADV 不在 EDGAR submissions，请用 "
+                "search_investment_adviser / get_investment_adviser_overview（IAPD）。"
+                "本工具不提供私募实时 NAV。"
             ),
         }
     except Exception as e:  # noqa: BLE001
@@ -460,7 +477,11 @@ async def get_entity_overview(identifier: str) -> dict:
             "overview": overview,
             "source": "data.sec.gov/submissions",
             "source_url": SUBMISSIONS_URL.format(cik10=cik10),
-            "note": "主体概况来自 EDGAR submissions；私募无免费实时 NAV，请用 Form D/ADV 披露。",
+            "note": (
+                "主体概况来自 EDGAR submissions；无免费实时 NAV。"
+                "投资顾问 Form ADV 请用 search_investment_adviser（IAPD）；"
+                "私募发行备案请用 search_filings(forms='D')。"
+            ),
         }
     except Exception as e:  # noqa: BLE001
         return _fmt_error(e, context=f"get_entity_overview({identifier!r})")
@@ -469,7 +490,9 @@ async def get_entity_overview(identifier: str) -> dict:
 @mcp.tool()
 @cached_tool(ttl=TTL_LONG, namespace="us_filing")
 async def search_entity_by_name(keyword: str, limit: int = 10) -> dict:
-    """在 SEC ``company_tickers.json`` 上按公司名模糊搜索（便于无 ticker 主体）。
+    """在 SEC ``company_tickers.json`` 上按公司名模糊搜索（上市公司/ETF 发行人）。
+
+    **不是**投资顾问 Form ADV 检索；RIA / PE 顾问请用 ``search_investment_adviser``。
 
     Args:
         keyword: 名称片段（英文为主）。
@@ -502,10 +525,199 @@ async def search_entity_by_name(keyword: str, limit: int = 10) -> dict:
             "count": len(matches),
             "source": "company_tickers.json",
             "source_url": COMPANY_TICKERS_URL,
-            "note": "仅覆盖 SEC company_tickers 名册；冷门私募顾问可能无 ticker，可改用已知 CIK。",
+            "note": (
+                "仅覆盖 SEC company_tickers（多为上市公司）。"
+                "私募/投资顾问 Form ADV 请用 search_investment_adviser（IAPD）。"
+            ),
         }
     except Exception as e:  # noqa: BLE001
         return _fmt_error(e, context=f"search_entity_by_name({keyword!r})")
+
+
+def _parse_iapd_address(raw: Any) -> dict[str, Any] | str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw.get("officeAddress") or raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed.get("officeAddress") or parsed
+        except Exception:  # noqa: BLE001
+            return text
+    return None
+
+
+def _map_iapd_search_hit(hit: dict[str, Any]) -> dict[str, Any]:
+    src = hit.get("_source") if isinstance(hit.get("_source"), dict) else hit
+    if not isinstance(src, dict):
+        src = {}
+    firm_id = src.get("firm_source_id") or src.get("firmId") or hit.get("_id")
+    return {
+        "firm_id": str(firm_id) if firm_id is not None else None,
+        "firm_name": src.get("firm_name") or src.get("firmName"),
+        "other_names": src.get("firm_other_names") or src.get("otherNames") or [],
+        "sec_number": src.get("firm_ia_full_sec_number") or src.get("firm_ia_sec_number"),
+        "ia_scope": src.get("firm_ia_scope"),
+        "has_disclosure": src.get("firm_ia_disclosure_fl"),
+        "branches_count": src.get("firm_branches_count"),
+        "address": _parse_iapd_address(src.get("firm_ia_address_details")),
+    }
+
+
+def _coerce_iapd_content(src: dict[str, Any]) -> dict[str, Any]:
+    """Normalize firm detail ``_source`` (``iacontent`` may be a JSON string)."""
+    raw = src.get("iacontent")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:  # noqa: BLE001
+            pass
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(src.get("basicInformation"), dict):
+        return src
+    return src
+
+
+def _map_iapd_firm_overview(src: dict[str, Any]) -> dict[str, Any]:
+    basic = _coerce_iapd_content(src)
+    info = basic.get("basicInformation") if isinstance(basic.get("basicInformation"), dict) else {}
+    if not info and basic.get("firmName"):
+        info = basic
+    brochures = basic.get("brochures") if isinstance(basic.get("brochures"), dict) else {}
+    brochure_details = brochures.get("brochuredetails") or []
+    if not isinstance(brochure_details, list):
+        brochure_details = []
+    sec_num = info.get("iaSECNumber")
+    sec_type = info.get("iaSECNumberType")
+    return {
+        "firm_id": info.get("firmId") or src.get("firm_source_id"),
+        "firm_name": info.get("firmName") or src.get("firm_name"),
+        "other_names": info.get("otherNames") or [],
+        "ia_scope": info.get("iaScope"),
+        "sec_number": f"{sec_type}-{sec_num}" if sec_num else None,
+        "adv_filing_date": info.get("advFilingDate"),
+        "has_pdf": info.get("hasPdf"),
+        "registration_status": basic.get("registrationStatus") or [],
+        "notice_filings": basic.get("noticeFilings") or [],
+        "org_scope_flags": basic.get("orgScopeStatusFlags") or {},
+        "relying_advisors": basic.get("relyingAdvisors") or [],
+        "address": _parse_iapd_address(
+            basic.get("iaFirmAddressDetails") or src.get("firm_ia_address_details")
+        ),
+        "brochures": [
+            {
+                "name": b.get("brochureName"),
+                "date_submitted": b.get("dateSubmitted"),
+                "version_id": b.get("brochureVersionID"),
+            }
+            for b in brochure_details
+            if isinstance(b, dict)
+        ],
+    }
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="us_filing")
+async def search_investment_adviser(keyword: str, limit: int = 10) -> dict:
+    """在 SEC IAPD 上按名称搜索投资顾问（Form ADV；非 EDGAR）。
+
+    Args:
+        keyword: 顾问名称片段（英文为主），如 ``Sequoia Capital``、``Blackstone``。
+        limit: 最大返回条数（1–40）。
+    """
+    if not (keyword or "").strip():
+        return _fmt_error(
+            ValueError("keyword must be non-empty"),
+            context="search_investment_adviser()",
+        )
+    limit = max(1, min(int(limit), 40))
+    kw = keyword.strip()
+    params = {
+        "query": kw,
+        "hl": "true",
+        "nrows": str(limit),
+        "start": "0",
+        "wt": "json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=_sec_headers()) as client:
+            r = await client.get(IAPD_SEARCH_URL, params=params)
+            r.raise_for_status()
+            payload = r.json()
+        hits_wrap = payload.get("hits") if isinstance(payload, dict) else None
+        hits = (hits_wrap or {}).get("hits") if isinstance(hits_wrap, dict) else []
+        if not isinstance(hits, list):
+            hits = []
+        matches = [_map_iapd_search_hit(h) for h in hits[:limit] if isinstance(h, dict)]
+        total = (hits_wrap or {}).get("total") if isinstance(hits_wrap, dict) else len(matches)
+        return {
+            "keyword": kw,
+            "matches": matches,
+            "count": len(matches),
+            "total": total,
+            "source": "iapd",
+            "source_url": f"{IAPD_SEARCH_URL}?query={kw}",
+            "note": IAPD_NOTE,
+        }
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=f"search_investment_adviser({keyword!r})")
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="us_filing")
+async def get_investment_adviser_overview(firm_id: str) -> dict:
+    """按 IAPD ``firm_id``（firm_source_id / CRD）取投资顾问概况（Form ADV 元数据）。
+
+    Args:
+        firm_id: ``search_investment_adviser`` 返回的 ``firm_id``，如 ``157373``。
+    """
+    fid = re.sub(r"\D", "", str(firm_id or "").strip())
+    if not fid:
+        return _fmt_error(
+            ValueError("firm_id must be numeric"),
+            context="get_investment_adviser_overview()",
+        )
+    url = IAPD_FIRM_URL.format(firm_id=fid)
+    try:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=_sec_headers()) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            payload = r.json()
+        hits_wrap = payload.get("hits") if isinstance(payload, dict) else None
+        hits = (hits_wrap or {}).get("hits") if isinstance(hits_wrap, dict) else []
+        if not isinstance(hits, list) or not hits:
+            return {
+                "firm_id": fid,
+                "overview": None,
+                "found": False,
+                "source": "iapd",
+                "source_url": url,
+                "note": IAPD_NOTE,
+            }
+        src = hits[0].get("_source") if isinstance(hits[0], dict) else {}
+        if not isinstance(src, dict):
+            src = {}
+        overview = _map_iapd_firm_overview(src)
+        overview["firm_id"] = overview.get("firm_id") or fid
+        return {
+            "firm_id": fid,
+            "overview": overview,
+            "found": True,
+            "source": "iapd",
+            "source_url": url,
+            "iapd_web_url": f"https://adviserinfo.sec.gov/firm/summary/{fid}",
+            "note": IAPD_NOTE,
+        }
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=f"get_investment_adviser_overview({firm_id!r})")
 
 
 @mcp.tool()
