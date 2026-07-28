@@ -58,6 +58,12 @@ _CN_MARKET_KEYWORDS = (
     "沪市",
     "深市",
     "公募基金",
+    "私募基金",
+    "私募",
+    "中基协",
+    "协会备案",
+    "amac",
+    "红杉中国",
     "股指期货",
     "商品期货",
     "国内期货",
@@ -88,6 +94,18 @@ _US_MARKET_KEYWORDS = (
     "华尔街",
     "共同基金",
     "mutual fund",
+    # 美股私募/顾问披露（勿用泛化「私募」——会与国内 AMAC 混淆）
+    "private equity",
+    "private fund",
+    "hedge fund",
+    "venture capital",
+    "form d",
+    "formd",
+    "form adv",
+    "adv披露",
+    "adv 披露",
+    "edgar",
+    "sec edgar",
     "美股期货",
     "美股期权",
     "us futures",
@@ -429,7 +447,8 @@ def detect_market_from_query(query: str) -> MarketResolution:
         )
 
     cn_kw = [k for k in _CN_MARKET_KEYWORDS if k in q_lower or k in q]
-    us_kw = [k for k in _US_MARKET_KEYWORDS if k in q_lower]
+    # 美股关键词：中英混排；对纯 ASCII 词用小写匹配，中文词用原文
+    us_kw = [k for k in _US_MARKET_KEYWORDS if k in q_lower or k in q]
     if cn_kw:
         reasons.append(f"cn_keyword:{','.join(cn_kw[:3])}")
     if us_kw:

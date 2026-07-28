@@ -197,3 +197,96 @@ async def test_download_rejects_non_sec_url():
 
     result = await mod.download_filing("https://example.com/x.htm")
     assert "error" in result
+
+
+def test_form_matches_adv_and_d():
+    from research_agent.mcp_servers.us_filing_server import _expand_wanted_forms, _form_matches
+
+    wanted = _expand_wanted_forms({"ADV", "D"})
+    assert _form_matches("ADV", wanted)
+    assert _form_matches("ADV-E", wanted)
+    assert _form_matches("D", wanted)
+    assert _form_matches("D/A", wanted)
+
+
+@pytest.mark.asyncio
+async def test_get_entity_overview_mocked():
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    submissions = {
+        "name": "Apple Inc.",
+        "tickers": ["AAPL"],
+        "exchanges": ["Nasdaq"],
+        "sic": "3571",
+        "sicDescription": "ELECTRONIC COMPUTERS",
+        "entityType": "operating",
+        "fiscalYearEnd": "0930",
+        "stateOfIncorporation": "CA",
+        "addresses": {"business": {"city": "Cupertino"}},
+        "formerNames": [],
+        "filings": {"recent": {}},
+    }
+
+    async def fake_json(url: str):
+        if "company_tickers" in url:
+            return {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
+        if "submissions" in url:
+            return submissions
+        raise AssertionError(url)
+
+    with patch.object(mod, "_http_get_json", new=AsyncMock(side_effect=fake_json)):
+        result = await mod.get_entity_overview("AAPL")
+
+    assert "error" not in result
+    assert result["overview"]["name"] == "Apple Inc."
+    assert result["source"] == "data.sec.gov/submissions"
+    assert "NAV" in result["note"]
+
+
+@pytest.mark.asyncio
+async def test_search_entity_by_name_mocked():
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    fake_map = {
+        "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
+        "1": {"cik_str": 789019, "ticker": "MSFT", "title": "MICROSOFT CORP"},
+    }
+    with patch.object(mod, "_http_get_json", new=AsyncMock(return_value=fake_map)):
+        result = await mod.search_entity_by_name("Apple", limit=5)
+
+    assert result["count"] == 1
+    assert result["matches"][0]["ticker"] == "AAPL"
+    assert result["source"] == "company_tickers.json"
+
+
+@pytest.mark.asyncio
+async def test_search_filings_form_d():
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    submissions = {
+        "name": "Some Issuer",
+        "tickers": [],
+        "filings": {
+            "recent": {
+                "accessionNumber": ["0001234567-24-000001"],
+                "filingDate": ["2024-01-15"],
+                "form": ["D"],
+                "primaryDocument": ["xslFormDX01/primary_doc.xml"],
+                "primaryDocDescription": ["D"],
+                "reportDate": [""],
+            }
+        },
+    }
+
+    async def fake_json(url: str):
+        if "company_tickers" in url:
+            return {"0": {"cik_str": 1234567, "ticker": "TEST", "title": "Some Issuer"}}
+        if "submissions" in url:
+            return submissions
+        raise AssertionError(url)
+
+    with patch.object(mod, "_http_get_json", new=AsyncMock(side_effect=fake_json)):
+        result = await mod.search_filings("TEST", forms="D,ADV", limit=5)
+
+    assert result["count"] == 1
+    assert result["filings"][0]["form"] == "D"

@@ -132,10 +132,12 @@ async def test_search_stock_by_name_hit():
     mock_roster = pd.DataFrame({"code": ["300750", "600519"], "name": ["宁德时代", "贵州茅台"]})
 
     with patch("akshare.stock_info_a_code_name", return_value=mock_roster):
+        mod._ALL_STOCKS_CACHE = None
         result = await mod.search_stock_by_name("宁德", limit=5)
     assert "error" not in result
     codes = [m["code"] for m in result["matches"]]
     assert "300750" in codes
+    assert result["source"] == "local_cache"
 
 
 @pytest.mark.asyncio
@@ -249,6 +251,7 @@ async def test_financial_abstract():
     assert "error" not in result
     assert result["symbol"] == "300750"
     assert len(result["periods"]) <= 2
+    assert result.get("source") == "eastmoney"
 
 
 @pytest.mark.asyncio
@@ -607,6 +610,7 @@ def test_market_status_trading_day_closed():
         result = mod._compute_market_status(_now=fake_now)
     assert result["status"] == "closed"
     assert result["is_trading_day"] is True
+    assert result["source"] == "cn_session_clock"
 
 
 def test_market_status_weekend():
