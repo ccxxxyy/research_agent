@@ -332,3 +332,65 @@ async def test_get_fund_manager_invalid_code():
 
     result = await mod.get_fund_manager("abc")
     assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_search_private_fund_filters():
+    import research_agent.mcp_servers.fund_server as mod
+
+    mock_df = pd.DataFrame(
+        {
+            "基金名称": ["高毅晓峰2号", "景林稳健", "其他产品"],
+            "私募基金管理人名称": ["上海高毅", "景林资产", "某某资本"],
+            "运行状态": ["正在运作", "正在运作", "正在运作"],
+            "备案时间": ["2020-01-01", "2019-06-01", "2021-01-01"],
+        }
+    )
+    with patch.object(mod, "_load_amac_fund_df", return_value=mock_df):
+        result = await mod.search_private_fund("高毅", limit=5)
+    assert result["source"] == "amac"
+    assert result["count"] == 1
+    assert "高毅" in result["matches"][0]["基金名称"]
+    assert "无实时净值" in result["note"]
+
+
+@pytest.mark.asyncio
+async def test_search_private_manager_filters():
+    import research_agent.mcp_servers.fund_server as mod
+
+    mock_df = pd.DataFrame(
+        {
+            "基金管理人名称": ["上海高毅资产管理合伙企业", "景林资产管理"],
+            "登记编号": ["P1000265", "P1000123"],
+        }
+    )
+    with patch.object(mod, "_load_amac_manager_df", return_value=mock_df):
+        result = await mod.search_private_manager("高毅", limit=5)
+    assert result["source"] == "amac"
+    assert result["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_private_fund_info_exact():
+    import research_agent.mcp_servers.fund_server as mod
+
+    mock_df = pd.DataFrame(
+        {
+            "基金名称": ["高毅晓峰2号", "景林稳健"],
+            "私募基金管理人名称": ["上海高毅", "景林资产"],
+            "运行状态": ["正在运作", "正在运作"],
+        }
+    )
+    with patch.object(mod, "_load_amac_fund_df", return_value=mock_df):
+        result = await mod.get_private_fund_info("高毅晓峰2号")
+    assert result["found"] is True
+    assert result["source"] == "amac"
+    assert result["info"]["基金名称"] == "高毅晓峰2号"
+
+
+@pytest.mark.asyncio
+async def test_search_private_fund_empty_keyword():
+    import research_agent.mcp_servers.fund_server as mod
+
+    result = await mod.search_private_fund("  ")
+    assert "error" in result

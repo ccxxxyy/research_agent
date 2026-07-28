@@ -41,9 +41,9 @@ SnowNLP（中文舆情）                   VADER + 金融词表增强（本地�
 | 能力 | MCP / 模块 | 数据来源 | 备注 |
 |------|------------|----------|------|
 | 行情/板块/龙虎榜等 | `fin_data_server` | **akshare**（底层多为东财、新浪等） | 主路径；`get_market_status`（交易日北京时间）：**未开盘 00:00–09:14** / **开盘集合竞价·盘前 09:15–09:25** / **静默 09:25–09:30** / **连续竞价 09:30–11:30、13:00–14:57** / **午休 11:30–13:00** / **收盘集合竞价 14:57–15:00** / **已收盘** / 非交易日 |
-| 基金净值/ETF/QDII | `fund_server` | **akshare**（天天基金/东财基金） | 主路径（含 QDII 排行、基金经理） |
+| 基金净值/ETF/QDII/私募备案 | `fund_server` | **akshare**（天天基金/东财基金）+ **中基协 AMAC** | 公募主路径；私募为协会备案公示（`search_private_*`），无实时净值 |
 | 国内期货/期权 | `derivatives_server` | **akshare**（新浪期货/期权） | 主路径 |
-| 公告 PDF | `pdf_report_server` | **巨潮 cninfo** | 主路径 |
+| 公告 PDF | `pdf_report_server` | **巨潮 cninfo** | 主路径；成功返回带 `source=cninfo` |
 | 新闻 | `news_server` | 东财 / 财联社 / 雪球等 | 主路径 |
 | 舆情 | `news_sentiment_server` | 新闻文本 + **SnowNLP** | 本地模型 |
 | 看板热搜/科技股等 | `main.py` 看板 API | 东财 push2 / 新浪等 HTTP（部分 `curl_cffi`） | UI 聚合，与 MCP 同源生态 |
@@ -130,10 +130,11 @@ get_quote / get_index_quotes / _quote_from_ticker
 
 - 可选 8-K 标题仍走 EDGAR submissions（`get_recent_8k_headlines`），与 Yahoo/Finnhub 列表并行，不经过聚类管道。
 
-#### 披露（不变）
+#### 披露
 
 - **仅 SEC EDGAR**，与 Yahoo / Finnhub 无关。
-
+- 主体概况：`get_entity_overview`；名称搜码：`search_entity_by_name`。
+- 私募相关：显式 `forms=D,ADV`（Form D 发行备案 / ADV 顾问）；**无**实时 NAV。
 ### 4.3 名称对照（避免误解）
 
 | 名称 | 是什么 | 主 / 备 | 是否通用搜索 |
@@ -385,7 +386,6 @@ FINNHUB_API_KEY=...
 | 项 | 现状 |
 |----|------|
 | 通用联网搜索（Tavily 等） | 未挂载；仅有 `retriever.py` 文案；**不应用作行情主源** |
-| 私募基金 | 未接入（数据源不稳） |
 | Finnhub / Polygon 等**行情**多供应商配置链 | 未接入（新闻侧 Finnhub 已可选，见 §4.4） |
 | 英文舆情 FinBERT / 专用 Transformer | 可选；当前为 VADER + 金融词表 + 标题/摘要/正文前段（`en_vader_finlex_v2`） |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
@@ -393,8 +393,7 @@ FINNHUB_API_KEY=...
 | 10-Q/10-K **整篇精读** | 刻意不做：`us_filing_parse_filing_text` 有界窗口（默认 8k 字，最多约 3 窗 / 6 次工具）；宜多轮点名科目追问 |
 | 回答截断后**自动续写** | 未做；可用环境变量 `MAX_OUTPUT_TOKENS` 提高单次输出上限 |
 | 日线历史 / ETF holdings | **提问触发**（非看板）。日线：yfinance → Yahoo Chart HTTP → 东财美股 K 线；holdings：yfinance → Yahoo quoteSummary（东财无稳定美股 ETF 持仓公开接口，Yahoo 全挂时仍可能空） |
-| 别名表外冷门中文名 → 自动 MIXED | 靠 Supervisor 常识 + 搜码协作；解析器别名表只是加速，非完整公司库 |
-| A 股工具返回 runtime `source` 字段 | 多数仍无；UI 对 A 股仍用工具名静态规则，美股已按 payload `source` |
+| 私募**实时净值** / 付费 PE 库 | 不做；国内仅 AMAC 备案，美股仅 EDGAR 概况 + Form D/ADV |
 
 ## 9. 产品侧已落地（非数据源，但影响体验）
 
@@ -411,6 +410,10 @@ FINNHUB_API_KEY=...
 | A 股市场状态文案 | `not_yet_open`（00:00–09:14）/ `call_auction` 盘前（09:15–09:25）/ `pre_open_silence`（09:25–09:30）/ `trading` / `lunch_break` / `closing_auction`（14:57–15:00）/ `closed` |
 | 最终回答清洗 | 剥除「上述分析已完整呈现」等虚指开场；禁止模型假装气泡上方还有分析 |
 | 美股共同基金/期货/期权工具 | `us_data_server`；国内衍生品 `derivatives_server` |
+| 冷门中文名（别名表外） | **不**靠解析器自动 MIXED；Supervisor + `fin_search_stock_by_name` / `us_search_ticker` 搜码协作（别名表仅加速） |
+| A 股 / 巨潮 runtime `source` | `fin_*` 与 `pdf_*` 成功路径带顶层 `source`；SSE `tool_done` + UI `SOURCE_CODE_RULES` 优先展示 |
+| 国内私募（AMAC） | `fund_search_private_*` / `get_private_fund_info`：协会备案公示，**无实时净值** |
+| 美股私募披露/概况 | `us_filing_get_entity_overview` + `search_filings(forms=D,ADV)` + `search_entity_by_name`；无 NAV |
 
 ## 10. 变更记录
 
@@ -427,3 +430,4 @@ FINNHUB_API_KEY=...
 | 看板同步：A 股期货/ETF/QDII + 美股期货/共同基金/期权快捷；专家列表含 derivatives_expert |
 | 看板自选 `/api/watchlist` + SQLite 持久化 + 记忆注入；QDII 面板改为场外日增长率；A 股时段对齐交易所（集合竞价/静默/收盘竞价）；剥除「上述分析」虚指 |
 | architecture 专家↔数据源图补回双市场全工具；A 股 `get_market_status` 取消旧 `pre_market` 清晨窗 |
+| 冷门名 Supervisor/搜码协作强化；A 股/巨潮 runtime `source`；国内 AMAC 私募备案 + 美股 EDGAR 概况/Form D·ADV |

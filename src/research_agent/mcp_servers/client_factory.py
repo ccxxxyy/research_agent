@@ -235,9 +235,10 @@ async def load_fund_server_tools() -> list[BaseTool]:
     """通过 stdio 启动 ``fund_server`` 并返回其工具列表。
 
     暴露基金数据工具，每个通过 ``tool_name_prefix=True`` 添加
-    ``fund_`` 前缀，涵盖基金搜索、净值、ETF/LOF 行情、持仓、评级、QDII、经理等。
+    ``fund_`` 前缀，涵盖公募搜索/净值/ETF/LOF/持仓/评级/QDII/经理，
+    以及中基协 AMAC 私募备案查询（无实时净值）。
 
-    数据来源：东方财富基金网 / 天天基金。
+    数据来源：东方财富基金网 / 天天基金 / 中基协 AMAC。
     """
     client = MultiServerMCPClient(
         {"fund": _stdio_server_spec(FUND_SERVER_MODULE)},

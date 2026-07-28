@@ -45,6 +45,9 @@ class AssetClass(StrEnum):
     MUTUAL_FUND = "mutual_fund"
     """共同基金（场外，美股 Yahoo MUTUALFUND）。"""
 
+    PRIVATE_FUND = "private_fund"
+    """私募基金 / PE·VC（国内 AMAC 备案；美股以 EDGAR 披露/概况为主，无免费实时 NAV）。"""
+
     FUTURE = "future"
     """期货合约。"""
 

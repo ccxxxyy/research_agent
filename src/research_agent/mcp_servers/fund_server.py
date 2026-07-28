@@ -16,11 +16,15 @@
 10. ``get_fund_daily``      — 当日全市场开放式基金净值列表。
 11. ``get_fund_qdii_rank``  — QDII 基金业绩排行（专项入口）。
 12. ``get_fund_manager``    — 按基金代码查基金经理与基本档案字段。
+13. ``search_private_fund`` — 中基协私募产品备案公示（关键词；无实时净值）。
+14. ``search_private_manager`` — 中基协私募管理人综合查询。
+15. ``get_private_fund_info`` — 私募产品近名/精确备案详情。
 
 数据来源
 --------
 - 东方财富基金网 / 天天基金网 (fund.eastmoney.com)
 - push2.eastmoney.com — ETF/LOF 实时行情推送（工具 4/5/6 优先使用）
+- 中国证券投资基金业协会 AMAC 公示（``amac_*``，私募备案，无净值）
 
 设计说明
 --------
@@ -35,7 +39,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import pickle
 import re
+import time
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -1153,6 +1160,216 @@ async def get_fund_manager(symbol: str) -> dict:
         return await asyncio.to_thread(_call)
     except Exception as e:
         return _fmt_error(e, context=f"get_fund_manager({code!r})")
+
+
+# =====================================================================
+# 私募（AMAC 协会备案公示；无实时净值）
+# =====================================================================
+_AMAC_CACHE_DIR = Path("./data/amac_cache").resolve()
+_AMAC_CACHE_TTL_SEC = int(os.environ.get("AMAC_CACHE_TTL_SEC", str(7 * 24 * 3600)))
+# amac_fund_info 按页拉取；每页约 100 条。默认前 20 页作可检索窗口（可用环境变量扩大）。
+_AMAC_FUND_END_PAGE = max(1, min(int(os.environ.get("AMAC_FUND_END_PAGE", "20")), 200))
+_AMAC_NOTE = (
+    "中国证券投资基金业协会备案公示，仅含登记信息，无实时净值/业绩；"
+    "不可与公募 fund_get_fund_nav 口径混用。"
+)
+
+_AMAC_FUND_DF: pd.DataFrame | None = None
+_AMAC_FUND_LOADED_AT: float = 0.0
+_AMAC_MANAGER_DF: pd.DataFrame | None = None
+_AMAC_MANAGER_LOADED_AT: float = 0.0
+
+
+def _amac_cache_path(name: str) -> Path:
+    return _AMAC_CACHE_DIR / f"{name}.pkl"
+
+
+def _amac_read_disk(name: str) -> pd.DataFrame | None:
+    path = _amac_cache_path(name)
+    if not path.exists():
+        return None
+    try:
+        age = time.time() - path.stat().st_mtime
+        if age > _AMAC_CACHE_TTL_SEC:
+            return None
+        with path.open("rb") as fh:
+            obj = pickle.load(fh)  # noqa: S301 — 本地缓存文件
+        if isinstance(obj, pd.DataFrame):
+            return obj
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("AMAC disk cache read failed (%s): %s", name, exc)
+    return None
+
+
+def _amac_write_disk(name: str, df: pd.DataFrame) -> None:
+    try:
+        _AMAC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        with _amac_cache_path(name).open("wb") as fh:
+            pickle.dump(df, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("AMAC disk cache write failed (%s): %s", name, exc)
+
+
+def _keyword_mask(df: pd.DataFrame, keyword: str) -> pd.Series:
+    kw = keyword.strip()
+    mask = pd.Series(False, index=df.index)
+    for col in df.columns:
+        mask = mask | df[col].astype(str).str.contains(kw, case=False, na=False, regex=False)
+    return mask
+
+
+def _load_amac_fund_df() -> pd.DataFrame:
+    """加载私募产品公示表（内存 → 磁盘 → akshare 分页）。"""
+    global _AMAC_FUND_DF, _AMAC_FUND_LOADED_AT
+    now = time.time()
+    if _AMAC_FUND_DF is not None and (now - _AMAC_FUND_LOADED_AT) < _AMAC_CACHE_TTL_SEC:
+        return _AMAC_FUND_DF
+    disk = _amac_read_disk("amac_fund_info")
+    if disk is not None and not disk.empty:
+        _AMAC_FUND_DF = disk
+        _AMAC_FUND_LOADED_AT = now
+        return disk
+    import akshare as ak
+
+    df = ak.amac_fund_info(start_page="1", end_page=str(_AMAC_FUND_END_PAGE))
+    if df is None or not isinstance(df, pd.DataFrame):
+        raise RuntimeError("amac_fund_info returned empty")
+    _AMAC_FUND_DF = df
+    _AMAC_FUND_LOADED_AT = now
+    _amac_write_disk("amac_fund_info", df)
+    return df
+
+
+def _load_amac_manager_df() -> pd.DataFrame:
+    global _AMAC_MANAGER_DF, _AMAC_MANAGER_LOADED_AT
+    now = time.time()
+    if _AMAC_MANAGER_DF is not None and (now - _AMAC_MANAGER_LOADED_AT) < _AMAC_CACHE_TTL_SEC:
+        return _AMAC_MANAGER_DF
+    disk = _amac_read_disk("amac_manager_info")
+    if disk is not None and not disk.empty:
+        _AMAC_MANAGER_DF = disk
+        _AMAC_MANAGER_LOADED_AT = now
+        return disk
+    import akshare as ak
+
+    df = ak.amac_manager_info()
+    if df is None or not isinstance(df, pd.DataFrame):
+        raise RuntimeError("amac_manager_info returned empty")
+    _AMAC_MANAGER_DF = df
+    _AMAC_MANAGER_LOADED_AT = now
+    _amac_write_disk("amac_manager_info", df)
+    return df
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fund")
+async def search_private_fund(keyword: str, limit: int = 10) -> dict:
+    """按关键词搜索中基协私募基金产品备案公示（无实时净值）。
+
+    Args:
+        keyword: 产品名 / 管理人名片段，如 ``"高毅"``、``"景林"``。
+        limit: 最大返回条数（默认 10，上限 50）。
+    """
+    if not (keyword or "").strip():
+        return _fmt_error(ValueError("keyword must be non-empty"), context="search_private_fund()")
+    limit = max(1, min(int(limit), 50))
+
+    def _call() -> dict[str, Any]:
+        df = _load_amac_fund_df()
+        hits = df[_keyword_mask(df, keyword)].head(limit)
+        return {
+            "keyword": keyword.strip(),
+            "matches": _df_to_records(hits),
+            "count": int(len(hits)),
+            "source": "amac",
+            "source_url": "https://gs.amac.org.cn/amac-infodisc/res/pof/fund/index.html",
+            "note": _AMAC_NOTE,
+            "cache_pages": f"1-{_AMAC_FUND_END_PAGE}",
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"search_private_fund(keyword={keyword!r})")
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fund")
+async def search_private_manager(keyword: str, limit: int = 10) -> dict:
+    """按关键词搜索中基协私募基金管理人公示。
+
+    Args:
+        keyword: 管理人名称片段。
+        limit: 最大返回条数（默认 10，上限 50）。
+    """
+    if not (keyword or "").strip():
+        return _fmt_error(
+            ValueError("keyword must be non-empty"), context="search_private_manager()"
+        )
+    limit = max(1, min(int(limit), 50))
+
+    def _call() -> dict[str, Any]:
+        df = _load_amac_manager_df()
+        hits = df[_keyword_mask(df, keyword)].head(limit)
+        return {
+            "keyword": keyword.strip(),
+            "matches": _df_to_records(hits),
+            "count": int(len(hits)),
+            "source": "amac",
+            "source_url": "https://gs.amac.org.cn/amac-infodisc/res/pof/manager/index.html",
+            "note": _AMAC_NOTE,
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"search_private_manager(keyword={keyword!r})")
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="fund")
+async def get_private_fund_info(name: str) -> dict:
+    """按产品名称取一条私募备案公示详情（精确优先，否则近名首条）。
+
+    Args:
+        name: 私募产品全称或显著片段。
+    """
+    if not (name or "").strip():
+        return _fmt_error(ValueError("name must be non-empty"), context="get_private_fund_info()")
+
+    def _call() -> dict[str, Any]:
+        df = _load_amac_fund_df()
+        name_col = None
+        for cand in ("基金名称", "基金名称（产品名称）", "产品名称"):
+            if cand in df.columns:
+                name_col = cand
+                break
+        if name_col is None:
+            name_col = str(df.columns[0])
+        exact = df[df[name_col].astype(str) == name.strip()]
+        hits = exact.head(1) if not exact.empty else df[_keyword_mask(df, name)].head(1)
+        if hits.empty:
+            return {
+                "name": name.strip(),
+                "info": None,
+                "found": False,
+                "source": "amac",
+                "note": _AMAC_NOTE,
+            }
+        records = _df_to_records(hits)
+        return {
+            "name": name.strip(),
+            "info": records[0],
+            "found": True,
+            "source": "amac",
+            "source_url": "https://gs.amac.org.cn/amac-infodisc/res/pof/fund/index.html",
+            "note": _AMAC_NOTE,
+        }
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:
+        return _fmt_error(e, context=f"get_private_fund_info(name={name!r})")
 
 
 if __name__ == "__main__":

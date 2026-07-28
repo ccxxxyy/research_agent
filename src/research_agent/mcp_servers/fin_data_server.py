@@ -574,7 +574,7 @@ async def get_financial_abstract(symbol: str, last_n_periods: int = 4) -> dict:
 
         df = ak.stock_financial_abstract(symbol=symbol)
         if df is None or df.empty:
-            return {"symbol": symbol, "periods": [], "metrics": {}}
+            return {"symbol": symbol, "periods": [], "metrics": {}, "source": "eastmoney"}
 
         period_cols = [c for c in df.columns if str(c).isdigit() and len(str(c)) == 8]
         period_cols.sort(reverse=True)  # newest first
@@ -604,6 +604,7 @@ async def get_financial_abstract(symbol: str, last_n_periods: int = 4) -> dict:
             "symbol": symbol,
             "periods": period_cols,
             "metrics": metrics,
+            "source": "eastmoney",
         }
 
     try:
@@ -657,7 +658,7 @@ async def get_financial_indicators(symbol: str, start_year: str = "2023") -> dic
 
         df = ak.stock_financial_analysis_indicator(symbol=symbol, start_year=start_year)
         if df is None or df.empty:
-            return {"symbol": symbol, "periods": [], "ratios": {}}
+            return {"symbol": symbol, "periods": [], "ratios": {}, "source": "eastmoney"}
 
         date_col = "日期" if "日期" in df.columns else df.columns[0]
         df = df.sort_values(date_col, ascending=False)
@@ -680,7 +681,12 @@ async def get_financial_indicators(symbol: str, start_year: str = "2023") -> dic
                         values.append(str(val))
             ratios[str(col)] = values
 
-        return {"symbol": symbol, "periods": periods, "ratios": ratios}
+        return {
+            "symbol": symbol,
+            "periods": periods,
+            "ratios": ratios,
+            "source": "eastmoney",
+        }
 
     try:
         return await asyncio.to_thread(_call)
@@ -729,7 +735,7 @@ async def search_stock_by_name(keyword: str, limit: int = 10) -> dict:
         mask = df["name"].astype(str).str.contains(keyword, na=False, regex=False)
         hits = df[mask].head(limit)
         matches = [{"code": str(r["code"]), "name": str(r["name"])} for _, r in hits.iterrows()]
-        return {"keyword": keyword, "matches": matches}
+        return {"keyword": keyword, "matches": matches, "source": "local_cache"}
 
     try:
         return await asyncio.to_thread(_call)
@@ -1560,6 +1566,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
         reason = "周末" if weekday >= 5 else "节假日"
         last_td = _find_last_trading_day()
         return {
+            "source": "cn_session_clock",
             "status": "non_trading_day",
             "is_trading_day": False,
             "current_time": current_time,
@@ -1581,6 +1588,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
     if hour_min < 915:
         last_td = _find_last_trading_day()
         return {
+            "source": "cn_session_clock",
             "status": "not_yet_open",
             "is_trading_day": True,
             "current_time": current_time,
@@ -1597,6 +1605,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
         }
     if hour_min < 925:
         return {
+            "source": "cn_session_clock",
             "status": "call_auction",
             "is_trading_day": True,
             "current_time": current_time,
@@ -1610,6 +1619,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
     if hour_min < 930:
         last_td = _find_last_trading_day()
         return {
+            "source": "cn_session_clock",
             "status": "pre_open_silence",
             "is_trading_day": True,
             "current_time": current_time,
@@ -1625,6 +1635,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
         }
     if hour_min <= 1130:
         return {
+            "source": "cn_session_clock",
             "status": "trading",
             "is_trading_day": True,
             "current_time": current_time,
@@ -1635,6 +1646,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
         }
     if hour_min < 1300:
         return {
+            "source": "cn_session_clock",
             "status": "lunch_break",
             "is_trading_day": True,
             "current_time": current_time,
@@ -1644,6 +1656,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
         }
     if hour_min < 1457:
         return {
+            "source": "cn_session_clock",
             "status": "trading",
             "is_trading_day": True,
             "current_time": current_time,
@@ -1654,6 +1667,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
         }
     if hour_min < 1500:
         return {
+            "source": "cn_session_clock",
             "status": "closing_auction",
             "is_trading_day": True,
             "current_time": current_time,
@@ -1662,6 +1676,7 @@ def _compute_market_status(*, _now: datetime | None = None) -> dict[str, Any]:
             "hint": "收盘集合竞价阶段；正式收盘价以 15:00 撮合结果为准。",
         }
     return {
+        "source": "cn_session_clock",
         "status": "closed",
         "is_trading_day": True,
         "current_time": current_time,

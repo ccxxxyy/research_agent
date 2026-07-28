@@ -5,6 +5,7 @@
 - 普通股 / ADR：``10-K`` / ``10-Q`` / ``8-K`` / ``DEF 14A``（修订件如 ``10-K/A`` 也会匹配）
 - ETF / 注册投资公司：``NPORT-P``（月度持仓）、``N-CSR`` / ``N-CSRS``（股东报告）、
   ``485BPOS``（招股书更新；``485APOS`` 作别名匹配）
+- 私募相关（需显式 ``forms``）：``D``（Form D 私募发行）、``ADV`` / ``ADV-E``（投资顾问）
 
 工具
 ----
@@ -13,6 +14,8 @@
 3. ``download_filing`` — 下载主文档到 ``./data/edgar_cache/``（按 URL 哈希缓存）
 4. ``extract_filing_metadata`` — 本地文件元数据（类型 / 大小 / PDF 页数）
 5. ``parse_filing_text`` — 有界正文提取（PDF 按页；HTML/TXT 按字符窗口）
+6. ``get_entity_overview`` — CIK/ticker → submissions 主体概况（私募/顾问无 NAV 时用）
+7. ``search_entity_by_name`` — 在 company_tickers 上按名称模糊（无 ticker 时）
 
 设计说明
 --------
@@ -71,6 +74,8 @@ _FORM_EQUIV_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"N-PORT", "NPORT", "NPORT-P", "NPORT-EX"}),
     frozenset({"N-CSR", "N-CSRS"}),
     frozenset({"485BPOS", "485APOS"}),
+    frozenset({"ADV", "ADV-E", "ADV/A"}),
+    frozenset({"D", "D/A"}),
 )
 
 MAX_PAGE_WINDOW = 20
@@ -404,12 +409,103 @@ async def search_filings(
             "count": len(filings),
             "source": "data.sec.gov/submissions",
             "source_url": SUBMISSIONS_URL.format(cik10=cik10),
+            "note": (
+                "私募/顾问场景可设 forms='D,ADV'；Form D 为私募发行备案，"
+                "ADV 为投资顾问披露。本工具不提供私募实时 NAV。"
+            ),
         }
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,
             context=f"search_filings(identifier={identifier!r}, forms={forms!r})",
         )
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_DAILY, namespace="us_filing")
+async def get_entity_overview(identifier: str) -> dict:
+    """返回 SEC submissions 主体概况（名称、实体类型、SIC、交易所、地址等）。
+
+    适用于上市公司、ETF 发行人，以及可解析到 CIK 的顾问/私募相关主体。
+    **不提供**私募实时净值。
+
+    Args:
+        identifier: ticker（``AAPL``）或 CIK。
+    """
+    try:
+        resolved = await _resolve_cik_impl(identifier)
+        if "error" in resolved:
+            return resolved
+        cik10 = str(resolved["cik10"])
+        payload = await _http_get_json(SUBMISSIONS_URL.format(cik10=cik10))
+        addresses = payload.get("addresses") or {}
+        overview = {
+            "name": payload.get("name"),
+            "cik10": cik10,
+            "tickers": payload.get("tickers") or [],
+            "exchanges": payload.get("exchanges") or [],
+            "sic": payload.get("sic"),
+            "sic_description": payload.get("sicDescription"),
+            "entity_type": payload.get("entityType"),
+            "fiscal_year_end": payload.get("fiscalYearEnd"),
+            "state_of_incorporation": payload.get("stateOfIncorporation"),
+            "phone": payload.get("phone"),
+            "website": payload.get("website"),
+            "former_names": payload.get("formerNames") or [],
+            "business_address": addresses.get("business"),
+            "mailing_address": addresses.get("mailing"),
+        }
+        return {
+            "identifier": identifier.strip(),
+            "overview": overview,
+            "source": "data.sec.gov/submissions",
+            "source_url": SUBMISSIONS_URL.format(cik10=cik10),
+            "note": "主体概况来自 EDGAR submissions；私募无免费实时 NAV，请用 Form D/ADV 披露。",
+        }
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=f"get_entity_overview({identifier!r})")
+
+
+@mcp.tool()
+@cached_tool(ttl=TTL_LONG, namespace="us_filing")
+async def search_entity_by_name(keyword: str, limit: int = 10) -> dict:
+    """在 SEC ``company_tickers.json`` 上按公司名模糊搜索（便于无 ticker 主体）。
+
+    Args:
+        keyword: 名称片段（英文为主）。
+        limit: 最大返回条数（1–40）。
+    """
+    if not (keyword or "").strip():
+        return _fmt_error(
+            ValueError("keyword must be non-empty"), context="search_entity_by_name()"
+        )
+    limit = max(1, min(int(limit), 40))
+    kw = keyword.strip().lower()
+    try:
+        mapping = await _load_ticker_map()
+        matches: list[dict[str, Any]] = []
+        for ticker, meta in mapping.items():
+            name = str(meta.get("name") or "")
+            if kw in name.lower() or kw == ticker.lower():
+                matches.append(
+                    {
+                        "ticker": ticker,
+                        "name": name,
+                        "cik10": meta.get("cik10"),
+                    }
+                )
+                if len(matches) >= limit:
+                    break
+        return {
+            "keyword": keyword.strip(),
+            "matches": matches,
+            "count": len(matches),
+            "source": "company_tickers.json",
+            "source_url": COMPANY_TICKERS_URL,
+            "note": "仅覆盖 SEC company_tickers 名册；冷门私募顾问可能无 ticker，可改用已知 CIK。",
+        }
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(e, context=f"search_entity_by_name({keyword!r})")
 
 
 @mcp.tool()

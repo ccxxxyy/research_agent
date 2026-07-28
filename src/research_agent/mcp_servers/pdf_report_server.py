@@ -284,6 +284,7 @@ async def search_announcements(
                         "count": 0,
                         "announcements": [],
                         "note": f"symbol {symbol!r} not found in {market!r} index",
+                        "source": "cninfo",
                     }
                 stock_item = f"{symbol},{org_id}"
 
@@ -354,7 +355,13 @@ async def search_announcements(
                     break
                 page_num += 1
 
-            return {"symbol": symbol, "count": len(records), "announcements": records}
+            return {
+                "symbol": symbol,
+                "count": len(records),
+                "announcements": records,
+                "source": "cninfo",
+                "source_url": "http://www.cninfo.com.cn/",
+            }
     except Exception as e:
         return _fmt_error(
             e,
@@ -422,6 +429,8 @@ async def download_pdf(pdf_url: str) -> dict:
             "local_path": str(cache_path),
             "size_bytes": cache_path.stat().st_size,
             "from_cache": True,
+            "source": "cninfo",
+            "source_url": pdf_url,
         }
 
     try:
@@ -448,6 +457,8 @@ async def download_pdf(pdf_url: str) -> dict:
         "local_path": str(cache_path),
         "size_bytes": len(data),
         "from_cache": False,
+        "source": "cninfo",
+        "source_url": pdf_url,
     }
 
 
@@ -518,6 +529,7 @@ async def parse_pdf_pages(
             "requested_range": {"start": start_page, "end": end_page},
             "total_pages": total,
             "pages": pages_out,
+            "source": "cninfo",
         }
 
     try:
@@ -580,6 +592,7 @@ async def extract_pdf_metadata(local_path: str) -> dict:
             "num_pages": num_pages,
             "size_bytes": path.stat().st_size,
             "metadata": nice_meta,
+            "source": "cninfo",
         }
 
     try:

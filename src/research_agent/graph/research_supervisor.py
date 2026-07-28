@@ -82,6 +82,11 @@ SUPERVISOR_PROMPT_BASE = """\
 - 没有现成代码时：先移交**下方团队名单中已挂载**的搜码/行情专家（A 股侧 ``fin_search_stock_by_name``；美股侧 ``us_search_ticker``），再移交对应侧舆情/披露专家。
 - **禁止**因为「解析器没识别到 / 不在别名表」就跳过、拒答，或只写「需转交某某专家」而不发起 ``transfer_to_*``。
 
+### 冷门 / 别名表外中文名（搜码协作，非自动 MIXED）
+- 解析器别名表只是加速，**不是**完整公司库。冷门中文名不在 ``symbols=`` 时，**禁止**拒答或空写「需转交」。
+- **市场不确定时**：先移交**下方团队名单中已挂载**的搜码专家（中国侧 ``fin_search_stock_by_name``；美国侧 ``us_search_ticker``）。按命中再分侧深入；**两侧皆空**则如实说明「名单/检索无匹配」，**禁止编造**代码或 ticker。
+- **禁止**把「解析器默认 CN_A」当成「该名字一定是 A 股」；也**禁止**把冷门名一律当成 MIXED 双边空跑（移交预算留给有命中的一侧）。
+
 ### 按 market 字段的默认倾向（可被常识与搜码结果纠正）
 - **CN_A**：优先 A 股侧专家；若你识别出美股标的，仍须另走美股侧（此时按 MIXED 协作）。
 - **US**：优先美股侧专家；若识别出 A 股标的（如「xx股份 / 创业板 / 六位码」），必须再移交名单中已挂载的 A 股侧专家，不得只用美股工具硬查。
@@ -210,19 +215,23 @@ SUPERVISOR_PROMPT_SENTIMENT = """\
 """
 
 SUPERVISOR_PROMPT_FUND = """\
-  - fund_expert  ：公募基金分析专家，通过东方财富基金网获取 ETF / LOF / 开放式基金 / QDII 数据。
+  - fund_expert  ：公募基金 + 国内私募协会备案（AMAC）。公募走东方财富/天天基金；私募仅备案公示、无实时净值。
     工具集（前缀 fund_）：
       市场级：
         * fund_search_fund / fund_get_fund_etf_spot / fund_get_fund_lof_spot
         * fund_get_fund_rating / fund_get_fund_rank / fund_get_fund_daily
         * fund_get_fund_qdii_rank — QDII 专项排行
-      单只基金：
+      单只公募：
         * fund_get_fund_info / fund_get_fund_nav / fund_get_fund_etf_hist
         * fund_get_fund_holdings / fund_get_fund_manager
+      私募备案（AMAC）：
+        * fund_search_private_fund / fund_search_private_manager / fund_get_private_fund_info
     当用户询问以下内容时委派给该专家：
-    "ETF 排行""基金推荐""QDII 排行""基金经理""沪深300ETF 走势""某基金重仓股""基金评级""今日基金涨幅榜"。
-    注意：data_expert 的 fin_get_etf_spot 也能查 ETF 行情，但 fund_expert 更全面（净值/持仓/评级/QDII/经理）。
-    **禁止**把美股共同基金 / 国内期货期权交给 fund_expert（分别用 us_data_expert / derivatives_expert）。
+    "ETF 排行""基金推荐""QDII 排行""基金经理""沪深300ETF 走势""某基金重仓股""基金评级""今日基金涨幅榜"；
+    "私募备案""私募管理人""高毅/景林某产品登记信息"。
+    注意：data_expert 的 fin_get_etf_spot 也能查 ETF 行情，但 fund_expert 更全面（净值/持仓/评级/QDII/经理/AMAC）。
+    **禁止**用公募净值工具冒充私募净值；**禁止**把美股共同基金 / 美股私募披露 / 国内期货期权交给 fund_expert
+    （分别用 us_data_expert / us_filing_expert / derivatives_expert）。
 """
 
 SUPERVISOR_PROMPT_DERIVATIVES = """\
@@ -264,17 +273,20 @@ SUPERVISOR_PROMPT_US_DATA = """\
 """
 
 SUPERVISOR_PROMPT_US_FILING = """\
-  - us_filing_expert ：通过 SEC EDGAR 获取美股披露（与巨潮 ``pdf_*`` 平行隔离）。
+  - us_filing_expert ：通过 SEC EDGAR 获取美股披露与主体概况（与巨潮 ``pdf_*`` 平行隔离）。
     工具集（前缀 us_filing_）：
-        * us_filing_resolve_cik
+        * us_filing_resolve_cik / us_filing_search_entity_by_name
+        * us_filing_get_entity_overview — 主体概况（无私募 NAV）
         * us_filing_search_filings      — 普通股 10-K/10-Q/8-K/DEF 14A；
-                                          ETF 另含 NPORT-P / N-CSR / N-CSRS / 485BPOS
+                                          ETF 另含 NPORT-P / N-CSR / N-CSRS / 485BPOS；
+                                          私募相关可显式 forms=D,ADV
         * us_filing_download_filing
         * us_filing_extract_filing_metadata
         * us_filing_parse_filing_text
     当用户询问美股年报/季报/临时公告/代理声明、Item 1A、MD&A、10-K 风险因素，
-    或 ETF（QQQ/SPY 等）N-PORT 持仓备案 / N-CSR 股东报告 / 485BPOS 招股书更新时委派。
-    禁止把美股披露交给巨潮 ``pdf_*`` 专家。
+    或 ETF（QQQ/SPY 等）N-PORT 持仓备案 / N-CSR 股东报告 / 485BPOS 招股书更新，
+    或 PE/VC/对冲/私募顾问的 EDGAR 概况与 Form D/ADV 时委派。
+    禁止把美股披露交给巨潮 ``pdf_*``；禁止把私募当共同基金交给 us_data_expert 编造 NAV。
 """
 
 SUPERVISOR_PROMPT_US_NEWS = """\
@@ -382,7 +394,8 @@ C. 当团队中有 coder 专家时，绝不自己做算术 / 统计 / 数据转�
 D. 如果某个子任务应该有移交但你发现自己在自行生成文本，那就是 bug —
    在为该子任务撰写任何文字之前，先发起缺失的 ``transfer_to_<name>``调用来修复它。
 E. **别名表不是门禁**：``[MarketResolution].symbols`` 只列解析器认出的标的。
-   用户还点了其他公司名时，用常识分市场 + 搜码专家解析 + 分侧移交；这正是多智能体协作，不是单次工具映射。
+   用户还点了其他公司名（含冷门中文名）时，用常识分市场 + 搜码专家解析 + 分侧移交；这正是多智能体协作，不是单次工具映射。
+   不确定市场时先搜码再路由；勿因默认 ``CN_A`` 硬查，也勿无命中就双边空跑 MIXED。
 F. **无依据不下单话术**：若最终回答出现买入/卖出/加仓/目标价等，却没有对应工具数字与 ``source_url`` 依据行，即为错误——删掉操作句，改为数据观察或「数据不足」。
 """
 

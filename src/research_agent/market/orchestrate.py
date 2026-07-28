@@ -12,6 +12,10 @@ from research_agent.market.types import Market, MarketResolution, SymbolRef
 
 _COMPARE_RE = re.compile(r"(对比|比较|对照|vs\.?|versus|横比|孰优|谁更)", re.I)
 _FILING_RE = re.compile(r"(年报|季报|公告|披露|10-?\s*k|10-?\s*q|8-?\s*k|edgar|巨潮)", re.I)
+_PRIVATE_FUND_RE = re.compile(
+    r"(私募|中基协|协会备案|amac|form\s*d|form\s*adv|adv\s*披露|private\s*equity|private\s*fund)",
+    re.I,
+)
 _NEWS_RE = re.compile(r"(新闻|快讯|资讯|headline|news)", re.I)
 _SENTIMENT_RE = re.compile(r"(舆情|情绪|情感|sentiment)", re.I)
 _PRICE_RE = re.compile(r"(股价|报价|行情|走势|涨跌|市值|price|quote|chart)", re.I)
@@ -66,6 +70,8 @@ class MixedOrchestrationPlan:
 
 
 def _infer_intent(query: str) -> str:
+    if _PRIVATE_FUND_RE.search(query):
+        return "private_fund"
     if _FILING_RE.search(query):
         return "filing"
     if _SENTIMENT_RE.search(query):
@@ -80,6 +86,7 @@ def _infer_intent(query: str) -> str:
 def _experts_for(side: Market, intent: str) -> tuple[str, ...]:
     if side == Market.US:
         mapping = {
+            "private_fund": ("us_filing_expert",),
             "filing": ("us_filing_expert",),
             "news": ("us_news_expert",),
             "sentiment": ("us_sentiment_expert", "us_news_expert"),
@@ -88,6 +95,7 @@ def _experts_for(side: Market, intent: str) -> tuple[str, ...]:
         }
     else:
         mapping = {
+            "private_fund": ("fund_expert",),
             "filing": ("report_expert",),
             "news": ("news_expert",),
             "sentiment": ("sentiment_expert", "news_expert"),
@@ -98,7 +106,17 @@ def _experts_for(side: Market, intent: str) -> tuple[str, ...]:
 
 
 def _instruction_for(side: Market, focus: str, intent: str) -> str:
-    side_name = "美股" if side == Market.US else "A股"
+    side_name = "美国市场" if side == Market.US else "中国市场"
+    if intent == "private_fund":
+        if side == Market.US:
+            return (
+                f"仅用 {side_name} us_filing_expert 查 {focus} 的 EDGAR 概况 / Form D·ADV；"
+                f"禁止编造私募净值，勿用 us_data 共同基金接口"
+            )
+        return (
+            f"仅用 {side_name} fund_expert 的 AMAC 私募备案工具查 {focus}；"
+            f"禁止编造净值，勿用公募 nav 冒充"
+        )
     if intent == "filing":
         return f"仅用{side_name}披露专家查 {focus} 的披露/年报，勿跨市场"
     if intent == "news":
@@ -145,13 +163,19 @@ def build_mixed_orchestration_plan(
                 )
             )
     else:
+        cn_focus = "中国市场侧主题"
+        cn_instr = (
+            "拆出问句中的中国市场子问题（含 AMAC 私募备案时走 fund_expert），仅用中国市场侧专家作答"
+            if intent == "private_fund"
+            else "拆出问句中的中国市场子问题，仅用中国市场侧专家作答"
+        )
         subtasks.append(
             MixedSubTask(
                 side=Market.CN_A,
-                focus="A股侧主题",
+                focus=cn_focus,
                 intent=intent,
                 preferred_experts=_experts_for(Market.CN_A, intent),
-                instruction="拆出问句中的 A 股子问题，仅用 A 股侧专家作答",
+                instruction=cn_instr,
             )
         )
 
@@ -168,13 +192,19 @@ def build_mixed_orchestration_plan(
                 )
             )
     else:
+        us_focus = "美国市场侧主题"
+        us_instr = (
+            "拆出问句中的美国市场子问题（ADV/Form D 走 us_filing_expert），仅用美国市场侧专家作答"
+            if intent == "private_fund"
+            else "拆出问句中的美国市场子问题，仅用美国市场侧专家作答"
+        )
         subtasks.append(
             MixedSubTask(
                 side=Market.US,
-                focus="美股侧主题",
+                focus=us_focus,
                 intent=intent,
                 preferred_experts=_experts_for(Market.US, intent),
-                instruction="拆出问句中的美股子问题，仅用美股侧专家作答",
+                instruction=us_instr,
             )
         )
 

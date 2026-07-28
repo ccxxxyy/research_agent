@@ -586,6 +586,12 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
               <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
               <div class="example" onclick="fillQuery(this)">今日龙虎榜机构净买和解读要点</div>
             </div>
+            <div class="panel-subhead">私募快捷（协会备案，无净值）</div>
+            <div class="example-list">
+              <div class="example" onclick="fillQuery(this)">查一下高毅资产在中基协的私募管理人备案信息</div>
+              <div class="example" onclick="fillQuery(this)">搜索景林相关私募产品备案公示（只要协会信息，不要编造净值）</div>
+              <div class="example" onclick="fillQuery(this)">红杉中国相关私募基金在协会的备案情况如何</div>
+            </div>
             <div class="panel-subhead">期权快捷</div>
             <div class="example-list">
               <div class="example" onclick="fillQuery(this)">50ETF 期权近月到期日有哪些</div>
@@ -658,6 +664,12 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
                 <div class="example" onclick="fillQuery(this)">今日美股跌幅榜有哪些风险信号？</div>
                 <div class="example" onclick="fillQuery(this)">特斯拉最新行情、交付预期与后市展望</div>
               </div>
+              <div class="panel-subhead">私募快捷（EDGAR 概况 / Form D·ADV，无 NAV）</div>
+              <div class="example-list">
+                <div class="example" onclick="fillQuery(this)">查 Blackstone 在 SEC EDGAR 上的主体概况</div>
+                <div class="example" onclick="fillQuery(this)">用 Form D 查某发行人近期私募发行备案有哪些</div>
+                <div class="example" onclick="fillQuery(this)">用 ADV 披露看投资顾问概况（不要编造私募净值）</div>
+              </div>
               <div class="panel-subhead">期权快捷</div>
               <div class="example-list">
                 <div class="example" onclick="fillQuery(this)">AAPL 近月期权到期日与看涨看跌链</div>
@@ -705,25 +717,25 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 <script>
 const ALL_SPECIALISTS = [
   // A 股专属
-  {id:'data_expert',         label:'数据专家',   desc:'A股财务 / 行情', group:'cn'},
-  {id:'fund_expert',         label:'基金专家',   desc:'ETF/LOF/开放式/QDII', group:'cn'},
+  {id:'data_expert',         label:'数据专家',   desc:'中国市场财务 / 行情', group:'cn'},
+  {id:'fund_expert',         label:'基金专家',   desc:'公募 ETF/QDII + 私募备案', group:'cn'},
   {id:'derivatives_expert',  label:'衍生品专家', desc:'国内期货 / ETF·股指期权', group:'cn'},
   {id:'report_expert',       label:'公告专家',   desc:'巨潮公告 / 年报', group:'cn'},
-  {id:'news_expert',         label:'新闻专家',   desc:'A股新闻 / 快讯', group:'cn'},
-  {id:'sentiment_expert',    label:'舆情专家',   desc:'A股舆情量化', group:'cn'},
+  {id:'news_expert',         label:'新闻专家',   desc:'中国市场新闻 / 快讯', group:'cn'},
+  {id:'sentiment_expert',    label:'舆情专家',   desc:'中国市场舆情量化', group:'cn'},
   // 跨市场共享（CN / US 均可调用，不重复挂美股副本）
   {id:'coder_expert',        label:'代码专家',   desc:'共享 · Python 计算', group:'shared'},
   {id:'knowledge_expert',    label:'知识库专家', desc:'共享 · 用户 PDF', group:'shared'},
   // 美股专属
   {id:'us_data_expert',      label:'数据专家', desc:'股票/ETF/共同基金/期货/期权', group:'us'},
-  {id:'us_filing_expert',    label:'披露专家', desc:'美股SEC EDGAR', group:'us'},
-  {id:'us_news_expert',      label:'新闻专家', desc:'美股Yahoo 新闻', group:'us'},
-  {id:'us_sentiment_expert', label:'舆情专家', desc:'美股英文舆情', group:'us'},
+  {id:'us_filing_expert',    label:'披露专家', desc:'EDGAR + 私募 Form D/ADV', group:'us'},
+  {id:'us_news_expert',      label:'新闻专家', desc:'美国市场 Yahoo 新闻', group:'us'},
+  {id:'us_sentiment_expert', label:'舆情专家', desc:'美国市场英文舆情', group:'us'},
 ];
 const SPECIALIST_GROUPS = [
-  {id:'cn', label:'A 股'},
+  {id:'cn', label:'中国市场'},
   {id:'shared', label:'共享'},
-  {id:'us', label:'美股'},
+  {id:'us', label:'美国市场'},
 ];
 
 // =====================================================================
@@ -820,6 +832,25 @@ const SOURCE_CODE_RULES = {
   'company_tickers.json': {label:'SEC·company tickers', url:'https://www.sec.gov/files/company_tickers.json'},
   input_cik:              {label:'SEC·CIK', url:'https://www.sec.gov/edgar/searchedgar/companysearch'},
   en_vader_finlex_v2:     {label:'本地VADER打分', url:null},
+  eastmoney:              {label:'东方财富', url:'https://www.eastmoney.com/'},
+  eastmoney_push2_curl:   {label:'东方财富·行情', url:'https://quote.eastmoney.com/'},
+  eastmoney_push2:        {label:'东方财富·行情', url:'https://quote.eastmoney.com/'},
+  eastmoney_rank:         {label:'东方财富·排行', url:'https://fund.eastmoney.com/'},
+  eastmoney_nav:          {label:'天天基金·净值', url:'https://fund.eastmoney.com/'},
+  'eastmoney/stats.gov.cn':{label:'东财/国家统计局', url:'https://data.eastmoney.com/cjsj/gdp.html'},
+  sina:                   {label:'新浪财经', url:'https://finance.sina.com.cn/'},
+  sina_realtime:          {label:'新浪·实时', url:'https://finance.sina.com.cn/'},
+  tencent_realtime:       {label:'腾讯·行情', url:'https://finance.qq.com/'},
+  xueqiu:                 {label:'雪球', url:'https://xueqiu.com/'},
+  cls:                    {label:'财联社', url:'https://www.cls.cn/'},
+  baidu:                  {label:'百度财经', url:'https://gushitong.baidu.com/'},
+  cninfo:                 {label:'巨潮资讯', url:'http://www.cninfo.com.cn/'},
+  local_cache:            {label:'本地名单缓存', url:null},
+  cn_session_clock:       {label:'A股交易时段', url:null},
+  catalog:                {label:'本地品种目录', url:null},
+  amac:                   {label:'中基协AMAC', url:'https://gs.amac.org.cn/'},
+  market_aggregate:       {label:'市场聚合', url:null},
+  none:                   {label:'无数据源', url:null},
 };
 
 function _escapeHtml(s) {
@@ -1068,7 +1099,7 @@ function getUserId() {
   return document.getElementById('userIdInput').value.trim() || 'anonymous';
 }
 
-const MARKET_LABELS = {CN_A:'A股', US:'美股', MIXED:'跨市场', UNKNOWN:'未判定'};
+const MARKET_LABELS = {CN_A:'中国市场', US:'美国市场', MIXED:'跨市场', UNKNOWN:'未判定'};
 
 function _marketCssClass(market) {
   const m = String(market || 'UNKNOWN').toUpperCase().replace('-', '_');
@@ -1540,6 +1571,12 @@ function _dashboardInnerHtml() {
           <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
           <div class="example" onclick="fillQuery(this)">今日龙虎榜机构净买和解读要点</div>
         </div>
+        <div class="panel-subhead">私募快捷（协会备案，无净值）</div>
+        <div class="example-list">
+          <div class="example" onclick="fillQuery(this)">查一下高毅资产在中基协的私募管理人备案信息</div>
+          <div class="example" onclick="fillQuery(this)">搜索景林相关私募产品备案公示（只要协会信息，不要编造净值）</div>
+          <div class="example" onclick="fillQuery(this)">红杉中国相关私募基金在协会的备案情况如何</div>
+        </div>
         <div class="panel-subhead">期权快捷</div>
         <div class="example-list">
           <div class="example" onclick="fillQuery(this)">50ETF 期权近月到期日有哪些</div>
@@ -1610,6 +1647,12 @@ function _dashboardInnerHtml() {
             <div class="example" onclick="fillQuery(this)">英伟达与AMD近期走势和估值对比</div>
             <div class="example" onclick="fillQuery(this)">今日美股跌幅榜有哪些风险信号？</div>
             <div class="example" onclick="fillQuery(this)">特斯拉最新行情、交付预期与后市展望</div>
+          </div>
+          <div class="panel-subhead">私募快捷（EDGAR 概况 / Form D·ADV，无 NAV）</div>
+          <div class="example-list">
+            <div class="example" onclick="fillQuery(this)">查 Blackstone 在 SEC EDGAR 上的主体概况</div>
+            <div class="example" onclick="fillQuery(this)">用 Form D 查某发行人近期私募发行备案有哪些</div>
+            <div class="example" onclick="fillQuery(this)">用 ADV 披露看投资顾问概况（不要编造私募净值）</div>
           </div>
           <div class="panel-subhead">期权快捷</div>
           <div class="example-list">
@@ -2212,7 +2255,7 @@ function _renderStatusBar(status, usStatus) {
         call_auction:'盘前', pre_open_silence:'静默', closing_auction:'收盘竞价',
         pre_market:'盘前'  // 兼容旧字段；A 股已改为 call_auction
       };
-      badge.textContent = 'A股 · ' + (labels[s] || s);
+      badge.textContent = '中国市场 · ' + (labels[s] || s);
       // 状态行用 CSS · 分隔 A/美股，去掉句末「。」避免「）。·」
       msg.textContent = String(status.message || '').replace(/[。．.]+$/u, '');
     }
@@ -2224,7 +2267,7 @@ function _renderStatusBar(status, usStatus) {
       const s = usStatus.status || 'unknown';
       const cls = s === 'open' ? 'us-trading' : (s === 'pre_market' || s === 'after_hours' ? 'us-pre' : 'us-closed');
       badge.className = 'market-badge ' + cls;
-      badge.textContent = '美股 · ' + (usStatus.label || s);
+      badge.textContent = '美国市场 · ' + (usStatus.label || s);
     }
     if (msg) {
       const s = usStatus.status || 'unknown';
@@ -2756,17 +2799,25 @@ function _msgUsedUsSpecialist(msgEl) {
 function applyMarketBadgeSafely(market, source, msgEl, td) {
   let m = String(market || '').toUpperCase().replace('-', '_');
   let src = String(source || '');
+  const resolved = String(td?.market || '').toUpperCase().replace('-', '_');
   const fromHandoffs = _marketFromHandoffs(msgEl);
   // 两侧专家都出现过 → 一律跨市场（优先于单侧 header / specialist_handoff）
   if (fromHandoffs === 'MIXED') {
     m = 'MIXED';
     src = 'handoff_sides';
-  } else if (String(td?.market || '').toUpperCase() === 'MIXED'
-             && (src === 'specialist_handoff' || src === 'content_heuristic')) {
-    m = 'MIXED';
-    src = td.market_source || 'handoff_sides';
+  } else if (resolved === 'MIXED') {
+    // 解析器已判跨市场：单侧移交/启发式不得降级为「仅中国/仅美国」
+    // （例如先走 us_filing，fund_expert 尚未移交时仍应显示跨市场）
+    if (
+      src === 'specialist_handoff' ||
+      src === 'content_heuristic' ||
+      src === 'handoff_sides'
+    ) {
+      m = 'MIXED';
+      src = td.market_source || 'query_signal';
+    }
   }
-  // 默认 A 股不能盖掉已用美股专家 / 会话粘性美股（但不可盖掉 MIXED）
+  // 默认中国市场不能盖掉已用美国侧专家 / 会话粘性美国（但不可盖掉 MIXED）
   if (
     m === 'CN_A' &&
     (src === 'default' || src === 'product_default' || src === 'product_default_cn_a') &&
@@ -2955,9 +3006,11 @@ async function _runStream(query, sendThreadId, userId) {
             tag.textContent = specialist;
             handoffsEl.appendChild(tag);
             td._activeSpecialist = specialist;
-            // 按已出现的专家侧别刷新徽章（双边 → 跨市场；勿被单侧美股移交钉死）
+            // 按已出现的专家侧别刷新徽章；解析器已是跨市场时不因单侧移交降级
             const sideMkt = _marketFromHandoffs(msgEl);
-            if (sideMkt) {
+            if (String(td?.market || '').toUpperCase() === 'MIXED') {
+              applyMarketBadgeSafely('MIXED', td.market_source || 'query_signal', msgEl, td);
+            } else if (sideMkt) {
               applyMarketBadgeSafely(sideMkt, 'handoff_sides', msgEl, td);
             } else if (/^us_|us_data|us_filing|us_news|us_sentiment/i.test(String(specialist))) {
               applyMarketBadgeSafely('US', 'specialist_handoff', msgEl, td);
@@ -3076,8 +3129,8 @@ async function _runStream(query, sendThreadId, userId) {
             _setPhaseText(phaseTag, '回答完成');
             finalText = evt.content || '';
             const sidesDone = _marketFromHandoffs(msgEl);
-            if (sidesDone === 'MIXED') {
-              applyMarketBadgeSafely('MIXED', 'handoff_sides', msgEl, td);
+            if (String(td?.market || '').toUpperCase() === 'MIXED' || sidesDone === 'MIXED') {
+              applyMarketBadgeSafely('MIXED', td.market_source || 'handoff_sides', msgEl, td);
             } else if (evt.metadata?.market) {
               applyMarketBadgeSafely(evt.metadata.market, evt.metadata.market_source, msgEl, td);
             } else if (looksLikeUsMarketText(finalText) && (!td.market || td.market === 'UNKNOWN')) {
