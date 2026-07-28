@@ -31,6 +31,19 @@ def _reset_caches():
     reset_tool_cache_for_tests()
 
 
+def test_em_display_industry_filter():
+    """东财行业板块页口径：保留二级，过滤细分/一级大类。"""
+    import research_agent.mcp_servers.fin_data_server as mod
+
+    assert mod._is_em_display_industry("半导体", "BK1036")
+    assert mod._is_em_display_industry("白酒Ⅱ", "BK1277")
+    assert mod._is_em_display_industry("元件", "BK0459")
+    assert not mod._is_em_display_industry("文字媒体", "BK1298")
+    assert not mod._is_em_display_industry("分立器件", "BK1327")
+    assert not mod._is_em_display_industry("食品饮料", "BK0438")
+    assert not mod._is_em_display_industry("白酒Ⅲ", "BK1575")
+
+
 def _force_push2_available(mod, available: bool) -> None:
     """设置 push2 可用性并刷新 TTL，使 _is_push2_available() 返回缓存值。"""
     import time
@@ -287,17 +300,30 @@ async def test_financial_indicators():
 async def test_sector_fund_flow():
     import research_agent.mcp_servers.fin_data_server as mod
 
-    mock_df = pd.DataFrame(
-        {
-            "名称": ["半导体", "新能源"],
-            "今日涨跌幅": [2.0, -1.0],
-            "今日主力净流入-净额": [1e8, -5e7],
-        }
-    )
+    mock_curl = {
+        "type": "行业板块列表",
+        "gainers": [{"板块名称": "半导体", "涨跌幅": 2.0}],
+        "losers": [{"板块名称": "新能源", "涨跌幅": -1.0}],
+        "boards": [{"板块名称": "半导体", "涨跌幅": 2.0}],
+        "count": 1,
+        "source": "eastmoney_push2_curl",
+        "source_url": "https://quote.eastmoney.com/center/boardlist.html#industry_board",
+    }
 
-    with patch("akshare.stock_board_industry_name_em", return_value=mock_df):
+    with patch.object(mod, "_fetch_em_board_ranks_via_curl", return_value=mock_curl):
         result = await mod.get_sector_fund_flow(sector_type="行业", limit=5)
     assert "error" not in result
+    assert "source_url" in result
+    assert result["sector_type"] == "行业"
+
+
+@pytest.mark.asyncio
+async def test_sector_fund_flow_unavailable_without_curl():
+    import research_agent.mcp_servers.fin_data_server as mod
+
+    with patch.object(mod, "_fetch_em_board_ranks_via_curl", return_value=None):
+        result = await mod.get_sector_fund_flow(sector_type="行业", limit=5)
+    assert "error" in result
     assert "source_url" in result
 
 
@@ -464,15 +490,16 @@ async def test_concept_board_list():
     """获取概念板块列表。"""
     import research_agent.mcp_servers.fin_data_server as mod
 
-    mock_df = pd.DataFrame(
-        {
-            "板块名称": ["人工智能", "芯片"],
-            "涨跌幅": [3.0, 2.0],
-            "领涨股票": ["科大讯飞", "中芯国际"],
-        }
-    )
+    mock_curl = {
+        "type": "概念板块列表",
+        "gainers": [{"板块名称": "人工智能", "涨跌幅": 3.0}],
+        "losers": [{"板块名称": "芯片", "涨跌幅": -2.0}],
+        "boards": [{"板块名称": "人工智能", "涨跌幅": 3.0}],
+        "count": 1,
+        "source": "eastmoney_push2_curl",
+    }
 
-    with patch("akshare.stock_board_concept_name_em", return_value=mock_df):
+    with patch.object(mod, "_fetch_em_board_ranks_via_curl", return_value=mock_curl):
         result = await mod.get_concept_board(board_name="", limit=5)
     assert "error" not in result
     assert result["type"] == "概念板块列表"
@@ -505,14 +532,16 @@ async def test_industry_board_list():
     """获取行业板块列表。"""
     import research_agent.mcp_servers.fin_data_server as mod
 
-    mock_df = pd.DataFrame(
-        {
-            "板块名称": ["半导体", "白酒"],
-            "涨跌幅": [2.5, 1.0],
-        }
-    )
+    mock_curl = {
+        "type": "行业板块列表",
+        "gainers": [{"板块名称": "半导体", "涨跌幅": 2.5}],
+        "losers": [{"板块名称": "白酒", "涨跌幅": -1.0}],
+        "boards": [{"板块名称": "半导体", "涨跌幅": 2.5}],
+        "count": 1,
+        "source": "eastmoney_push2_curl",
+    }
 
-    with patch("akshare.stock_board_industry_name_em", return_value=mock_df):
+    with patch.object(mod, "_fetch_em_board_ranks_via_curl", return_value=mock_curl):
         result = await mod.get_industry_board(board_name="", limit=5)
     assert "error" not in result
     assert result["type"] == "行业板块列表"

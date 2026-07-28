@@ -138,13 +138,10 @@ async def load_us_data_server_tools() -> list[BaseTool]:
 async def load_us_filing_server_tools() -> list[BaseTool]:
     """通过 stdio 启动 ``us_filing_server`` 并返回其工具列表。
 
-    暴露 SEC EDGAR 披露工具，每个通过 ``tool_name_prefix=True`` 添加 ``us_filing_`` 前缀：
+    暴露 SEC EDGAR + IAPD 工具，每个通过 ``tool_name_prefix=True`` 添加 ``us_filing_`` 前缀：
 
-    - ``us_filing_resolve_cik``
-    - ``us_filing_search_filings``
-    - ``us_filing_download_filing``
-    - ``us_filing_extract_filing_metadata``
-    - ``us_filing_parse_filing_text``
+    - ``us_filing_resolve_cik`` / ``search_filings`` / ``download_filing`` / …
+    - ``us_filing_search_investment_adviser`` / ``get_investment_adviser_overview``（Form ADV）
 
     与 ``pdf_report_server``（巨潮）**平行隔离**。
     """

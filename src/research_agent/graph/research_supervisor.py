@@ -224,11 +224,12 @@ SUPERVISOR_PROMPT_FUND = """\
       单只公募：
         * fund_get_fund_info / fund_get_fund_nav / fund_get_fund_etf_hist
         * fund_get_fund_holdings / fund_get_fund_manager
-      私募备案（AMAC）：
-        * fund_search_private_fund / fund_search_private_manager / fund_get_private_fund_info
+      私募备案（AMAC，协会服务端关键词；无净值）：
+        * fund_search_private_manager（品牌名优先）
+        * fund_search_private_fund / fund_get_private_fund_info
     当用户询问以下内容时委派给该专家：
     "ETF 排行""基金推荐""QDII 排行""基金经理""沪深300ETF 走势""某基金重仓股""基金评级""今日基金涨幅榜"；
-    "私募备案""私募管理人""高毅/景林某产品登记信息"。
+    "私募备案""私募管理人""红杉/高毅/景林协会登记"。
     注意：data_expert 的 fin_get_etf_spot 也能查 ETF 行情，但 fund_expert 更全面（净值/持仓/评级/QDII/经理/AMAC）。
     **禁止**用公募净值工具冒充私募净值；**禁止**把美股共同基金 / 美股私募披露 / 国内期货期权交给 fund_expert
     （分别用 us_data_expert / us_filing_expert / derivatives_expert）。
@@ -273,19 +274,19 @@ SUPERVISOR_PROMPT_US_DATA = """\
 """
 
 SUPERVISOR_PROMPT_US_FILING = """\
-  - us_filing_expert ：通过 SEC EDGAR 获取美股披露与主体概况（与巨潮 ``pdf_*`` 平行隔离）。
+  - us_filing_expert ：SEC EDGAR 披露 + IAPD 投资顾问 Form ADV（与巨潮 ``pdf_*`` 平行隔离）。
     工具集（前缀 us_filing_）：
-        * us_filing_resolve_cik / us_filing_search_entity_by_name
-        * us_filing_get_entity_overview — 主体概况（无私募 NAV）
+        * us_filing_resolve_cik / us_filing_search_entity_by_name（上市公司名册）
+        * us_filing_get_entity_overview — EDGAR 主体概况（无私募 NAV）
         * us_filing_search_filings      — 普通股 10-K/10-Q/8-K/DEF 14A；
                                           ETF 另含 NPORT-P / N-CSR / N-CSRS / 485BPOS；
-                                          私募相关可显式 forms=D,ADV
-        * us_filing_download_filing
-        * us_filing_extract_filing_metadata
-        * us_filing_parse_filing_text
+                                          私募发行可显式 forms=D
+        * us_filing_search_investment_adviser / us_filing_get_investment_adviser_overview
+          — Form ADV（IAPD，**不是** EDGAR / company_tickers）
+        * us_filing_download_filing / extract / parse
     当用户询问美股年报/季报/临时公告/代理声明、Item 1A、MD&A、10-K 风险因素，
     或 ETF（QQQ/SPY 等）N-PORT 持仓备案 / N-CSR 股东报告 / 485BPOS 招股书更新，
-    或 PE/VC/对冲/私募顾问的 EDGAR 概况与 Form D/ADV 时委派。
+    或 PE/VC/投资顾问 ADV、Form D 时委派。
     禁止把美股披露交给巨潮 ``pdf_*``；禁止把私募当共同基金交给 us_data_expert 编造 NAV。
 """
 

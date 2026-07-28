@@ -19,12 +19,13 @@ class LLMConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 
     request_timeout_seconds: float = Field(
-        default=180.0,
+        default=90.0,
         ge=10,
         le=3600,
         description=(
             "每次调用 OpenAI 兼容聊天补全接口的 HTTP 超时时间（秒）。"
             "作为 ``request_timeout`` 传递给 LangChain ``ChatOpenAI``，防止停滞的提供商连接无限期占用工作线程。"
+            "配合有限次重试：最坏空闲约 timeout×(retries+1)。可用环境变量 ``REQUEST_TIMEOUT_SECONDS``。"
         ),
     )
     max_output_tokens: int = Field(

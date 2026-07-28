@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,11 @@ if TYPE_CHECKING:
     from langchain_core.runnables.utils import Input, Output
 
     from research_agent.config import LLMConfig
+
+logger = logging.getLogger(__name__)
+
+# 提供商挂起时：timeout × (max_retries+1) 可能整段无 SSE。默认 1 次重试 → 最多约 2×timeout。
+_LLM_MAX_RETRIES = 1
 
 # ---------------------------------------------------------------------------
 # Circuit Breaker
@@ -132,11 +138,14 @@ class CircuitBreakerRunnable(Runnable):
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         if not self._breaker.allow_request():
             raise RuntimeError("Circuit breaker OPEN for model: requests blocked until recovery")
+        t0 = time.monotonic()
         try:
             result = await self._wrapped.ainvoke(input, config=config, **kwargs)
             self._breaker.record_success()
+            logger.info("LLM ainvoke ok elapsed=%.1fs", time.monotonic() - t0)
             return result
         except Exception:
+            logger.warning("LLM ainvoke failed elapsed=%.1fs", time.monotonic() - t0)
             self._breaker.record_failure()
             raise
 
@@ -206,7 +215,7 @@ class ModelRouter:
                 "api_key": SecretStr(api_key),
                 "base_url": base_url,
                 "temperature": tier_temps[tier],
-                "max_retries": 2,
+                "max_retries": _LLM_MAX_RETRIES,
                 "callbacks": [handler],
                 "stream_usage": True,
             }

@@ -133,7 +133,7 @@ US:   us_data（含 ETF / 共同基金 / 期货 / 期权）/ us_filing / us_news
 
 - Finnhub / Polygon 等多供应商**行情**（真·多源）；新闻侧 Finnhub 已可选（见 data-sources §4.4）
 - 美股共同基金 / 期货 / 期权与国内 `derivatives_expert` **已落地**（见 data-sources）；
-  国内私募走 AMAC 备案查询（`fund_*` private），美股私募走 EDGAR 概况 + Form D/ADV（`us_filing_*`），均**无**免费实时 NAV
+  国内私募走 AMAC 服务端 keyword（`fund_*` private），美股私募走 EDGAR Form D + IAPD ADV（`us_filing_*`），均**无**免费实时 NAV
 - 英文舆情再升级 FinBERT / 专用模型（当前 VADER+finlex 已够用）；事件标签仍为关键词，非 LLM 抽取
 - 通用联网搜索（非核心；不能替代行情 API）
 - EDGAR 整篇精读 / 回答自动续写（见 data-sources §8；当前为有界窗口 + `MAX_OUTPUT_TOKENS`）

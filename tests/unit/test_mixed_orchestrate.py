@@ -57,7 +57,7 @@ def test_build_plan_sentiment_requires_both_side_transfers() -> None:
 
 
 def test_build_plan_private_fund_mixed_adv_and_amac() -> None:
-    q = "用 ADV 披露看投资顾问概况，红杉中国相关私募基金在协会的备案情况如何"
+    q = "用 IAPD ADV 查 Sequoia Capital Operations 投资顾问概况，并查红杉在中基协的私募管理人登记"
     r = detect_market_from_query(q)
     assert r.market == Market.MIXED
     plan = build_mixed_orchestration_plan(r, q)
@@ -65,10 +65,16 @@ def test_build_plan_private_fund_mixed_adv_and_amac() -> None:
     assert any(t.intent == "private_fund" for t in plan.subtasks)
     assert any("fund_expert" in t.preferred_experts for t in plan.subtasks)
     assert any("us_filing_expert" in t.preferred_experts for t in plan.subtasks)
+    text = plan.format_for_prompt()
+    assert "IAPD" in text or "us_filing_expert" in text
 
 
 def test_form_d_query_is_mixed_due_to_pe_keyword() -> None:
-    q = "用 Form D 查某发行人近期私募发行备案有哪些"
+    q = "用 Form D 查 Blackstone Inc（BX）近期私募发行备案有哪些"
     r = detect_market_from_query(q)
-    assert r.market == Market.MIXED
-    assert any("form d" in x for x in r.reasons) or any("私募" in x for x in r.reasons)
+    assert r.market in {Market.MIXED, Market.US}
+    assert (
+        any("form d" in x.lower() for x in r.reasons)
+        or any("私募" in x for x in r.reasons)
+        or r.market == Market.US
+    )

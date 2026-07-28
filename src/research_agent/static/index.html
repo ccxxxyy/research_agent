@@ -10,6 +10,7 @@
   --bg:#0f1117;--surface:#1a1b26;--surface2:#24253a;--border:#2e2f45;
   --text:#e1e2e8;--text2:#8b8fa3;--accent:#6c63ff;--accent2:#8b85ff;
   --green:#4ade80;--yellow:#facc15;--red:#f87171;--blue:#60a5fa;
+  --loading:#7dd3fc;
   --radius:12px;
   --sidebar-w:280px;
 }
@@ -142,12 +143,10 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 /* 默认 A 股习惯：红涨绿跌（须 !important，否则会被下方看板用的全局 .fin-up 盖住） */
 .msg.assistant .content .fin-up{color:var(--red)!important;font-weight:600}
 .msg.assistant .content .fin-down{color:var(--green)!important;font-weight:600}
-/* 美股 / 跨市场：绿涨红跌（与看板 usDashboard 一致） */
+/* 美股段落：绿涨红跌（与看板 usDashboard 一致）。混合模式下仅 .fin-palette-us 包裹的美股段切换 */
 .msg.assistant.mkt-us .content .fin-up,
-.msg.assistant.mkt-mixed .content .fin-up,
 .msg.assistant .content .fin-palette-us .fin-up{color:var(--green)!important;font-weight:600}
 .msg.assistant.mkt-us .content .fin-down,
-.msg.assistant.mkt-mixed .content .fin-down,
 .msg.assistant .content .fin-palette-us .fin-down{color:var(--red)!important;font-weight:600}
 .msg.assistant .content .section-title{display:block;font-weight:700;font-size:15px;color:var(--accent2);margin:10px 0 4px;padding-left:10px;border-left:3px solid var(--accent);letter-spacing:0.3px}
 .msg.assistant .content .section-title:first-child{margin-top:0}
@@ -269,6 +268,7 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 .dash-panel .panel-title{font-size:14px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap}
 .dash-panel .panel-title::before{content:'';width:3px;height:14px;background:var(--accent);border-radius:2px}
 .panel-fetched{margin-left:auto;font-size:10px;font-weight:500;color:var(--text2);text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dash-loading,.zt-list .dash-loading{font-size:11px;color:var(--loading)!important;padding:8px;list-style:none}
 .dash-indices-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:14px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px}
 .dash-indices-head::before{content:'';width:3px;height:14px;background:var(--accent);border-radius:2px}
 .dash-indices-head .panel-fetched{margin-left:auto}
@@ -586,11 +586,11 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
               <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
               <div class="example" onclick="fillQuery(this)">今日龙虎榜机构净买和解读要点</div>
             </div>
-            <div class="panel-subhead">私募快捷（协会备案，无净值）</div>
+            <div class="panel-subhead">私募快捷（协会管理人备案，无净值）</div>
             <div class="example-list">
               <div class="example" onclick="fillQuery(this)">查一下高毅资产在中基协的私募管理人备案信息</div>
               <div class="example" onclick="fillQuery(this)">搜索景林相关私募产品备案公示（只要协会信息，不要编造净值）</div>
-              <div class="example" onclick="fillQuery(this)">红杉中国相关私募基金在协会的备案情况如何</div>
+              <div class="example" onclick="fillQuery(this)">查红杉在中基协的私募管理人登记信息（不要编造净值）</div>
             </div>
             <div class="panel-subhead">期权快捷</div>
             <div class="example-list">
@@ -664,11 +664,11 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
                 <div class="example" onclick="fillQuery(this)">今日美股跌幅榜有哪些风险信号？</div>
                 <div class="example" onclick="fillQuery(this)">特斯拉最新行情、交付预期与后市展望</div>
               </div>
-              <div class="panel-subhead">私募快捷（EDGAR 概况 / Form D·ADV，无 NAV）</div>
+              <div class="panel-subhead">私募快捷（IAPD ADV / EDGAR Form D，无 NAV）</div>
               <div class="example-list">
                 <div class="example" onclick="fillQuery(this)">查 Blackstone 在 SEC EDGAR 上的主体概况</div>
-                <div class="example" onclick="fillQuery(this)">用 Form D 查某发行人近期私募发行备案有哪些</div>
-                <div class="example" onclick="fillQuery(this)">用 ADV 披露看投资顾问概况（不要编造私募净值）</div>
+                <div class="example" onclick="fillQuery(this)">用 Form D 查 Blackstone Inc（BX）近期私募发行备案有哪些</div>
+                <div class="example" onclick="fillQuery(this)">用 IAPD ADV 查 Sequoia Capital Operations 投资顾问概况（不要编造净值）</div>
               </div>
               <div class="panel-subhead">期权快捷</div>
               <div class="example-list">
@@ -830,6 +830,7 @@ const SOURCE_CODE_RULES = {
   us_session_clock:       {label:'美股交易时段', url:null},
   'data.sec.gov/submissions': {label:'SEC·EDGAR', url:'https://www.sec.gov/edgar/searchedgar/companysearch'},
   'company_tickers.json': {label:'SEC·company tickers', url:'https://www.sec.gov/files/company_tickers.json'},
+  iapd:                   {label:'SEC·IAPD ADV', url:'https://adviserinfo.sec.gov/'},
   input_cik:              {label:'SEC·CIK', url:'https://www.sec.gov/edgar/searchedgar/companysearch'},
   en_vader_finlex_v2:     {label:'本地VADER打分', url:null},
   eastmoney:              {label:'东方财富', url:'https://www.eastmoney.com/'},
@@ -848,7 +849,7 @@ const SOURCE_CODE_RULES = {
   local_cache:            {label:'本地名单缓存', url:null},
   cn_session_clock:       {label:'A股交易时段', url:null},
   catalog:                {label:'本地品种目录', url:null},
-  amac:                   {label:'中基协AMAC', url:'https://gs.amac.org.cn/'},
+  amac:                   {label:'中基协·AMAC', url:'https://gs.amac.org.cn/'},
   market_aggregate:       {label:'市场聚合', url:null},
   none:                   {label:'无数据源', url:null},
 };
@@ -1013,6 +1014,9 @@ function stopCurrentStream() {
   if (!currentThread) return;
   const ac = abortControllers.get(currentThread);
   if (ac) ac.abort();
+  clearHighlights();
+  const td = threadData.get(currentThread);
+  if (td) td._activeSpecialist = null;
 }
 
 // =====================================================================
@@ -1300,7 +1304,7 @@ async function switchConversation(threadId) {
   }
 
   // 否则从后端加载
-  msgArea.innerHTML = '<div style="text-align:center;color:var(--text2);padding:40px">加载中...</div>';
+  msgArea.innerHTML = '<div class="dash-loading" style="text-align:center;padding:40px;font-size:14px">加载中...</div>';
   try {
     const resp = await fetch(`/api/conversations/${threadId}/messages?user_id=${encodeURIComponent(getUserId())}`);
     if (!resp.ok) throw new Error('Failed to load');
@@ -1571,11 +1575,11 @@ function _dashboardInnerHtml() {
           <div class="example" onclick="fillQuery(this)">沪深300ETF最近走势和重仓股分析</div>
           <div class="example" onclick="fillQuery(this)">今日龙虎榜机构净买和解读要点</div>
         </div>
-        <div class="panel-subhead">私募快捷（协会备案，无净值）</div>
+        <div class="panel-subhead">私募快捷（协会管理人备案，无净值）</div>
         <div class="example-list">
           <div class="example" onclick="fillQuery(this)">查一下高毅资产在中基协的私募管理人备案信息</div>
           <div class="example" onclick="fillQuery(this)">搜索景林相关私募产品备案公示（只要协会信息，不要编造净值）</div>
-          <div class="example" onclick="fillQuery(this)">红杉中国相关私募基金在协会的备案情况如何</div>
+          <div class="example" onclick="fillQuery(this)">查红杉在中基协的私募管理人登记信息（不要编造净值）</div>
         </div>
         <div class="panel-subhead">期权快捷</div>
         <div class="example-list">
@@ -1648,11 +1652,11 @@ function _dashboardInnerHtml() {
             <div class="example" onclick="fillQuery(this)">今日美股跌幅榜有哪些风险信号？</div>
             <div class="example" onclick="fillQuery(this)">特斯拉最新行情、交付预期与后市展望</div>
           </div>
-          <div class="panel-subhead">私募快捷（EDGAR 概况 / Form D·ADV，无 NAV）</div>
+          <div class="panel-subhead">私募快捷（IAPD ADV / EDGAR Form D，无 NAV）</div>
           <div class="example-list">
             <div class="example" onclick="fillQuery(this)">查 Blackstone 在 SEC EDGAR 上的主体概况</div>
-            <div class="example" onclick="fillQuery(this)">用 Form D 查某发行人近期私募发行备案有哪些</div>
-            <div class="example" onclick="fillQuery(this)">用 ADV 披露看投资顾问概况（不要编造私募净值）</div>
+            <div class="example" onclick="fillQuery(this)">用 Form D 查 Blackstone Inc（BX）近期私募发行备案有哪些</div>
+            <div class="example" onclick="fillQuery(this)">用 IAPD ADV 查 Sequoia Capital Operations 投资顾问概况（不要编造净值）</div>
           </div>
           <div class="panel-subhead">期权快捷</div>
           <div class="example-list">
@@ -1766,7 +1770,7 @@ async function refreshDashboardExtras(forceFresh) {
   const markLoading = (id, label) => {
     const el = document.getElementById(id);
     if (el && (!el.children.length || el.textContent.includes('暂无') || el.textContent.includes('加载中'))) {
-      el.innerHTML = `<li style="font-size:11px;color:var(--text2);padding:8px">${label}加载中…</li>`;
+      el.innerHTML = `<li class="dash-loading">${label}加载中…</li>`;
     }
   };
   // 仅在尚无数据时显示加载中，避免 5 分钟刷新时闪烁
@@ -2596,7 +2600,15 @@ function _renderDualRank(elId, payload, label) {
 function _renderBoardList(elId, items, label) {
   const el = document.getElementById(elId);
   if (!el) return;
-  if (!items || !items.length) { el.innerHTML = `<li style="font-size:11px;color:var(--text2);padding:8px">暂无${label}数据</li>`; return; }
+  if (!items || !items.length) {
+    // 整页尚未拉到数据时显示加载中；已拉过但该榜为空才显示暂无
+    if (!_dashData) {
+      el.innerHTML = `<li class="dash-loading">${label}加载中…</li>`;
+    } else {
+      el.innerHTML = `<li style="font-size:11px;color:var(--text2);padding:8px">暂无${label}数据</li>`;
+    }
+    return;
+  }
   el.innerHTML = items.map((s, i) => {
     const change = s.change_pct != null ? parseFloat(s.change_pct) : null;
     const cls = change > 0 ? 'fin-up' : change < 0 ? 'fin-down' : '';
@@ -2892,11 +2904,20 @@ function sendQuery() {
 }
 
 async function _runStream(query, sendThreadId, userId) {
-  let threadId = sendThreadId;
+  // 新会话也先占位 thread id，保证「停止」在首包前可用
+  let threadId = sendThreadId || (crypto.randomUUID ? crypto.randomUUID() : ('t-' + Date.now()));
   const abortCtrl = new AbortController();
+  abortControllers.set(threadId, abortCtrl);
+  streamingThreads.add(threadId);
+  if (!currentThread) {
+    currentThread = threadId;
+    document.getElementById('threadDisplay').textContent = threadId.slice(0, 12) + '…';
+    document.getElementById('threadDisplay').title = threadId;
+  }
+  _updateSendBtn();
 
   try {
-    const sticky = getThreadMarketSticky(threadId);
+    const sticky = getThreadMarketSticky(sendThreadId || threadId);
     const resp = await fetch('/api/supervisor/research/stream', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -2916,7 +2937,18 @@ async function _runStream(query, sendThreadId, userId) {
     }
 
     const resolvedId = resp.headers.get('X-Thread-ID');
-    if (resolvedId) threadId = resolvedId;
+    if (resolvedId && resolvedId !== threadId) {
+      abortControllers.delete(threadId);
+      streamingThreads.delete(threadId);
+      if (currentThread === threadId) currentThread = resolvedId;
+      threadId = resolvedId;
+      abortControllers.set(threadId, abortCtrl);
+      streamingThreads.add(threadId);
+    } else if (resolvedId) {
+      threadId = resolvedId;
+      abortControllers.set(threadId, abortCtrl);
+      streamingThreads.add(threadId);
+    }
 
     const hdrMarket = resp.headers.get('X-Market');
     const hdrMarketSource = resp.headers.get('X-Market-Source');
@@ -2929,6 +2961,7 @@ async function _runStream(query, sendThreadId, userId) {
     td._activeSpecialist = null;
     streamingThreads.add(threadId);
     abortControllers.set(threadId, abortCtrl);
+    _updateSendBtn();
 
     // 追加用户消息到该容器
     _appendUserMsg(container, query);
@@ -3131,6 +3164,11 @@ async function _runStream(query, sendThreadId, userId) {
             const sidesDone = _marketFromHandoffs(msgEl);
             if (String(td?.market || '').toUpperCase() === 'MIXED' || sidesDone === 'MIXED') {
               applyMarketBadgeSafely('MIXED', td.market_source || 'handoff_sides', msgEl, td);
+            } else if (
+              looksLikeUsMarketText(finalText) &&
+              looksLikeCnMarketText(finalText)
+            ) {
+              applyMarketBadgeSafely('MIXED', 'content_heuristic', msgEl, td);
             } else if (evt.metadata?.market) {
               applyMarketBadgeSafely(evt.metadata.market, evt.metadata.market_source, msgEl, td);
             } else if (looksLikeUsMarketText(finalText) && (!td.market || td.market === 'UNKNOWN')) {
@@ -3235,12 +3273,18 @@ async function _runStream(query, sendThreadId, userId) {
       }
       const lastTyping = container.querySelector('.msg.assistant:last-of-type .typing');
       if (lastTyping) lastTyping.style.display = 'none';
+      const tdErr = threadData.get(threadId);
+      if (tdErr) tdErr._activeSpecialist = null;
     }
+    clearHighlights();
     if (!aborted) showToast('请求失败: ' + err.message);
   } finally {
     abortControllers.delete(threadId);
+    if (sendThreadId && sendThreadId !== threadId) abortControllers.delete(sendThreadId);
     streamingThreads.delete(threadId);
+    if (sendThreadId && sendThreadId !== threadId) streamingThreads.delete(sendThreadId);
     if (threadData.has(threadId)) threadData.get(threadId).streaming = false;
+    clearHighlights();
     _updateSendBtn();
     loadConversations();
   }
@@ -3519,7 +3563,13 @@ function sanitizeSignedPercents(text) {
 }
 
 function looksLikeUsMarketText(text) {
-  return /(?:\^GSPC|\^IXIC|\^NDX|\^DJI|Nasdaq|纳斯达克|标普\s*500|S&P\s*500|道琼斯|美股|NYSE|NASDAQ|us_data)/i.test(
+  return /(?:\^GSPC|\^IXIC|\^NDX|\^DJI|Nasdaq|纳斯达克|标普\s*500|S&P\s*500|道琼斯|美股|NYSE|NASDAQ|us_data|罗素\s*2000|VIX)/i.test(
+    String(text || '')
+  );
+}
+
+function looksLikeCnMarketText(text) {
+  return /(?:上证|深证|沪深|创业板|科创|A\s*股|板块|涨停|跌停|北向|沪深港通|东方财富)/i.test(
     String(text || '')
   );
 }
@@ -3531,38 +3581,47 @@ function renderMarkdown(text, opts) {
   const out = [];
   let i = 0;
   let blankRun = 0;
+  const wrapUs = (chunkHtml, chunkText) => {
+    // MIXED：美股块绿涨红跌；A 股块保持默认红涨绿跌
+    if (market === 'MIXED' && looksLikeUsMarketText(chunkText)) {
+      return `<div class="fin-palette-us">${chunkHtml}</div>`;
+    }
+    return chunkHtml;
+  };
   while (i < lines.length) {
     if (lines[i].trim().startsWith('|') && i + 1 < lines.length && /^\s*\|[-:\s|]+\|\s*$/.test(lines[i+1])) {
       blankRun = 0;
       const headerCells = lines[i].split('|').filter(c => c.trim() !== '').map(c => c.trim());
+      const tableStart = i;
       i += 2;
       const rows = [];
       while (i < lines.length && lines[i].trim().startsWith('|')) {
         rows.push(lines[i].split('|').filter(c => c.trim() !== '').map(c => c.trim()));
         i++;
       }
+      const tableText = lines.slice(tableStart, i).join('\n');
       let table = '<table class="md-table"><thead><tr>';
       headerCells.forEach(h => { table += `<th>${escAndInline(h)}</th>`; });
       table += '</tr></thead><tbody>';
       rows.forEach(r => { table += '<tr>'; r.forEach(c => { table += `<td>${escAndInline(c)}</td>`; }); table += '</tr>'; });
       table += '</tbody></table>';
-      out.push(table);
+      out.push(wrapUs(table, tableText));
     } else {
-      const rendered = renderLine(lines[i]);
+      const lineText = lines[i];
+      const rendered = renderLine(lineText);
       if (rendered === '') {
         blankRun++;
         if (blankRun === 1 && out.length > 0) out.push('<div class="md-gap"></div>');
       } else {
         blankRun = 0;
-        out.push(rendered);
+        out.push(wrapUs(rendered, lineText));
       }
       i++;
     }
   }
   let html = out.join('');
   html = html.replace(/((?:<li>.*?<\/li>)+)/g, '<ul>$1</ul>');
-  const useUsPalette = market === 'US' || market === 'MIXED' || looksLikeUsMarketText(text);
-  if (useUsPalette) html = `<div class="fin-palette-us">${html}</div>`;
+  if (market === 'US') html = `<div class="fin-palette-us">${html}</div>`;
   return html;
 }
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }

@@ -149,7 +149,11 @@ async def test_get_price_history_mocked():
     mock_ticker = MagicMock()
     mock_ticker.history.return_value = df
 
-    with patch("yfinance.Ticker", return_value=mock_ticker):
+    with (
+        patch.object(mod, "_history_via_yahoo_chart", return_value=None),
+        patch.object(mod, "_history_via_eastmoney", return_value=None),
+        patch("yfinance.Ticker", return_value=mock_ticker),
+    ):
         result = await mod.get_price_history("AAPL", period="5d")
 
     assert "error" not in result
@@ -164,6 +168,61 @@ async def test_get_price_history_rejects_bad_period():
 
     result = await mod.get_price_history("AAPL", period="2d")
     assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_get_price_history_prefers_yahoo_chart():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    chart = {
+        "symbol": "^IXIC",
+        "period": "5d",
+        "interval": "1d",
+        "bars": [{"date": "2024-01-02", "close": 15000.0}],
+        "summary": {"bars": 1},
+        "source": "yahoo_chart",
+        "source_url": "https://finance.yahoo.com/quote/IXIC/history",
+    }
+    yf_ticker = MagicMock()
+
+    with (
+        patch.object(mod, "_history_via_yahoo_chart", return_value=chart) as chart_fn,
+        patch.object(mod, "_history_via_eastmoney", return_value=None),
+        patch("yfinance.Ticker", return_value=yf_ticker) as yf_ctor,
+    ):
+        result = await mod.get_price_history("^IXIC", period="5d")
+
+    assert result["source"] == "yahoo_chart"
+    assert result["symbol"] == "^IXIC"
+    chart_fn.assert_called()
+    yf_ctor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_price_history_falls_back_to_chart():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    mock_ticker = MagicMock()
+    mock_ticker.history.return_value = pd.DataFrame()
+    fallback = {
+        "symbol": "AAPL",
+        "period": "5d",
+        "interval": "1d",
+        "bars": [{"date": "2024-01-02", "close": 100.0}],
+        "summary": {"bars": 1},
+        "source": "yahoo_chart",
+        "source_url": "https://finance.yahoo.com/quote/AAPL/history",
+    }
+
+    with (
+        patch("yfinance.Ticker", return_value=mock_ticker),
+        patch.object(mod, "_history_via_yahoo_chart", return_value=fallback),
+        patch.object(mod, "_history_via_eastmoney", return_value=None),
+    ):
+        result = await mod.get_price_history("AAPL", period="5d")
+
+    assert result["source"] == "yahoo_chart"
+    assert len(result["bars"]) == 1
 
 
 @pytest.mark.asyncio
@@ -275,33 +334,6 @@ async def test_get_etf_holdings_unavailable_funds_data():
 
     assert "error" in result
     assert result["symbol"] == "AAPL"
-
-
-@pytest.mark.asyncio
-async def test_get_price_history_falls_back_to_chart():
-    from research_agent.mcp_servers import us_data_server as mod
-
-    mock_ticker = MagicMock()
-    mock_ticker.history.return_value = pd.DataFrame()
-    fallback = {
-        "symbol": "AAPL",
-        "period": "5d",
-        "interval": "1d",
-        "bars": [{"date": "2024-01-02", "close": 100.0}],
-        "summary": {"bars": 1},
-        "source": "yahoo_chart",
-        "source_url": "https://finance.yahoo.com/quote/AAPL/history",
-    }
-
-    with (
-        patch("yfinance.Ticker", return_value=mock_ticker),
-        patch.object(mod, "_history_via_yahoo_chart", return_value=fallback),
-        patch.object(mod, "_history_via_eastmoney", return_value=None),
-    ):
-        result = await mod.get_price_history("AAPL", period="5d")
-
-    assert result["source"] == "yahoo_chart"
-    assert len(result["bars"]) == 1
 
 
 @pytest.mark.asyncio

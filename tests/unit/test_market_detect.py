@@ -64,6 +64,12 @@ def test_detect_mixed() -> None:
     assert r.market == Market.MIXED
 
 
+def test_detect_mixed_liangge_shichang() -> None:
+    r = detect_market_from_query("从周一的情形来看 两个市场这周的走势是怎样的 前因后果")
+    assert r.market == Market.MIXED
+    assert "mixed_keyword" in r.reasons
+
+
 def test_detect_mixed_semiconductor_sentiment_aliases() -> None:
     q = "分析台积电、超威半导体、拉姆研究、中际旭创舆情"
     r = detect_market_from_query(q)

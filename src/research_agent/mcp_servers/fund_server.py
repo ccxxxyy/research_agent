@@ -16,15 +16,15 @@
 10. ``get_fund_daily``      — 当日全市场开放式基金净值列表。
 11. ``get_fund_qdii_rank``  — QDII 基金业绩排行（专项入口）。
 12. ``get_fund_manager``    — 按基金代码查基金经理与基本档案字段。
-13. ``search_private_fund`` — 中基协私募产品备案公示（关键词；无实时净值）。
-14. ``search_private_manager`` — 中基协私募管理人综合查询。
+13. ``search_private_fund`` — 中基协私募产品备案（协会服务端关键词；无实时净值）。
+14. ``search_private_manager`` — 中基协私募管理人（协会服务端关键词）。
 15. ``get_private_fund_info`` — 私募产品近名/精确备案详情。
 
 数据来源
 --------
 - 东方财富基金网 / 天天基金网 (fund.eastmoney.com)
 - push2.eastmoney.com — ETF/LOF 实时行情推送（工具 4/5/6 优先使用）
-- 中国证券投资基金业协会 AMAC 公示（``amac_*``，私募备案，无净值）
+- 中国证券投资基金业协会 AMAC 公示 API（``/api/pof/manager|fund`` + keyword；私募备案，无净值）
 
 设计说明
 --------
@@ -39,10 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import pickle
 import re
-import time
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -1164,107 +1161,132 @@ async def get_fund_manager(symbol: str) -> dict:
 
 # =====================================================================
 # 私募（AMAC 协会备案公示；无实时净值）
+# 走协会服务端关键词检索，禁止冷启动全量/多页翻表。
 # =====================================================================
-_AMAC_CACHE_DIR = Path("./data/amac_cache").resolve()
-_AMAC_CACHE_TTL_SEC = int(os.environ.get("AMAC_CACHE_TTL_SEC", str(7 * 24 * 3600)))
-# amac_fund_info 按页拉取；每页约 100 条。默认前 20 页作可检索窗口（可用环境变量扩大）。
-_AMAC_FUND_END_PAGE = max(1, min(int(os.environ.get("AMAC_FUND_END_PAGE", "20")), 200))
+_AMAC_MANAGER_API = "https://gs.amac.org.cn/amac-infodisc/api/pof/manager"
+_AMAC_FUND_API = "https://gs.amac.org.cn/amac-infodisc/api/pof/fund"
+_AMAC_HTTP_TIMEOUT = float(os.environ.get("AMAC_HTTP_TIMEOUT", "25"))
 _AMAC_NOTE = (
     "中国证券投资基金业协会备案公示，仅含登记信息，无实时净值/业绩；"
     "不可与公募 fund_get_fund_nav 口径混用。"
+    "品牌名优先查管理人；境外美元基金可能不在协会名册。"
 )
-
-_AMAC_FUND_DF: pd.DataFrame | None = None
-_AMAC_FUND_LOADED_AT: float = 0.0
-_AMAC_MANAGER_DF: pd.DataFrame | None = None
-_AMAC_MANAGER_LOADED_AT: float = 0.0
-
-
-def _amac_cache_path(name: str) -> Path:
-    return _AMAC_CACHE_DIR / f"{name}.pkl"
+_AMAC_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    ),
+    "Content-Type": "application/json",
+}
 
 
-def _amac_read_disk(name: str) -> pd.DataFrame | None:
-    path = _amac_cache_path(name)
-    if not path.exists():
+def _amac_ms_to_date(val: Any) -> str | None:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
         return None
     try:
-        age = time.time() - path.stat().st_mtime
-        if age > _AMAC_CACHE_TTL_SEC:
-            return None
-        with path.open("rb") as fh:
-            obj = pickle.load(fh)  # noqa: S301 — 本地缓存文件
-        if isinstance(obj, pd.DataFrame):
-            return obj
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("AMAC disk cache read failed (%s): %s", name, exc)
-    return None
+        ts = int(val)
+        return pd.to_datetime(ts, unit="ms").strftime("%Y-%m-%d")
+    except Exception:  # noqa: BLE001
+        s = str(val).strip()
+        return s or None
 
 
-def _amac_write_disk(name: str, df: pd.DataFrame) -> None:
+def _amac_post_keyword(url: str, keyword: str, *, page: int, size: int) -> dict[str, Any]:
+    """POST 协会 API；body 使用 ``{"keyword": ...}``（管理人侧已验证有效）。"""
+    params = {"page": max(0, int(page)), "size": max(1, min(int(size), 100))}
+    resp = _requests.post(
+        url,
+        params=params,
+        json={"keyword": keyword.strip()},
+        headers=_AMAC_HEADERS,
+        timeout=_AMAC_HTTP_TIMEOUT,
+        verify=False,
+    )
+    if resp.status_code >= 500:
+        raise RuntimeError(f"AMAC API HTTP {resp.status_code}（协会接口不可用或间歇故障）: {url}")
+    if resp.status_code >= 400:
+        raise RuntimeError(f"AMAC API HTTP {resp.status_code}: {resp.text[:200]}")
+    text = (resp.text or "").strip()
+    if not text:
+        raise RuntimeError(f"AMAC API empty body: {url}")
     try:
-        _AMAC_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        with _amac_cache_path(name).open("wb") as fh:
-            pickle.dump(df, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        payload = resp.json()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("AMAC disk cache write failed (%s): %s", name, exc)
+        raise RuntimeError(f"AMAC API non-JSON ({resp.status_code}): {text[:120]}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("AMAC API returned non-object JSON")
+    return payload
 
 
-def _keyword_mask(df: pd.DataFrame, keyword: str) -> pd.Series:
-    kw = keyword.strip()
-    mask = pd.Series(False, index=df.index)
-    for col in df.columns:
-        mask = mask | df[col].astype(str).str.contains(kw, case=False, na=False, regex=False)
-    return mask
+def _map_amac_manager_row(raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "私募基金管理人名称": raw.get("managerName"),
+        "法定代表人/执行事务合伙人(委派代表)姓名": raw.get("artificialPersonName"),
+        "机构类型": raw.get("primaryInvestType"),
+        "注册地": raw.get("registerProvince"),
+        "登记编号": raw.get("registerNo"),
+        "成立时间": _amac_ms_to_date(raw.get("establishDate")),
+        "登记时间": _amac_ms_to_date(raw.get("registerDate")),
+    }
 
 
-def _load_amac_fund_df() -> pd.DataFrame:
-    """加载私募产品公示表（内存 → 磁盘 → akshare 分页）。"""
-    global _AMAC_FUND_DF, _AMAC_FUND_LOADED_AT
-    now = time.time()
-    if _AMAC_FUND_DF is not None and (now - _AMAC_FUND_LOADED_AT) < _AMAC_CACHE_TTL_SEC:
-        return _AMAC_FUND_DF
-    disk = _amac_read_disk("amac_fund_info")
-    if disk is not None and not disk.empty:
-        _AMAC_FUND_DF = disk
-        _AMAC_FUND_LOADED_AT = now
-        return disk
-    import akshare as ak
-
-    df = ak.amac_fund_info(start_page="1", end_page=str(_AMAC_FUND_END_PAGE))
-    if df is None or not isinstance(df, pd.DataFrame):
-        raise RuntimeError("amac_fund_info returned empty")
-    _AMAC_FUND_DF = df
-    _AMAC_FUND_LOADED_AT = now
-    _amac_write_disk("amac_fund_info", df)
-    return df
+def _map_amac_fund_row(raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "基金名称": raw.get("fundName"),
+        "私募基金管理人名称": raw.get("managerName"),
+        "私募基金管理人类型": raw.get("managerType"),
+        "运行状态": raw.get("workingState"),
+        "备案时间": _amac_ms_to_date(raw.get("putOnRecordDate")),
+        "建立时间": _amac_ms_to_date(raw.get("establishDate")),
+        "托管人名称": raw.get("mandatorName"),
+    }
 
 
-def _load_amac_manager_df() -> pd.DataFrame:
-    global _AMAC_MANAGER_DF, _AMAC_MANAGER_LOADED_AT
-    now = time.time()
-    if _AMAC_MANAGER_DF is not None and (now - _AMAC_MANAGER_LOADED_AT) < _AMAC_CACHE_TTL_SEC:
-        return _AMAC_MANAGER_DF
-    disk = _amac_read_disk("amac_manager_info")
-    if disk is not None and not disk.empty:
-        _AMAC_MANAGER_DF = disk
-        _AMAC_MANAGER_LOADED_AT = now
-        return disk
-    import akshare as ak
+def _amac_search_manager_sync(keyword: str, limit: int) -> dict[str, Any]:
+    payload = _amac_post_keyword(_AMAC_MANAGER_API, keyword, page=0, size=limit)
+    content = payload.get("content") or []
+    if not isinstance(content, list):
+        content = []
+    matches = [_map_amac_manager_row(x) for x in content[:limit] if isinstance(x, dict)]
+    total = payload.get("totalElements")
+    return {
+        "keyword": keyword.strip(),
+        "matches": matches,
+        "count": len(matches),
+        "total_elements": int(total) if total is not None else len(matches),
+        "source": "amac",
+        "source_url": "https://gs.amac.org.cn/amac-infodisc/res/pof/manager/index.html",
+        "note": _AMAC_NOTE,
+        "query_mode": "server_keyword",
+    }
 
-    df = ak.amac_manager_info()
-    if df is None or not isinstance(df, pd.DataFrame):
-        raise RuntimeError("amac_manager_info returned empty")
-    _AMAC_MANAGER_DF = df
-    _AMAC_MANAGER_LOADED_AT = now
-    _amac_write_disk("amac_manager_info", df)
-    return df
+
+def _amac_search_fund_sync(keyword: str, limit: int) -> dict[str, Any]:
+    payload = _amac_post_keyword(_AMAC_FUND_API, keyword, page=0, size=limit)
+    content = payload.get("content") or []
+    if not isinstance(content, list):
+        content = []
+    matches = [_map_amac_fund_row(x) for x in content[:limit] if isinstance(x, dict)]
+    total = payload.get("totalElements")
+    return {
+        "keyword": keyword.strip(),
+        "matches": matches,
+        "count": len(matches),
+        "total_elements": int(total) if total is not None else len(matches),
+        "source": "amac",
+        "source_url": "https://gs.amac.org.cn/amac-infodisc/res/pof/fund/index.html",
+        "note": _AMAC_NOTE,
+        "query_mode": "server_keyword",
+    }
 
 
 @mcp.tool()
 @cached_tool(ttl=TTL_LONG, namespace="fund")
 async def search_private_fund(keyword: str, limit: int = 10) -> dict:
     """按关键词搜索中基协私募基金产品备案公示（无实时净值）。
+
+    走协会服务端关键词检索；若协会产品接口 5xx，返回明确错误（不翻页下载全表）。
+    品牌名（如「红杉」）更建议先 ``search_private_manager``。
 
     Args:
         keyword: 产品名 / 管理人名片段，如 ``"高毅"``、``"景林"``。
@@ -1274,32 +1296,24 @@ async def search_private_fund(keyword: str, limit: int = 10) -> dict:
         return _fmt_error(ValueError("keyword must be non-empty"), context="search_private_fund()")
     limit = max(1, min(int(limit), 50))
 
-    def _call() -> dict[str, Any]:
-        df = _load_amac_fund_df()
-        hits = df[_keyword_mask(df, keyword)].head(limit)
-        return {
-            "keyword": keyword.strip(),
-            "matches": _df_to_records(hits),
-            "count": int(len(hits)),
-            "source": "amac",
-            "source_url": "https://gs.amac.org.cn/amac-infodisc/res/pof/fund/index.html",
-            "note": _AMAC_NOTE,
-            "cache_pages": f"1-{_AMAC_FUND_END_PAGE}",
-        }
-
     try:
-        return await asyncio.to_thread(_call)
+        return await asyncio.to_thread(_amac_search_fund_sync, keyword.strip(), limit)
     except Exception as e:
-        return _fmt_error(e, context=f"search_private_fund(keyword={keyword!r})")
+        err = _fmt_error(e, context=f"search_private_fund(keyword={keyword!r})")
+        err["source"] = "amac"
+        err["note"] = (
+            _AMAC_NOTE + " 产品列表接口可能间歇 500；可改用 search_private_manager 查管理人备案。"
+        )
+        return err
 
 
 @mcp.tool()
 @cached_tool(ttl=TTL_LONG, namespace="fund")
 async def search_private_manager(keyword: str, limit: int = 10) -> dict:
-    """按关键词搜索中基协私募基金管理人公示。
+    """按关键词搜索中基协私募基金管理人公示（协会服务端 keyword，无全表下载）。
 
     Args:
-        keyword: 管理人名称片段。
+        keyword: 管理人名称片段（如 ``"红杉"``、``"高毅"``）。
         limit: 最大返回条数（默认 10，上限 50）。
     """
     if not (keyword or "").strip():
@@ -1308,20 +1322,8 @@ async def search_private_manager(keyword: str, limit: int = 10) -> dict:
         )
     limit = max(1, min(int(limit), 50))
 
-    def _call() -> dict[str, Any]:
-        df = _load_amac_manager_df()
-        hits = df[_keyword_mask(df, keyword)].head(limit)
-        return {
-            "keyword": keyword.strip(),
-            "matches": _df_to_records(hits),
-            "count": int(len(hits)),
-            "source": "amac",
-            "source_url": "https://gs.amac.org.cn/amac-infodisc/res/pof/manager/index.html",
-            "note": _AMAC_NOTE,
-        }
-
     try:
-        return await asyncio.to_thread(_call)
+        return await asyncio.to_thread(_amac_search_manager_sync, keyword.strip(), limit)
     except Exception as e:
         return _fmt_error(e, context=f"search_private_manager(keyword={keyword!r})")
 
@@ -1338,38 +1340,35 @@ async def get_private_fund_info(name: str) -> dict:
         return _fmt_error(ValueError("name must be non-empty"), context="get_private_fund_info()")
 
     def _call() -> dict[str, Any]:
-        df = _load_amac_fund_df()
-        name_col = None
-        for cand in ("基金名称", "基金名称（产品名称）", "产品名称"):
-            if cand in df.columns:
-                name_col = cand
-                break
-        if name_col is None:
-            name_col = str(df.columns[0])
-        exact = df[df[name_col].astype(str) == name.strip()]
-        hits = exact.head(1) if not exact.empty else df[_keyword_mask(df, name)].head(1)
-        if hits.empty:
+        result = _amac_search_fund_sync(name.strip(), 20)
+        matches = result.get("matches") or []
+        exact = [m for m in matches if str(m.get("基金名称") or "") == name.strip()]
+        hit = exact[0] if exact else (matches[0] if matches else None)
+        if hit is None:
             return {
                 "name": name.strip(),
                 "info": None,
                 "found": False,
                 "source": "amac",
+                "source_url": result.get("source_url"),
                 "note": _AMAC_NOTE,
             }
-        records = _df_to_records(hits)
         return {
             "name": name.strip(),
-            "info": records[0],
+            "info": hit,
             "found": True,
             "source": "amac",
-            "source_url": "https://gs.amac.org.cn/amac-infodisc/res/pof/fund/index.html",
+            "source_url": result.get("source_url"),
             "note": _AMAC_NOTE,
         }
 
     try:
         return await asyncio.to_thread(_call)
     except Exception as e:
-        return _fmt_error(e, context=f"get_private_fund_info(name={name!r})")
+        err = _fmt_error(e, context=f"get_private_fund_info(name={name!r})")
+        err["source"] = "amac"
+        err["note"] = _AMAC_NOTE + " 产品列表接口可能间歇 500；可改用 search_private_manager。"
+        return err
 
 
 if __name__ == "__main__":
