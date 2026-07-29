@@ -353,6 +353,8 @@ def search_us_watchlist(q: str, *, limit: int = 8) -> list[dict[str, Any]]:
             return "crypto", "加密货币报价，不是美股股票/ETF"
         if "ETF" in qt:
             return "etf", "交易所交易基金（ETF），跟踪指数或一篮子资产"
+        if "OPTION" in qt or qt == "OPT":
+            return "option", "期权合约，非正股；自选默认不收录"
         if "MUTUAL" in qt or ("FUND" in qt and "ETF" not in qt):
             return "mutual_fund", "共同基金，按净值交易（非盘中连续竞价）"
         if "FUTURE" in qt or su.endswith("=F"):
@@ -425,8 +427,11 @@ def search_us_watchlist(q: str, *, limit: int = 8) -> list[dict[str, Any]]:
                 continue
             qtype = str(item.get("quoteType") or item.get("typeDisp") or "")
             ac, note = _us_asset_from_yf(sym, qtype)
-            # 自选默认不收外汇/加密，避免 MU → MUR/USD 噪音
-            if ac in ("forex", "crypto"):
+            # 自选默认不收外汇/加密/期权，避免 MU → MUR/USD、以及一长串期权合约噪音
+            if ac in ("forex", "crypto", "option"):
+                continue
+            # 期权符号形态（含 put/call 日期码）
+            if re.search(r"\d{6}[CP]\d{8}$", sym.upper()):
                 continue
             prefer = sym.upper() == up
             _add(
@@ -635,15 +640,17 @@ def fetch_watchlist_quotes(market: str, symbols: list[str]) -> list[dict[str, An
         return []
 
     if mkt == "US":
+        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as FuturesTimeout
+
         from research_agent.mcp_servers.us_data_server import _quote_from_ticker
 
-        rows: list[dict[str, Any]] = []
-        for sym in syms:
+        def _one(sym: str) -> dict[str, Any] | None:
             try:
                 q = _quote_from_ticker(sym)
                 price = _num(q.get("price"))
-                if price is None:
-                    continue
+                if price is None or price <= 0:
+                    return None
                 chg = _num(q.get("change_percent"))
                 ac = "equity"
                 if sym.endswith("=F"):
@@ -652,20 +659,35 @@ def fetch_watchlist_quotes(market: str, symbols: list[str]) -> list[dict[str, An
                     ac = "index"
                 elif sym.endswith("=X"):
                     ac = "forex"
-                rows.append(
-                    {
-                        "symbol": sym,
-                        "name": str(q.get("name") or sym),
-                        "price": round(price, 2),
-                        "change_pct": round(chg, 2) if chg is not None else None,
-                        "price_kind": "last",
-                        "industry": "",
-                        "asset_class": ac,
-                        "asset_class_zh": _asset_class_zh(ac),
-                    }
-                )
+                return {
+                    "symbol": sym,
+                    "name": str(q.get("name") or sym),
+                    "price": round(price, 2),
+                    "change_pct": round(chg, 2) if chg is not None else None,
+                    "price_kind": "last",
+                    "industry": "",
+                    "asset_class": ac,
+                    "asset_class_zh": _asset_class_zh(ac),
+                }
             except Exception as exc:  # noqa: BLE001
                 logger.debug("us watchlist quote %s: %s", sym, exc)
+                return None
+
+        rows: list[dict[str, Any]] = []
+        # 逐只限时，避免脏 ticker 拖死整批；shutdown(wait=False) 不阻塞返回
+        pool = ThreadPoolExecutor(max_workers=min(6, max(1, len(syms))))
+        try:
+            futs = {pool.submit(_one, sym): sym for sym in syms}
+            for fut, sym in futs.items():
+                try:
+                    row = fut.result(timeout=8.0)
+                except FuturesTimeout:
+                    logger.warning("us watchlist quote timeout: %s", sym)
+                    row = None
+                if row:
+                    rows.append(row)
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         return rows
 
     # CN_A：拆期货 / 股票ETF / 可能的场外基金

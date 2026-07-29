@@ -18,6 +18,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.memory import MemorySaver
 
 from research_agent.agents.specialists import (
+    SENTIMENT_EXPERT_PROMPT,
     SPECIALIST_BUILDERS,
     build_data_expert,
     build_knowledge_expert,
@@ -30,6 +31,7 @@ from research_agent.agents.specialists import (
 )
 from research_agent.config import LLMConfig
 from research_agent.graph.research_supervisor import (
+    RESEARCH_BRIEF_TEMPLATE,
     SUPERVISOR_PROMPT_CODER,
     SUPERVISOR_PROMPT_DATA,
     SUPERVISOR_PROMPT_DERIVATIVES,
@@ -37,6 +39,7 @@ from research_agent.graph.research_supervisor import (
     SUPERVISOR_PROMPT_KNOWLEDGE,
     SUPERVISOR_PROMPT_NEWS,
     SUPERVISOR_PROMPT_REPORT,
+    SUPERVISOR_PROMPT_RULES,
     SUPERVISOR_PROMPT_US_DATA,
     SUPERVISOR_PROMPT_US_FILING,
     SUPERVISOR_PROMPT_US_NEWS,
@@ -578,6 +581,49 @@ class TestSupervisorPrompt:
         assert "不构成买卖指令" in prompt
         assert "无依据不下单话术" in prompt
         assert "禁止私自联网" in prompt
+
+    def test_research_brief_template_in_prompt(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=True,
+            has_report=False,
+            has_coder=False,
+            has_knowledge=False,
+            has_news=False,
+            has_sentiment=False,
+        )
+        assert "研究模板目录" in prompt
+        assert "研究晨报" in prompt or "CN_BRIEF" in prompt
+        assert "多空对照" in prompt
+        assert "情景分析" in prompt
+        assert "数据缺口" in prompt
+        assert "走势" in prompt and "预测" in prompt
+        assert "不构成买卖指令" in prompt
+        assert "条件情景" in prompt or "CN_BRIEF" in prompt
+        assert "CN_BRIEF" in prompt and "US_BRIEF" in prompt
+        assert "CN_DEEP" in prompt and "US_DEEP" in prompt
+        assert "CN_MACRO" in prompt and "US_MACRO" in prompt
+        assert RESEARCH_BRIEF_TEMPLATE in SUPERVISOR_PROMPT_RULES
+        assert "CN_DEEP｜A股" in prompt
+        assert "US_MACRO｜US market" in prompt
+
+    def test_missing_sentiment_must_not_be_inferred(self) -> None:
+        prompt = _build_supervisor_prompt(
+            has_data=True,
+            has_report=False,
+            has_coder=False,
+            has_knowledge=False,
+            has_news=False,
+            has_sentiment=True,
+        )
+        assert "专家结果缺失时禁止脑补" in prompt
+        assert "已派发但尚未返回" in prompt
+        assert "多只个股情绪" in prompt
+        assert "行情+资金流向+市场情绪" in prompt
+
+    def test_sentiment_expert_allows_multi_ticker(self) -> None:
+        assert "最多调用 **3 次**工具" in SENTIMENT_EXPERT_PROMPT
+        assert "只分析最核心的 1 只" not in SENTIMENT_EXPERT_PROMPT
+        assert "盘面涨跌" in SENTIMENT_EXPERT_PROMPT
 
 
 # ---------------------------------------------------------------------------

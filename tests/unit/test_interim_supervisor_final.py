@@ -43,3 +43,8 @@ def test_strip_meta_above_analysis_opening() -> None:
     assert not out.startswith("上述分析")
     assert "半导体板块" in out
     assert _strip_meta_above_analysis("## 结论\n标普上涨") == "## 结论\n标普上涨"
+
+    yi = "以上分析已完整呈现。核心判断：科技股恶化或延续 2-3 个交易日。"
+    yi_out = _strip_meta_above_analysis(yi)
+    assert not yi_out.startswith("以上分析")
+    assert "科技股恶化" in yi_out

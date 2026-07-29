@@ -764,21 +764,47 @@ def create_app() -> FastAPI:
         def _hms() -> str:
             return _time.strftime("%H:%M:%S")
 
-        async def _timed_thread(fn):
-            data = await asyncio.to_thread(fn)
-            return data, _hms()
+        async def _timed_thread(fn, *, timeout: float = 20.0, default: object = None):
+            """看板子任务硬超时：单源卡住时不再拖死整页（此前可达 40–60s）。"""
+            label = getattr(fn, "__name__", None) or repr(fn)[:80]
+            try:
+                data = await asyncio.wait_for(asyncio.to_thread(fn), timeout=timeout)
+                return data, _hms()
+            except TimeoutError:
+                logger.warning("dashboard task timed out ({}s): {}", timeout, label)
+                return default, _hms()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("dashboard task failed ({}): {}", label, exc)
+                return default, _hms()
 
-        idx_task = asyncio.create_task(_timed_thread(_fetch_indices_sina))
+        _empty_boards: dict = {"industry": [], "concept": [], "concept_all": []}
+        idx_task = asyncio.create_task(_timed_thread(_fetch_indices_sina, default=[]))
         # 多拉涨停供主线/情绪/妖股聚合；面板仍截断为 Top20
-        zt_task = asyncio.create_task(_timed_thread(lambda: _fetch_zt_pool(limit=80)))
-        extra_task = asyncio.create_task(_timed_thread(_fetch_extra_pools))
-        boards_task = asyncio.create_task(_timed_thread(_fetch_boards))
-        changes_task = asyncio.create_task(_timed_thread(_fetch_changes))
-        lhb_task = asyncio.create_task(_timed_thread(_fetch_lhb))
-        tech_task = asyncio.create_task(_timed_thread(_fetch_tech_stocks))
-        status_task = asyncio.create_task(_timed_thread(_fetch_market_status))
-        trending_task = asyncio.create_task(get_trending(fresh=True))
-        us_task = asyncio.create_task(_timed_thread(lambda: _get_us_dashboard_cached(force=fresh)))
+        zt_task = asyncio.create_task(_timed_thread(lambda: _fetch_zt_pool(limit=80), default=[]))
+        extra_task = asyncio.create_task(_timed_thread(_fetch_extra_pools, default={}))
+        boards_task = asyncio.create_task(
+            _timed_thread(_fetch_boards, timeout=18.0, default=_empty_boards)
+        )
+        changes_task = asyncio.create_task(_timed_thread(_fetch_changes, default=[]))
+        lhb_task = asyncio.create_task(_timed_thread(_fetch_lhb, default=[]))
+        tech_task = asyncio.create_task(_timed_thread(_fetch_tech_stocks, default=[]))
+        status_task = asyncio.create_task(_timed_thread(_fetch_market_status, default={}))
+
+        async def _trending_safe():
+            try:
+                return await asyncio.wait_for(get_trending(fresh=True), timeout=20.0)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("dashboard trending failed: {}", exc)
+                return {}
+
+        trending_task = asyncio.create_task(_trending_safe())
+        us_task = asyncio.create_task(
+            _timed_thread(
+                lambda: _get_us_dashboard_cached(force=fresh),
+                timeout=25.0,
+                default={},
+            )
+        )
         # 期货/基金/ETF 双榜走 /api/dashboard/extras，避免拖慢整页
 
         indices, indices_at = await idx_task

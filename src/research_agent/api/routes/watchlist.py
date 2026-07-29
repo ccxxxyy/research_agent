@@ -30,7 +30,8 @@ class SearchBody(BaseModel):
 class AddBody(BaseModel):
     user_id: str = Field(default="anonymous", max_length=64)
     market: str
-    symbol: str = Field(..., min_length=1, max_length=32)
+    # 期权合约符号可超过 32（如 SKHY261218P00115000）
+    symbol: str = Field(..., min_length=1, max_length=64)
     asset_class: str = "unknown"
     display_name: str = ""
     exchange: str = ""
@@ -99,6 +100,13 @@ async def add_watchlist(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    logger.info(
+        "watchlist add user={} market={} symbol={} class={}",
+        body.user_id,
+        mkt,
+        item.get("symbol"),
+        item.get("asset_class"),
+    )
     await _sync_memory(memory, store, body.user_id)
     return {"ok": True, "item": item}
 
@@ -109,7 +117,7 @@ async def delete_watchlist(
     memory: MemoryDep,
     user_id: str = Query(default="anonymous", max_length=64),
     market: str = Query(..., description="CN_A or US"),
-    symbol: str = Query(..., min_length=1, max_length=32),
+    symbol: str = Query(..., min_length=1, max_length=64),
 ) -> dict[str, Any]:
     """删除一条自选。使用 query 参数（避免部分客户端/中间件丢弃 DELETE body）。"""
     store = _store(request)
