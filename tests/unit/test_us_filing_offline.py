@@ -190,6 +190,67 @@ async def test_download_and_parse_html(tmp_path: Path):
         parsed = await mod.parse_filing_text(dl["local_path"], start_char=0, max_chars=200)
         assert "Risk" in parsed["text"]
 
+        sought = await mod.seek_filing_text(
+            dl["local_path"], query="Item 1A", max_chars=200, num_windows=1
+        )
+        assert "error" not in sought or sought.get("text")
+        assert sought.get("match")
+        assert "Risk" in (sought.get("text") or "")
+
+
+@pytest.mark.asyncio
+async def test_seek_filing_text_item_and_keyword_windows(tmp_path: Path):
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    # TOC 在前、正文 Item 1A 在后；中间塞足够字符模拟目录
+    toc = "TABLE OF CONTENTS\nItem 1A Risk Factors .......... 12\n"
+    pad = "x" * 9000
+    body = (
+        "\nItem 1A. Risk Factors\nWe face China export controls and competition risks. "
+        + ("More risk detail. " * 400)
+        + "\nItem 7. Management's Discussion and Analysis\nRevenue grew in gaming GPUs. "
+        + ("MD&A paragraph. " * 200)
+    )
+    html = f"<html><body><pre>{toc}{pad}{body}</pre></body></html>".encode()
+    path = tmp_path / "nvda.htm"
+    path.write_bytes(html)
+
+    risk = await mod.seek_filing_text(str(path), query="1A", max_chars=500, num_windows=2)
+    assert "error" not in risk
+    assert risk["item_key"] == "1a"
+    assert risk["match"]["offset"] > 1000  # 跳过文首 TOC
+    assert "China export" in risk["text"]
+    assert risk["num_windows"] == 2
+    assert "window 1/2" in risk["text"]
+    assert risk["next_start_char"] > risk["match"]["offset"]
+
+    mda = await mod.seek_filing_text(str(path), query="MD&A", max_chars=400, num_windows=1)
+    assert "error" not in mda
+    assert "Revenue grew" in mda["text"] or "gaming" in mda["text"].lower()
+
+    kw = await mod.seek_filing_text(str(path), query="China", max_chars=300, num_windows=1)
+    assert "error" not in kw
+    assert "China" in kw["text"]
+
+    miss = await mod.seek_filing_text(str(path), query="zzzz-not-found-zzzz", max_chars=100)
+    assert miss.get("error")
+    assert miss.get("match") is None
+
+
+def test_seek_pattern_helpers():
+    from research_agent.mcp_servers import us_filing_server as mod
+
+    assert mod._item_key_from_query("Item 1A") == "1a"
+    assert mod._item_key_from_query("risk factors") == "1a"
+    assert mod._item_key_from_query("MD&A") == "7"
+    assert mod._item_key_from_query("China") is None
+    pats = mod._compile_seek_patterns("1A")
+    assert pats
+    text = "toc Item 1A\n" + ("." * 13000) + "\nItem 1A. Risk Factors\nHello"
+    matches = mod._collect_seek_matches(text, pats)
+    preferred = mod._prefer_seek_matches(matches, item_query=True)
+    assert preferred[0]["offset"] > 1000
+
 
 @pytest.mark.asyncio
 async def test_download_rejects_non_sec_url():

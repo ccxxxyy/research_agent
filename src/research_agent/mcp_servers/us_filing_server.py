@@ -19,6 +19,7 @@
 3. ``download_filing`` — 下载主文档到 ``./data/edgar_cache/``（按 URL 哈希缓存）
 4. ``extract_filing_metadata`` — 本地文件元数据（类型 / 大小 / PDF 页数）
 5. ``parse_filing_text`` — 有界正文提取（PDF 按页；HTML/TXT 按字符窗口）
+5b. ``seek_filing_text`` — 按 Item/关键词定位起点，再连续多窗拼接（不整篇精读）
 6. ``get_entity_overview`` — CIK/ticker → submissions 主体概况（无 NAV）
 7. ``search_entity_by_name`` — 在 company_tickers 上按名称模糊（上市公司；非 RIA）
 8. ``search_investment_adviser`` — IAPD 按名搜索投资顾问（Form ADV）
@@ -95,9 +96,42 @@ _FORM_EQUIV_GROUPS: tuple[frozenset[str], ...] = (
 
 MAX_PAGE_WINDOW = 20
 MAX_CHAR_WINDOW = 12_000
+MAX_SEEK_WINDOWS = 3
+MAX_PDF_SEEK_PAGES = 120
 DOWNLOAD_TIMEOUT_SECONDS = 60
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+
+# Item / 常用章节别名 → 正则（忽略大小写）；TOC 与正文常各出现一次，定位时偏好靠后命中
+_ITEM_PATTERNS: dict[str, tuple[str, ...]] = {
+    "1a": (r"item\s*1a\b", r"risk\s+factors"),
+    "1b": (r"item\s*1b\b",),
+    "1c": (r"item\s*1c\b", r"cybersecurity"),
+    "1": (r"item\s*1(?![a-z0-9])\b",),
+    "2": (r"item\s*2\b",),
+    "3": (r"item\s*3\b", r"legal\s+proceedings"),
+    "5": (r"item\s*5\b",),
+    "6": (r"item\s*6\b",),
+    "7a": (r"item\s*7a\b",),
+    "7": (r"item\s*7(?![a-z0-9])\b", r"management['\u2019]?s\s+discussion", r"\bmd\s*&\s*a\b"),
+    "8": (r"item\s*8\b", r"financial\s+statements\s+and\s+supplementary"),
+    "9a": (r"item\s*9a\b",),
+    "9": (r"item\s*9(?![a-z0-9])\b",),
+}
+
+_QUERY_ALIASES: dict[str, str] = {
+    "risk": "1a",
+    "risks": "1a",
+    "risk factors": "1a",
+    "risk factor": "1a",
+    "mda": "7",
+    "md&a": "7",
+    "md and a": "7",
+    "management discussion": "7",
+    "financial statements": "8",
+    "cybersecurity": "1c",
+    "cyber": "1c",
+}
 
 _TICKER_CACHE: dict[str, dict[str, str]] | None = None
 
@@ -327,6 +361,200 @@ def _detect_kind(data: bytes, *, path: Path | None = None) -> str:
     if head.startswith(b"<!doctype html") or head.startswith(b"<html") or b"<html" in head:
         return "html"
     return "text"
+
+
+def _normalize_seek_query(query: str) -> str:
+    return re.sub(r"\s+", " ", (query or "").strip().lower())
+
+
+def _item_key_from_query(query: str) -> str | None:
+    """若 query 是 Item 代号或章节别名，返回规范 key（如 ``1a``）；否则 None。"""
+    q = _normalize_seek_query(query)
+    if not q:
+        return None
+    if q in _QUERY_ALIASES:
+        return _QUERY_ALIASES[q]
+    m = re.match(r"^(?:item\s*)?([0-9]{1,2}[a-z]?)\b", q)
+    if m:
+        key = m.group(1)
+        if key in _ITEM_PATTERNS:
+            return key
+    return None
+
+
+def _compile_seek_patterns(query: str) -> list[re.Pattern[str]]:
+    q = _normalize_seek_query(query)
+    if not q:
+        return []
+    raw_patterns: list[str] = []
+    item_key = _item_key_from_query(q)
+    if item_key:
+        raw_patterns.extend(_ITEM_PATTERNS[item_key])
+    # 自由关键词（China / export 等）；Item 短码与别名整句不再二次转义
+    if (
+        (not item_key or len(q) > 3)
+        and q not in _QUERY_ALIASES
+        and not re.match(r"^(?:item\s*)?[0-9]{1,2}[a-z]?$", q)
+    ):
+        raw_patterns.append(re.escape(q))
+    seen: set[str] = set()
+    out: list[re.Pattern[str]] = []
+    for p in raw_patterns:
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(re.compile(p, re.IGNORECASE))
+    return out
+
+
+def _collect_seek_matches(
+    text: str,
+    patterns: list[re.Pattern[str]],
+    *,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for pat in patterns:
+        for m in pat.finditer(text):
+            start = int(m.start())
+            snippet = text[max(0, start - 48) : start + 96].replace("\n", " ").strip()
+            found.append(
+                {
+                    "offset": start,
+                    "matched": m.group(0),
+                    "pattern": pat.pattern,
+                    "snippet": snippet,
+                }
+            )
+            if len(found) >= limit * 4:
+                break
+        if len(found) >= limit * 4:
+            break
+    # 去重：邻近 120 字符内只留第一条（按 offset 升序）
+    found.sort(key=lambda x: int(x["offset"]))
+    deduped: list[dict[str, Any]] = []
+    for hit in found:
+        if deduped and int(hit["offset"]) - int(deduped[-1]["offset"]) < 120:
+            continue
+        deduped.append(hit)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _prefer_seek_matches(
+    matches: list[dict[str, Any]],
+    *,
+    item_query: bool,
+) -> list[dict[str, Any]]:
+    """Item 章节：目录 TOC 常在文首，正文靠后 — 有多处命中时去掉过早的 TOC 候选。"""
+    if not item_query or len(matches) < 2:
+        return matches
+    first = matches[0]
+    second = matches[1]
+    if int(first["offset"]) < 12_000 and int(second["offset"]) > int(first["offset"]) + 200:
+        return matches[1:]
+    return matches
+
+
+def _stitch_windows(
+    text: str,
+    *,
+    start: int,
+    max_chars: int,
+    num_windows: int,
+) -> tuple[str, list[dict[str, Any]], bool]:
+    windows: list[dict[str, Any]] = []
+    cursor = max(0, start)
+    n = max(1, min(int(num_windows), MAX_SEEK_WINDOWS))
+    max_chars = max(1, min(int(max_chars), MAX_CHAR_WINDOW))
+    for i in range(n):
+        if cursor >= len(text):
+            break
+        chunk = text[cursor : cursor + max_chars]
+        if not chunk:
+            break
+        end = cursor + len(chunk)
+        windows.append(
+            {
+                "index": i + 1,
+                "start_char": cursor,
+                "end_char": end,
+                "char_count": len(chunk),
+                "text": chunk,
+            }
+        )
+        cursor = end
+    if not windows:
+        return "", [], False
+    if len(windows) == 1:
+        stitched = windows[0]["text"]
+    else:
+        parts: list[str] = []
+        total = len(windows)
+        for w in windows:
+            parts.append(
+                f"----- window {w['index']}/{total} [{w['start_char']}:{w['end_char']}] -----\n{w['text']}"
+            )
+        stitched = "\n\n".join(parts)
+    truncated = cursor < len(text)
+    return stitched, windows, truncated
+
+
+def _load_filing_plain_text(path: Path) -> dict[str, Any]:
+    """读本地披露为纯文本；PDF 带页码锚点，便于 seek 后回指页。"""
+    data = path.read_bytes()
+    kind = _detect_kind(data, path=path)
+    if kind == "pdf":
+        import pypdf
+
+        page_spans: list[dict[str, Any]] = []
+        chunks: list[str] = []
+        cursor = 0
+        with path.open("rb") as fh:
+            reader = pypdf.PdfReader(fh)
+            total = len(reader.pages)
+            scan_to = min(total, MAX_PDF_SEEK_PAGES)
+            for p in range(1, scan_to + 1):
+                page_text = reader.pages[p - 1].extract_text() or ""
+                marker = f"\n\n[[PAGE {p}]]\n\n"
+                block = marker + page_text
+                start = cursor
+                end = cursor + len(block)
+                page_spans.append(
+                    {"page": p, "start_char": start, "end_char": end, "char_count": len(page_text)}
+                )
+                chunks.append(block)
+                cursor = end
+        text = "".join(chunks)
+        return {
+            "kind": "pdf",
+            "text": text,
+            "total_chars": len(text),
+            "total_pages": total,
+            "scanned_pages": scan_to,
+            "page_spans": page_spans,
+            "pdf_truncated": total > scan_to,
+        }
+
+    raw = data.decode("utf-8", errors="ignore")
+    text = _html_to_text(raw) if kind == "html" else raw
+    return {
+        "kind": kind,
+        "text": text,
+        "total_chars": len(text),
+        "total_pages": None,
+        "scanned_pages": None,
+        "page_spans": [],
+        "pdf_truncated": False,
+    }
+
+
+def _page_for_offset(page_spans: list[dict[str, Any]], offset: int) -> int | None:
+    for span in page_spans:
+        if int(span["start_char"]) <= offset < int(span["end_char"]):
+            return int(span["page"])
+    return None
 
 
 # ---------------------------------------------------------------------
@@ -828,6 +1056,137 @@ async def extract_filing_metadata(local_path: str) -> dict:
         return await asyncio.to_thread(_call)
     except Exception as e:  # noqa: BLE001
         return _fmt_error(e, context=f"extract_filing_metadata({local_path!r})")
+
+
+@mcp.tool()
+async def seek_filing_text(
+    local_path: str,
+    query: str,
+    max_chars: int = 8000,
+    num_windows: int = 2,
+    match_index: int = 0,
+) -> dict:
+    """按 Item 章节或关键词定位披露正文，再连续多窗拼接（不整篇精读）。
+
+    典型用法：
+    - ``query="Item 1A"`` / ``"risk factors"`` → 跳到风险因素再读 1～3 窗
+    - ``query="Item 7"`` / ``"MD&A"`` → 管理层讨论
+    - ``query="China"`` → 关键词首次（或 ``match_index`` 指定）命中处起读
+
+    HTML/TXT 全文检索；PDF 最多扫描前 ``MAX_PDF_SEEK_PAGES`` 页。
+    需要绝对页码/偏移时仍用 ``parse_filing_text``。
+
+    Args:
+        local_path: ``download_filing`` 返回的路径。
+        query: Item 代号（如 ``1A`` / ``Item 7``）或关键词。
+        max_chars: 单窗字符数（默认 8000，上限 12000）。
+        num_windows: 连续窗数（默认 2，上限 3），自动拼接。
+        match_index: 第几个偏好命中（0 起）；Item 查询会自动跳过文首 TOC。
+    """
+    path = Path(local_path)
+    if not path.exists():
+        return _fmt_error(
+            FileNotFoundError(f"没有这个文件: {path}"),
+            context=f"seek_filing_text({local_path!r})",
+        )
+    q = (query or "").strip()
+    if not q:
+        return {
+            "error": "query 不能为空；请传 Item（如 1A / Item 7）或关键词，或改用 parse_filing_text",
+            "context": f"seek_filing_text({local_path!r})",
+        }
+
+    max_chars = max(1, min(int(max_chars), MAX_CHAR_WINDOW))
+    num_windows = max(1, min(int(num_windows), MAX_SEEK_WINDOWS))
+    match_index = max(0, int(match_index))
+
+    def _call() -> dict[str, Any]:
+        loaded = _load_filing_plain_text(path)
+        text = str(loaded["text"] or "")
+        patterns = _compile_seek_patterns(q)
+        if not patterns:
+            raise ValueError(f"无法从 query={q!r} 编译检索式")
+
+        item_key = _item_key_from_query(q)
+        raw_matches = _collect_seek_matches(text, patterns, limit=12)
+        matches = _prefer_seek_matches(raw_matches, item_query=bool(item_key))
+        if not matches:
+            return {
+                "local_path": str(path),
+                "kind": loaded["kind"],
+                "query": q,
+                "item_key": item_key,
+                "match": None,
+                "matches_preview": [],
+                "error": (
+                    f"未找到与 {q!r} 匹配的 Item/关键词；"
+                    "可换关键词或改用 parse_filing_text 从偏移 0 起读"
+                ),
+                "context": f"seek_filing_text({local_path!r}, query={q!r})",
+                "total_chars": loaded["total_chars"],
+                "pdf_truncated": loaded.get("pdf_truncated"),
+                "scanned_pages": loaded.get("scanned_pages"),
+            }
+
+        match_index_use = len(matches) - 1 if match_index >= len(matches) else match_index
+        chosen = matches[match_index_use]
+        start = int(chosen["offset"])
+        stitched, windows, truncated = _stitch_windows(
+            text,
+            start=start,
+            max_chars=max_chars,
+            num_windows=num_windows,
+        )
+        page_spans = loaded.get("page_spans") or []
+        start_page = _page_for_offset(page_spans, start) if page_spans else None
+        out: dict[str, Any] = {
+            "local_path": str(path),
+            "kind": loaded["kind"],
+            "query": q,
+            "item_key": item_key,
+            "match": {
+                **chosen,
+                "match_index": match_index_use,
+                "page": start_page,
+            },
+            "matches_preview": [
+                {
+                    "offset": m["offset"],
+                    "matched": m["matched"],
+                    "snippet": m["snippet"],
+                    "page": _page_for_offset(page_spans, int(m["offset"])) if page_spans else None,
+                }
+                for m in matches[:5]
+            ],
+            "num_windows": len(windows),
+            "windows": [{k: v for k, v in w.items() if k != "text"} for w in windows],
+            "text": stitched,
+            "char_count": len(stitched),
+            "total_chars": loaded["total_chars"],
+            "truncated": truncated,
+            "next_start_char": windows[-1]["end_char"] if windows else start,
+            "note": (
+                "已按 Item/关键词定位并多窗拼接；续读可用 "
+                "parse_filing_text(start_char=next_start_char) "
+                "或 seek_filing_text(match_index=+1)。非整篇精读。"
+            ),
+        }
+        if loaded.get("total_pages") is not None:
+            out["total_pages"] = loaded["total_pages"]
+            out["scanned_pages"] = loaded["scanned_pages"]
+            out["pdf_truncated"] = loaded["pdf_truncated"]
+        return out
+
+    try:
+        return await asyncio.to_thread(_call)
+    except Exception as e:  # noqa: BLE001
+        return _fmt_error(
+            e,
+            context=(
+                f"seek_filing_text(local_path={local_path!r}, query={q!r}, "
+                f"max_chars={max_chars}, num_windows={num_windows}, match_index={match_index})"
+            ),
+        )
 
 
 @mcp.tool()
