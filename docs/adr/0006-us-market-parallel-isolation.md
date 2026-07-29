@@ -131,7 +131,7 @@ US:   us_data（含 ETF / 共同基金 / 期货 / 期权）/ us_filing / us_news
 
 一期 P0～P5 **已全部完成**。可选增强见 [数据来源说明 §8](../data-sources.md)：
 
-- Finnhub / Polygon 等多供应商**行情**（真·多源）；新闻侧 Finnhub 已可选（见 data-sources §4.4）
+- Polygon 等可配置行情链；Finnhub 新闻+报价已可选（同一 `FINNHUB_API_KEY`，见 data-sources §4.4）
 - 美股共同基金 / 期货 / 期权与国内 `derivatives_expert` **已落地**（见 data-sources）；
   国内私募走 AMAC 服务端 keyword（`fund_*` private），美股私募走 EDGAR Form D + IAPD ADV（`us_filing_*`），均**无**免费实时 NAV
 - 英文舆情再升级 FinBERT / 专用模型（当前 VADER+finlex 已够用）；事件标签仍为关键词，非 LLM 抽取

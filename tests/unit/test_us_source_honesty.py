@@ -31,6 +31,7 @@ def test_proxy_quote_contract_for_every_mapped_symbol(symbol: str):
     }
     with (
         patch.object(mod, "_quote_via_yahoo_chart", return_value=None),
+        patch.object(mod, "_quote_via_finnhub", return_value=None),
         patch.object(mod, "_quote_via_eastmoney_us", return_value=em),
     ):
         q = mod._quote_from_ticker(symbol)
@@ -58,6 +59,7 @@ def test_direct_eastmoney_index_is_not_proxy():
     }
     with (
         patch.object(mod, "_quote_via_yahoo_chart", return_value=None),
+        patch.object(mod, "_quote_via_finnhub", return_value=None),
         patch.object(mod, "_quote_via_eastmoney_us", return_value=em),
     ):
         q = mod._quote_from_ticker("^GSPC")

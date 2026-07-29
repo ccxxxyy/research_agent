@@ -790,10 +790,57 @@ def _quote_via_eastmoney_us(symbol: str) -> dict[str, Any] | None:
     }
 
 
+def _finnhub_api_key() -> str:
+    try:
+        from research_agent.config import get_settings
+
+        return (get_settings().finnhub_api_key or "").strip()
+    except Exception:  # noqa: BLE001
+        import os
+
+        return (os.environ.get("FINNHUB_API_KEY") or "").strip()
+
+
+def _quote_via_finnhub(symbol: str) -> dict[str, Any] | None:
+    """Finnhub ``/quote``（需 ``FINNHUB_API_KEY``）。指数/期货/外汇符号跳过。"""
+    key = _finnhub_api_key()
+    if not key:
+        return None
+    ticker = _normalize_ticker(symbol)
+    # Yahoo 风格指数/期货/外汇留给 Chart/东财；正股与 ETF（含 BRK.B）走 Finnhub
+    if ticker.startswith("^") or ticker.endswith(("=F", "=X")):
+        return None
+    from urllib.parse import urlencode
+
+    qs = urlencode({"symbol": ticker, "token": key})
+    url = f"https://finnhub.io/api/v1/quote?{qs}"
+    data = _http_get_json(url, timeout=8.0)
+    if not isinstance(data, dict):
+        return None
+    price = _num_or_none(data.get("c"))
+    if price is None or price <= 0:
+        return None
+    prev = _num_or_none(data.get("pc"))
+    chg = _num_or_none(data.get("d"))
+    chg_pct = _num_or_none(data.get("dp"))
+    if chg is None and prev is not None and price is not None:
+        chg = price - prev
+    if chg_pct is None and prev not in (None, 0) and chg is not None:
+        chg_pct = (chg / prev) * 100.0
+    return {
+        "price": price,
+        "previous_close": prev,
+        "change": chg,
+        "change_percent": round(chg_pct, 4) if chg_pct is not None else None,
+        "source": "finnhub",
+    }
+
+
 def _quote_from_ticker(symbol: str) -> dict[str, Any]:
-    """报价：Yahoo Chart → 东财美股 → yfinance。
+    """报价：Yahoo Chart → Finnhub（若已配 Key）→ 东财美股 → yfinance。
 
     国内网络下 Yahoo 常返回 403 / ``Too Many Requests``；东财 ulist 作稳定回退。
+    配置 ``FINNHUB_API_KEY`` 后自动启用 Finnhub 报价（与新闻第二源共用同一 Key）。
     """
     ticker = _normalize_ticker(symbol)
     display = {
@@ -856,6 +903,14 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
         return _pack(
             chart,
             source_url=f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
+        )
+
+    fh = _quote_via_finnhub(ticker)
+    if fh and fh.get("price") is not None:
+        return _pack(
+            fh,
+            source_url="https://finnhub.io/docs/api/quote",
+            note=f"{as_of_note}；来源 Finnhub quote",
         )
 
     em = _quote_via_eastmoney_us(ticker)
@@ -1069,7 +1124,7 @@ async def get_price_history(symbol: str, period: str = "1mo", interval: str = "1
             "context": "get_price_history()",
         }
 
-    # 快路径优先：Yahoo Chart / 东财（秒级、有 HTTP timeout）。
+    # 快路径优先：Yahoo Chart → 可选 Finnhub → 东财（秒级、有 HTTP timeout）。
     # yfinance 放最后：国内常挂起，即使有 wait_for 也会占满线程池。
     try:
         chart = await asyncio.wait_for(

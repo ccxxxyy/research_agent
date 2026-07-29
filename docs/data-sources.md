@@ -25,7 +25,7 @@
 ```
 CN_A（A 股）                                  US（美股）
 ─────────────────                        ─────────────────
-akshare → 东财/新浪/雪球等            报价：Yahoo Chart → 东财 ulist → yfinance
+akshare → 东财/新浪/雪球等            报价：Yahoo Chart → 可选 Finnhub → 东财 → yfinance
 巨潮 cninfo（披露 PDF）               SEC EDGAR（10-K… + ETF: NPORT-P/N-CSR/485BPOS）
 东财/财联社/雪球（新闻）               新闻：Yahoo → 可选 Finnhub → 过滤/聚类/标签
 SnowNLP（中文舆情）                   VADER + 金融词表增强（本地打分）
@@ -144,9 +144,10 @@ get_quote / get_index_quotes / _quote_from_ticker
 | **Yahoo Chart HTTP** | 直连 Yahoo 图表 API | 报价/指数的**优先快路径** | 否（行情接口） |
 | **Yahoo Search HTTP** | 直连 Yahoo 搜索接口的 news | 新闻主源之一 | 否（金融域新闻，不是 Google/Bing） |
 | **Finnhub company-news** | Finnhub REST，需 API Key | 新闻**第二源**（可选） | 否 |
+| **Finnhub quote** | Finnhub REST `/quote`，同一 Key | 报价链**第二源**（Yahoo Chart 后） | 否 |
 | **SEC EDGAR** | 美国证监会披露 | 披露主路径 | 否 |
 
-yfinance / Chart / Search = **同一数据商（Yahoo）的不同访问方式**。Finnhub 是**另一家供应商**，目前仅用于新闻，不用于报价主备。
+yfinance / Chart / Search = **同一数据商（Yahoo）的不同访问方式**。Finnhub 是**另一家供应商**：配 `FINNHUB_API_KEY` 后同时用于新闻第二源与报价第二源（正股/ETF；指数/期货仍走 Yahoo/东财）。
 
 ### 4.4 美股新闻管道：技术实现与 Finnhub 操作指南
 
@@ -238,13 +239,13 @@ Finnhub 接口：`GET https://finnhub.io/api/v1/company-news?symbol={T}&from={YY
 
 配置读取：`Settings.finnhub_api_key` ← 环境变量 `FINNHUB_API_KEY`（见 `config.py` / `.env.example`）。
 
-#### 4.4.6 Finnhub 第二新闻源：操作指南
+#### 4.4.6 Finnhub：操作指南（新闻 + 报价共用同一 Key）
 
 **1. 申请 Key**
 
 1. 打开 [https://finnhub.io/](https://finnhub.io/) 注册账号。  
 2. Dashboard 中复制 **API Key**（免费档通常有每日调用上限，以官网为准）。  
-3. 确认套餐含 **company-news**（免费档一般可用；超额会 HTTP 非 200，管道会打日志并跳过该源）。
+3. 确认套餐含 **company-news** 与 **quote**（免费档一般可用；超额会 HTTP 非 200，对应通路会打日志并跳过）。
 
 **2. 写入本机配置**
 
@@ -256,22 +257,22 @@ cp .env.example .env   # 若尚无 .env
 FINNHUB_API_KEY=你的_finnhub_key
 ```
 
-保存后**重启** FastAPI / MCP 进程（`get_settings` 有缓存，不重启不会读到新 Key）。
+保存后**重启** FastAPI / MCP 进程（`get_settings` 有缓存，不重启不会读到新 Key）。  
+**无需其它开关**：同一 Key 同时启用新闻第二源与报价第二源。
 
 **3. 验证是否生效**
 
 ```bash
-# 重启服务后，用研究问答或工具：
-# 「英伟达最近有哪些新闻？」
-# 成功时工具结果常见字段：
+# 重启服务后：
+# 新闻：「英伟达最近有哪些新闻？」
 #   providers_used: ["yahoo", "finnhub"]  （或其一）
-#   news[].cluster_size / event_type / event_label_zh
+# 报价：Yahoo Chart 失败/限流时，正股/ETF 的 source 可为 finnhub
 ```
 
 也可用离线单测确认管道逻辑（不依赖真实 Key）：
 
 ```bash
-uv run pytest tests/unit/test_us_news_pipeline.py -q
+uv run pytest tests/unit/test_us_news_pipeline.py tests/unit/test_us_data_offline.py -q -k "finnhub or news"
 ```
 
 **4. 配额与排错**
@@ -279,14 +280,15 @@ uv run pytest tests/unit/test_us_news_pipeline.py -q
 | 现象 | 可能原因 | 处理 |
 |------|----------|------|
 | 只有 `yahoo`，且有 `note` 说未配置 | `.env` 未写或未重启 | 检查 Key、重启进程 |
-| 配置了 Key 仍无 finnhub | Key 错、配额用尽、网络拦截 | 看日志 `finnhub company-news HTTP …`；浏览器/ curl 直连 Finnhub 自测 |
+| 配置了 Key 仍无 finnhub 新闻 | Key 错、配额用尽、网络拦截 | 看日志 `finnhub company-news HTTP …`；curl 直连自测 |
+| 报价始终无 `finnhub` | Chart 已成功，或标的为指数/期货（跳过 Finnhub） | 属预期；正股可在断 Yahoo 时验证 |
 | 列表变短 | 过滤 + 聚类压缩 | 正常；看 `raw_count` vs `count` |
 | 标签不准 | 关键词规则局限 | 改 `_EVENT_RULES`，或后续上模型抽取 |
 
 **5. 安全注意**
 
 - **不要**把 Key 提交进 Git；只放在本地 `.env` 或部署密钥库。  
-- CI / 公开仓库默认不设 Key，测试用 mock，行为与「Yahoo-only」一致。
+- CI / 公开仓库默认不设 Key，测试用 mock，行为与「Yahoo-only / 无 Finnhub 报价」一致。
 
 #### 4.4.7 单测索引
 
@@ -295,6 +297,7 @@ uv run pytest tests/unit/test_us_news_pipeline.py -q
 | `tests/unit/test_us_news_pipeline.py` | 垃圾过滤、事件标签、聚类代表条、无 Key 降级、Finnhub mock 合并 |
 | `tests/unit/test_us_news_offline.py` | `get_ticker_news` 等工具层 mock |
 | `tests/unit/test_us_sentiment_offline.py` | 舆情拉新闻 + 打分 |
+| `tests/unit/test_us_data_offline.py` | 报价链含 Finnhub mock |
 
 ---
 
@@ -304,12 +307,12 @@ uv run pytest tests/unit/test_us_news_pipeline.py -q
 
 | 维度 | 报价侧（当前） | 新闻侧（当前） | 完整真·多源（行情） |
 |------|----------------|----------------|---------------------|
-| 供应商 | 实质 Yahoo + 东财报价兜底 | **Yahoo + 可选 Finnhub** | Polygon / Finnhub 等可配链 |
-| 接入形态 | Chart / yfinance / 东财 HTTP | Yahoo Search + Finnhub REST Key | 正式 REST + Key + 配额 |
-| 主备含义 | 报价异源已有东财；Yahoo 内多通路 | 新闻异源已可选 Finnhub | 报价/历史/期权等整链可切换 |
+| 供应商 | Yahoo + **可选 Finnhub** + 东财兜底 | **Yahoo + 可选 Finnhub** | Polygon 等可配链；历史/期权全字段 |
+| 接入形态 | Chart → Finnhub `/quote` → 东财 → yfinance | Yahoo Search + Finnhub company-news | 正式 REST + 多 Key + 配额编排 |
+| 主备含义 | 配 Key 即启用 Finnhub 报价；无 Key 行为不变 | 新闻异源已可选 Finnhub | 报价/历史/期权等整链可切换供应商顺序 |
 
-「真·多源」在**行情**上仍指：可配置的多家独立供应商冗余。  
-**新闻**已实现「Yahoo + Finnhub」异源可选；**报价全链 Finnhub/Polygon 配置化**仍属后续（见 §5.3）。
+「真·多源」在**行情全链**（含历史 K 线、期权链、可配置 `US_QUOTE_PROVIDERS`）上仍可继续扩展。  
+**新闻 + 实时报价**已可共用 `FINNHUB_API_KEY` 即用；**Polygon 与可配置 provider 链**仍属后续（见 §5.3）。
 
 ### 5.2 是否一定更准确？
 
@@ -326,9 +329,9 @@ uv run pytest tests/unit/test_us_news_pipeline.py -q
 因此：引入 Finnhub 等，主要价值是 **稳定性、配额、延迟、字段完整性与可运维的主备**，而不是默认「数字一定比 Yahoo 更对」。  
 日线研究 PoC 用 Yahoo 通常够用；要做生产级实时或强 SLA，再上多源更合适。
 
-### 5.3 若未来接入**行情**多源，建议形态（尚未实现）
+### 5.3 若未来接入**可配置**行情多源（尚未实现）
 
-新闻侧 Finnhub 已按 §4.4 落地；下表是**报价/历史**配置化主备的目标形态（当前仓库**无** `US_QUOTE_PROVIDERS`）：
+Finnhub 报价已按固定顺序挂入（Chart → Finnhub → 东财 → yfinance）；下表是**可配置 provider 链 + Polygon** 的目标形态（当前仓库**无** `US_QUOTE_PROVIDERS`）：
 
 ```
 get_quote(symbol)
@@ -342,7 +345,7 @@ get_quote(symbol)
 ```env
 US_QUOTE_PROVIDERS=polygon,finnhub,yahoo_chart
 POLYGON_API_KEY=...
-# FINNHUB_API_KEY 现已用于新闻第二源；未来也可复用于行情链
+# FINNHUB_API_KEY 已用于新闻 + 报价第二源；未来可参与可排序链
 FINNHUB_API_KEY=...
 ```
 
@@ -365,7 +368,7 @@ FINNHUB_API_KEY=...
 
 | 主题 | 路径 |
 |------|------|
-| 美股报价主备 | `mcp_servers/us_data_server.py`（Chart → 东财 → yfinance；含共同基金/期货/期权） |
+| 美股报价主备 | `mcp_servers/us_data_server.py`（Chart → 可选 Finnhub → 东财 → yfinance） |
 | 国内期货/期权 | `mcp_servers/derivatives_server.py` |
 | 看板扩展（期货/ETF/QDII/共同基金） | `market/dashboard_extras.py` + `main.py` `/api/dashboard` |
 | 看板自选 | `memory/watchlist_store.py` + `market/watchlist_resolve.py` + `api/routes/watchlist.py` |
@@ -387,7 +390,7 @@ FINNHUB_API_KEY=...
 | 项 | 现状 |
 |----|------|
 | 通用联网搜索（Tavily 等） | 未挂载；仅有 `retriever.py` 文案；**不应用作行情主源** |
-| Finnhub / Polygon 等**行情**多供应商配置链 | 未接入（新闻侧 Finnhub 已可选，见 §4.4） |
+| Finnhub / Polygon **可配置**行情 provider 链 | Finnhub 报价已可选（同 Key）；Polygon / `US_QUOTE_PROVIDERS` 未接入 |
 | 英文舆情 FinBERT / 专用 Transformer | 可选；当前为 VADER + 金融词表 + 标题/摘要/正文前段（`en_vader_finlex_v2`） |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
 | 左侧知识库栏按「当前集合」过滤显示 | 无；列出该用户全部集合的 PDF |
