@@ -545,7 +545,7 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
     try:
         from curl_cffi import requests as curl_requests
 
-        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=10)
+        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=20)
         if resp.status_code == 200:
             payload = resp.json()
     except Exception:  # noqa: BLE001
@@ -557,7 +557,7 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
             sess = requests.Session()
             sess.trust_env = False
             try:
-                resp = sess.get(url, headers=headers, timeout=10)
+                resp = sess.get(url, headers=headers, timeout=20)
                 if resp.status_code == 200:
                     payload = resp.json()
             finally:
@@ -605,39 +605,31 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
 
 
 def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], list[str]]:
-    import logging
-
     from research_agent.mcp_servers.us_news_pipeline import collect_us_news
 
     ticker = _normalize_ticker(symbol)
     logger.info("fetching sentiment news for %s limit=%s", ticker, limit)
 
     pull = min(40, max(limit * 2, limit + 5))
-    yahoo = _fetch_news_via_yahoo_search(ticker, pull)
-    source = "yahoo_search"
-    if yahoo:
-        for n in yahoo:
-            n.setdefault("provider", "yahoo_search")
-            n.setdefault("source", "yahoo_search")
-    else:
-        # 回退 yfinance（可能慢）
-        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-        try:
-            import yfinance as yf
+    # 与 us_news_server 一致：Search（快）+ yfinance（常有 summary）合并
+    from research_agent.mcp_servers.us_news_server import (
+        _fetch_yfinance_news,
+        _merge_yahoo_news_prefer_summary,
+    )
 
-            raw_list = yf.Ticker(ticker).news or []
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("yfinance.news failed for %s: %s", ticker, exc)
-            raw_list = []
-        yahoo = []
-        for raw in raw_list:
-            news = _normalize_news_item(raw)
-            if news:
-                news["provider"] = "yfinance"
-                news["source"] = "yfinance"
-                yahoo.append(news)
-            if len(yahoo) >= pull:
-                break
+    search_items = _fetch_news_via_yahoo_search(ticker, pull)
+    for n in search_items:
+        n.setdefault("provider", "yahoo_search")
+        n.setdefault("source", "yahoo_search")
+    yf_items = _fetch_yfinance_news(ticker, pull)
+    if search_items and yf_items:
+        yahoo = _merge_yahoo_news_prefer_summary(search_items, yf_items, limit=pull)
+        source = "yahoo_search+yfinance"
+    elif search_items:
+        yahoo = search_items
+        source = "yahoo_search"
+    else:
+        yahoo = yf_items
         source = "yfinance"
 
     bundle = collect_us_news(ticker, yahoo_items=yahoo, limit=limit)
@@ -764,7 +756,7 @@ async def get_ticker_sentiment_report(symbol: str, limit: int = 30) -> dict:
         }
 
     try:
-        return await asyncio.wait_for(asyncio.to_thread(_work), timeout=25.0)
+        return await asyncio.wait_for(asyncio.to_thread(_work), timeout=90.0)
     except TimeoutError:
         return {
             "error": "TimeoutError: Yahoo 舆情拉取超过 45s",

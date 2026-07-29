@@ -156,7 +156,7 @@ REFLECTION_ENABLED=true
 # SSE 心跳间隔，0 关闭（ 5s 更直观）
 SSE_RESEARCH_HEARTBEAT_SECONDS=5
 
-# 美股新闻第二源（可选）。配置后与 Yahoo 合并，再过滤/聚类/贴事件标签。
+# Finnhub（可选）：同一 Key 启用新闻第二源 + 报价第二源（Chart 之后）。
 # 申请：https://finnhub.io/  — 详见 docs/data-sources.md §4.4
 FINNHUB_API_KEY=
 ```
@@ -752,7 +752,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 |---|---------------------------------------------------|
 | [系统架构设计](docs/architecture.md) | 全景图、核心设计决策矩阵、数据流详解、可靠性设计、安全层、可扩展性                 |
 | [故障模式分析](docs/failure-modes.md) | 12+ 种故障模式矩阵、三级降级策略、可观测性信号、灾难恢复                    |
-| [数据来源说明](docs/data-sources.md) | 中/美数据源、Yahoo→东财→yfinance 主备、与 Finnhub 等多源及通用搜索的区别 |
+| [数据来源说明](docs/data-sources.md) | 中/美数据源、报价 Chart→Finnhub→东财→yfinance、新闻 Yahoo+Finnhub |
 | [ADR-0001: FAISS > Chroma](docs/adr/0001-faiss-over-chroma.md) | 向量存储选型                                            |
 | [ADR-0002: Knowledge in-process](docs/adr/0002-knowledge-server-inprocess.md) | MCP stdio 死锁规避                                    |
 | [ADR-0003: Reflection Loop](docs/adr/0003-reflection-loop.md) | 反思循环设计                                            |
@@ -766,16 +766,16 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 
 详见 [ADR-0006](docs/adr/0006-us-market-parallel-isolation.md) 与 [数据来源说明](docs/data-sources.md)。
 
-- **P1**：`us_data_server` + `us_data_expert`（股票/指数/ETF/共同基金/期货/期权；报价 Chart→东财→yfinance）
+- **P1**：`us_data_server` + `us_data_expert`（股票/指数/ETF/共同基金/期货/期权；报价 Chart→可选 Finnhub→东财→yfinance）
 - **P2**：`us_filing_server` + `us_filing_expert`（普通股 10-K/10-Q/8-K/DEF 14A；ETF：NPORT-P/N-CSR/485BPOS）
-- **P3**：`us_news_server` + `us_sentiment_server`（Yahoo Search HTTP / VADER+金融词表舆情）
+- **P3**：`us_news_server` + `us_sentiment_server`（Yahoo + 可选 Finnhub / VADER+金融词表舆情）
 - **P4**：ETF 持仓工具、语义缓存 US 域、路由 Eval、UI 市场徽章
 - **P5**：MIXED `[MixedOrchestration]` + `mixed_market_routing` 评估集
 
 ### 待做 / 可选
 
 - 增加更多业务 specialist（如 `bond_expert` 债券）；美国期权/期货与国内衍生品已接入 `us_data` / `derivatives_expert`
-- Finnhub / Polygon 等真·多源行情（可选；见 data-sources §5/§8）
+- Polygon / 可配置 `US_QUOTE_PROVIDERS` 行情链（Finnhub 新闻+报价已可选；见 data-sources §5/§8）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）
 - 通用联网搜索（可选辅助，**不能**替代行情 API；当前未挂载）

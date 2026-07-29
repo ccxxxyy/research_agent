@@ -352,7 +352,7 @@ def collect_us_news(
         if key:
             fh = fetch_finnhub_company_news(symbol, limit=pull_n, api_key=key)
         else:
-            note = "未配置 FINNHUB_API_KEY，新闻仅 Yahoo；配置后可启用第二源。"
+            note = "未配置 FINNHUB_API_KEY：新闻仅 Yahoo；报价跳过 Finnhub。配置后新闻与行情第二源同时启用。"
 
     merged, providers = merge_news_sources(yahoo, fh)
     # 规范化 provider 列表

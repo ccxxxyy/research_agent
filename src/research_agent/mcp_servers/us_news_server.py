@@ -11,7 +11,7 @@
 
 设计说明
 --------
-- Yahoo Search HTTP（失败再 yfinance）+ 可选 Finnhub company-news（``FINNHUB_API_KEY``）。
+- Yahoo Search HTTP **与** yfinance.news 双路合并（Search 常无摘要，yfinance 常有）+ 可选 Finnhub company-news（``FINNHUB_API_KEY``）。
 - 共用 ``us_news_pipeline``：垃圾源过滤、标题相似度聚类、事件关键词标签。
 - 错误返回 ``{"error": "...", "context": "..."}``。
 - 工具结果走 ``cached_tool``（namespace=``us_news``）。
@@ -39,8 +39,8 @@ if not logger.handlers:
 
 mcp = FastMCP("UsNewsServer")
 
-# yfinance 新闻拉取硬超时，避免研究流永久等待
-_YF_NEWS_TIMEOUT_SECONDS = 40.0
+# Yahoo Search + yfinance 串行拉取的总硬超时（国内到 Yahoo 常偏慢，过短会空结果）
+_YF_NEWS_TIMEOUT_SECONDS = 90.0
 
 _MAJOR_INDEX_TICKERS: dict[str, str] = {
     "S&P 500": "^GSPC",
@@ -173,7 +173,7 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
     try:
         from curl_cffi import requests as curl_requests
 
-        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=10)
+        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=20)
         if resp.status_code == 200:
             payload = resp.json()
     except Exception:  # noqa: BLE001
@@ -185,7 +185,7 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
             sess = requests.Session()
             sess.trust_env = False
             try:
-                resp = sess.get(url, headers=headers, timeout=10)
+                resp = sess.get(url, headers=headers, timeout=20)
                 if resp.status_code == 200:
                     payload = resp.json()
             finally:
@@ -221,15 +221,47 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
     return out
 
 
-def _fetch_yahoo_news_raw(symbol: str, limit: int) -> list[dict[str, Any]]:
-    """Yahoo Search HTTP，失败再 yfinance.news（未经聚类）。"""
-    items = _fetch_news_via_yahoo_search(symbol, limit)
-    if items:
-        for it in items:
-            it.setdefault("provider", "yahoo_search")
-            it.setdefault("source", "yahoo_search")
-        return items
+def _news_dedupe_key(item: dict[str, Any]) -> str:
+    url = str(item.get("url") or "").strip().lower()
+    if url:
+        return f"u:{url}"
+    title = re.sub(r"\s+", " ", str(item.get("title") or "").strip().lower())
+    return f"t:{title}" if title else ""
 
+
+def _merge_yahoo_news_prefer_summary(
+    search_items: list[dict[str, Any]],
+    yf_items: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """合并 Search（快、常无摘要）与 yfinance（常有 summary）；同题优先保留有概要的。"""
+    by_key: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    def _ingest(items: list[dict[str, Any]]) -> None:
+        for it in items:
+            key = _news_dedupe_key(it)
+            if not key:
+                continue
+            prev = by_key.get(key)
+            if prev is None:
+                by_key[key] = it
+                order.append(key)
+                continue
+            # 已有条目缺摘要、新条目有 → 用新的（通常来自 yfinance）
+            if not str(prev.get("summary") or "").strip() and str(it.get("summary") or "").strip():
+                by_key[key] = {**prev, **it, "summary": it["summary"]}
+                by_key[key]["source"] = it.get("source") or prev.get("source")
+                by_key[key]["provider"] = it.get("provider") or prev.get("provider")
+
+    _ingest(search_items)
+    _ingest(yf_items)
+    out = [by_key[k] for k in order]
+    return out[: max(1, limit)]
+
+
+def _fetch_yfinance_news(symbol: str, limit: int) -> list[dict[str, Any]]:
     import yfinance as yf
 
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)
@@ -249,6 +281,27 @@ def _fetch_yahoo_news_raw(symbol: str, limit: int) -> list[dict[str, Any]]:
         if len(out) >= limit:
             break
     return out
+
+
+def _fetch_yahoo_news_raw(symbol: str, limit: int) -> list[dict[str, Any]]:
+    """Yahoo Search HTTP **与** yfinance.news 双路合并（未经聚类）。
+
+    Search 快但常无 ``summary``；yfinance 常带概要。不再「Search 成功就跳过 yfinance」。
+    """
+    pull = max(1, min(int(limit), 40))
+    search_items = _fetch_news_via_yahoo_search(symbol, pull)
+    for it in search_items:
+        it.setdefault("provider", "yahoo_search")
+        it.setdefault("source", "yahoo_search")
+
+    yf_items = _fetch_yfinance_news(symbol, pull)
+    if not search_items and not yf_items:
+        return []
+    if not search_items:
+        return yf_items[:pull]
+    if not yf_items:
+        return search_items[:pull]
+    return _merge_yahoo_news_prefer_summary(search_items, yf_items, limit=pull)
 
 
 def _fetch_ticker_news(symbol: str, limit: int) -> dict[str, Any]:
@@ -363,7 +416,7 @@ async def get_market_news(limit_per_index: int = 5) -> dict:
             "source_url": "https://finance.yahoo.com/topic/stock-market-news/",
         }
 
-    return await _news_call(_call, context="get_market_news()", timeout=50.0)
+    return await _news_call(_call, context="get_market_news()", timeout=120.0)
 
 
 @mcp.tool()
@@ -406,7 +459,7 @@ async def get_etf_news(symbols: str = "SPY,QQQ,IWM", limit_per_etf: int = 5) -> 
             "source_url": "https://finance.yahoo.com/etfs/",
         }
 
-    return await _news_call(_call, context=f"get_etf_news({symbols!r})", timeout=50.0)
+    return await _news_call(_call, context=f"get_etf_news({symbols!r})", timeout=120.0)
 
 
 @mcp.tool()

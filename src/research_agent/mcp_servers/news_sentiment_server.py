@@ -61,10 +61,10 @@ logger = logging.getLogger("news_sentiment_server")
 _T = TypeVar("_T")
 
 # 雪球「最热门」榜常因全量分页卡住整份报告；旁路限时，超时则跳过。
-_XUEQIU_HEAT_TIMEOUT_S = 8.0
-_HOT_KEYWORDS_TIMEOUT_S = 8.0
-_NEWS_FETCH_TIMEOUT_S = 20.0
-_FULL_REPORT_TIMEOUT_S = 45.0
+_XUEQIU_HEAT_TIMEOUT_S = 15.0
+_HOT_KEYWORDS_TIMEOUT_S = 15.0
+_NEWS_FETCH_TIMEOUT_S = 40.0
+_FULL_REPORT_TIMEOUT_S = 90.0
 
 
 def _call_with_timeout[T](fn: Callable[[], _T], *, timeout: float, default: _T) -> _T:

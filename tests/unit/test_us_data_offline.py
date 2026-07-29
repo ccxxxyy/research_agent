@@ -72,9 +72,10 @@ async def test_get_quote_mocked():
     mock_ticker = MagicMock()
     mock_ticker.fast_info = mock_fi
 
-    # 强制走 yfinance：关掉 Chart + 东财，避免本机网络抢先返回真实行情
+    # 强制走 yfinance：关掉 Chart + Finnhub + 东财，避免本机网络抢先返回真实行情
     with (
         patch.object(mod, "_quote_via_yahoo_chart", return_value=None),
+        patch.object(mod, "_quote_via_finnhub", return_value=None),
         patch.object(mod, "_quote_via_eastmoney_us", return_value=None),
         patch("yfinance.Ticker", return_value=mock_ticker),
     ):
@@ -122,6 +123,7 @@ async def test_get_quote_via_eastmoney_us_mocked():
     }
     with (
         patch.object(mod, "_quote_via_yahoo_chart", return_value=None),
+        patch.object(mod, "_quote_via_finnhub", return_value=None),
         patch.object(mod, "_quote_via_eastmoney_us", return_value=em),
     ):
         result = await mod.get_quote("aapl")
@@ -130,6 +132,59 @@ async def test_get_quote_via_eastmoney_us_mocked():
     assert result["price"] == 333.02
     assert result["change_percent"] == pytest.approx(3.53)
     assert result["source"] == "eastmoney_us"
+
+
+@pytest.mark.asyncio
+async def test_get_quote_via_finnhub_mocked():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    fh = {
+        "price": 210.5,
+        "previous_close": 200.0,
+        "change": 10.5,
+        "change_percent": 5.25,
+        "source": "finnhub",
+    }
+    with (
+        patch.object(mod, "_quote_via_yahoo_chart", return_value=None),
+        patch.object(mod, "_quote_via_finnhub", return_value=fh),
+    ):
+        result = await mod.get_quote("aapl")
+
+    assert "error" not in result
+    assert result["price"] == 210.5
+    assert result["change_percent"] == pytest.approx(5.25)
+    assert result["source"] == "finnhub"
+
+
+def test_quote_via_finnhub_parses_http_payload():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    payload = {"c": 150.0, "pc": 148.0, "d": 2.0, "dp": 1.3514}
+    with (
+        patch.object(mod, "_finnhub_api_key", return_value="test-key"),
+        patch.object(mod, "_http_get_json", return_value=payload),
+    ):
+        q = mod._quote_via_finnhub("AAPL")
+
+    assert q is not None
+    assert q["price"] == 150.0
+    assert q["previous_close"] == 148.0
+    assert q["source"] == "finnhub"
+
+
+def test_quote_via_finnhub_skips_without_key_and_indices():
+    from research_agent.mcp_servers import us_data_server as mod
+
+    with patch.object(mod, "_finnhub_api_key", return_value=""):
+        assert mod._quote_via_finnhub("AAPL") is None
+    with (
+        patch.object(mod, "_finnhub_api_key", return_value="test-key"),
+        patch.object(mod, "_http_get_json") as http,
+    ):
+        assert mod._quote_via_finnhub("^GSPC") is None
+        assert mod._quote_via_finnhub("CL=F") is None
+        http.assert_not_called()
 
 
 @pytest.mark.asyncio

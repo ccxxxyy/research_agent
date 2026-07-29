@@ -182,8 +182,9 @@ class Settings(BaseSettings):
     finnhub_api_key: str = Field(
         default="",
         description=(
-            "Finnhub API key，用于美股新闻第二源（company-news）。"
-            "为空时新闻/舆情仅走 Yahoo，不报错中断。环境变量 ``FINNHUB_API_KEY``。"
+            "Finnhub API key：美股新闻第二源（company-news）+ 报价链第二源（/quote）。"
+            "为空时新闻仅 Yahoo、报价跳过 Finnhub（Yahoo Chart → 东财 → yfinance），不报错。"
+            "环境变量 ``FINNHUB_API_KEY``。"
         ),
     )
 
