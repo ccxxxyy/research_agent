@@ -394,7 +394,7 @@ FINNHUB_API_KEY=...
 | 英文舆情 FinBERT / 专用 Transformer | 可选；当前为 VADER + 金融词表 + 标题/摘要/正文前段（`en_vader_finlex_v2`） |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
 | 左侧知识库栏按「当前集合」过滤显示 | 无；列出该用户全部集合的 PDF |
-| 10-Q/10-K **整篇精读** | 刻意不做：`us_filing_parse_filing_text` 有界窗口（默认 8k 字，最多约 3 窗 / 6 次工具）；宜多轮点名科目追问 |
+| 10-Q/10-K **整篇精读** | 刻意不做：优先 `seek_filing_text`（Item/关键词定位 + 最多 3 窗拼接），续读用 `parse_filing_text`；宜多轮点名科目追问 |
 | 回答截断后**自动续写** | 未做；可用环境变量 `MAX_OUTPUT_TOKENS` 提高单次输出上限 |
 | 日线历史 / ETF holdings | **提问触发**（非看板）。日线：yfinance → Yahoo Chart HTTP → 东财美股 K 线；holdings：yfinance → Yahoo quoteSummary（东财无稳定美股 ETF 持仓公开接口，Yahoo 全挂时仍可能空） |
 | 私募**实时净值** / 付费 PE 库 | 不做；国内仅 AMAC 备案（管理人 keyword），美股 EDGAR Form D + IAPD ADV |

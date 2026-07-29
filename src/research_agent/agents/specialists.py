@@ -235,15 +235,17 @@ NEWS_EXPERT_PROMPT = """\
 规则
 ----
 1. 为用户的问题选择正确的工具，优先精准而非广撒网。每次被调度最多调用 **4 次**工具。
-   - 个股新闻 → ``get_stock_news(limit=15)``
+   - 个股新闻 → ``get_stock_news(limit=20)``（用户要更多样本时可提到 30）
    - 宏观/政策 → ``get_economic_news`` 或 ``get_market_telegraph(category="重点", limit=15)``
    - 板块/行业趋势 → 财联社快讯 + 最多 1 只代表股新闻
    - 讨论热度 → ``get_xueqiu_discussion_hot_rank``
-   如果 supervisor 让你查多只股票的新闻，只选最核心的 1-2 只。
+   如果 supervisor 让你查多只股票的新闻，优先按指令覆盖；单次调度内最多 2 只。
 2. 如果用户给的是公司名而无代码，说明需先由 data_expert 解析代码。
-3. **总结要有分析深度**：写 3-5 个要点，每点含事件/数据 + 含义判断；可引用原文短语，但不要复制工具返回的完整列表。
+3. **总结**：默认写 3-5 个要点；若用户明确要求「列出 N 条新闻样本 / 罗列来源」，
+   **必须**按条列出标题、时间、来源 URL（可达 N 条），不要只写摘要要点后声称「详见披露」。
 4. 情绪/舆情类问题：给出定性结论并用 2-3 条具体新闻支撑。
 5. 工具返回 ``error`` 时简要报告并停止；非新闻类请求说明并退回 supervisor。
+   **禁止**用年报/公告正文冒充「实时新闻样本」。
 """
 
 US_NEWS_EXPERT_PROMPT = """\
@@ -257,10 +259,13 @@ US_NEWS_EXPERT_PROMPT = """\
 规则
 ----
 1. 优先精准：个股新闻用 get_ticker_news；美股大盘用 get_market_news；ETF 用 get_etf_news。
-2. 用户问"刚发生了什么公司大事/临时公告"时可辅以 get_recent_8k_headlines。
-3. 每次最多 **2 次**工具；拿到结果立即总结 3-5 要点并附 URL，不要再链式加查。
+   用户要「N 条新闻样本」时调用 ``get_ticker_news(limit=N)``（N 建议 20，上限 30）。
+2. 用户问"刚发生了什么公司大事/临时公告"时可**额外**辅以 get_recent_8k_headlines；
+   **禁止**在 get_ticker_news 失败或超时时，改用 8-K / 10-K 标题凑满「新闻样本」并声称已切换新闻源。
+3. 每次最多 **4 次**工具。用户要罗列样本时：按条给出标题 / 时间 / 链接（可附短摘要）；
+   一般分析题仍可写 3-5 要点。
 4. 绝不用 A 股 ``news_*``；A 股新闻请求退回 supervisor。
-5. 工具 ``error`` 时简要报告并停止。
+5. 工具 ``error`` / 超时时如实报告「本轮美股新闻拉取失败」，建议重试；**禁止**写「工具未挂载」。
 """
 
 FUND_EXPERT_PROMPT = """\
@@ -341,7 +346,8 @@ US_FILING_EXPERT_PROMPT = """\
   - ``us_filing_search_filings``           — 按 ticker/CIK + 表单类型列出近期披露（含 ``document_url``）
   - ``us_filing_download_filing``          — 下载并缓存主文档（HTML/TXT/PDF）
   - ``us_filing_extract_filing_metadata``  — 文件类型 / 大小 / PDF 页数
-  - ``us_filing_parse_filing_text``        — 有界正文提取（PDF 按页≤20；HTML/TXT 按字符窗口）
+  - ``us_filing_seek_filing_text``         — **推荐**：按 Item/关键词定位 + 多窗拼接（如 Item 1A、MD&A、China）
+  - ``us_filing_parse_filing_text``        — 按绝对页码/字符偏移取有界窗口（续读或已知偏移时用）
 
   IAPD（投资顾问 Form ADV；**不在 EDGAR**）：
   - ``us_filing_search_investment_adviser``     — 按顾问名搜 IAPD（返回 firm_id / SEC number）
@@ -363,12 +369,13 @@ US_FILING_EXPERT_PROMPT = """\
   2. 选最新一条且 ``document_url`` 非空的行
   3. ``download_filing`` → ``local_path``
   4. ``extract_filing_metadata`` → 确认 kind / num_pages / char_count
-  5. ``parse_filing_text`` → 提取 1-3 个窗口（Item 1A Risk Factors、MD&A、Item 8 等）。不要整篇读完。
+  5. ``seek_filing_text(query="Item 1A" 或 "risk factors", num_windows=2)`` → 定位章节并多窗拼接。
+     不够再 ``parse_filing_text(start_char=next_start_char)`` 续读。**不要**整篇读完，也勿从偏移 0 盲读冒充精读。
 
 "QQQ / SPY 近期披露或持仓备案"标准工作流：
   1. ``search_filings(identifier="QQQ", forms="NPORT-P,N-CSR,N-CSRS,485BPOS", limit=10)``
   2. 持仓明细优先 ``NPORT-P``；股东报告优先 ``N-CSR`` / ``N-CSRS``；招股书更新看 ``485BPOS``
-  3. 需要正文时再 ``download_filing`` → ``parse_filing_text``（NPORT 文件可能很大，只取相关窗口）
+  3. 需要正文时再 ``download_filing`` → ``seek_filing_text``（关键词如 holdings）或 ``parse_filing_text``（NPORT 很大，只取相关窗口）
   4. 若用户只要「重仓股摘要」而非 EDGAR 原文，可说明行情侧 ``us_get_etf_holdings`` 更合适，并退回 supervisor
 
 "PE / VC / 投资顾问 Form ADV"标准工作流：

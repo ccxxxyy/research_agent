@@ -18,8 +18,10 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.checkpoint.memory import MemorySaver
 
 from research_agent.agents.specialists import (
+    NEWS_EXPERT_PROMPT,
     SENTIMENT_EXPERT_PROMPT,
     SPECIALIST_BUILDERS,
+    US_NEWS_EXPERT_PROMPT,
     build_data_expert,
     build_knowledge_expert,
     build_news_expert,
@@ -40,6 +42,7 @@ from research_agent.graph.research_supervisor import (
     SUPERVISOR_PROMPT_NEWS,
     SUPERVISOR_PROMPT_REPORT,
     SUPERVISOR_PROMPT_RULES,
+    SUPERVISOR_PROMPT_SENTIMENT,
     SUPERVISOR_PROMPT_US_DATA,
     SUPERVISOR_PROMPT_US_FILING,
     SUPERVISOR_PROMPT_US_NEWS,
@@ -138,6 +141,7 @@ def fake_us_filing_tools() -> list[BaseTool]:
         _fake_tool("us_filing_search_filings"),
         _fake_tool("us_filing_download_filing"),
         _fake_tool("us_filing_extract_filing_metadata"),
+        _fake_tool("us_filing_seek_filing_text"),
         _fake_tool("us_filing_parse_filing_text"),
     ]
 
@@ -333,8 +337,7 @@ class TestSupervisorPrompt:
         assert SUPERVISOR_PROMPT_DERIVATIVES in prompt
 
     def test_missing_specialists_are_not_mentioned(self) -> None:
-        """提及团队中不存在的专家会导致 supervisor 发出在运行时失败的
-        ``transfer_to_<missing>`` 工具调用。这就是要守护的属性。"""
+        """未挂载专家的*团队区块*不得注入；RULES 可能出现名称作路由对照。"""
         prompt = _build_supervisor_prompt(
             has_data=True,
             has_us_data=False,
@@ -350,17 +353,20 @@ class TestSupervisorPrompt:
             has_derivatives=False,
         )
         assert "  - data_expert" in prompt
-        assert "us_data_expert" not in prompt
-        assert "us_filing_expert" not in prompt
-        assert "us_news_expert" not in prompt
-        assert "us_sentiment_expert" not in prompt
-        assert "report_expert" not in prompt
-        assert "coder_expert" not in prompt
-        assert "knowledge_expert" not in prompt
+        assert SUPERVISOR_PROMPT_DATA in prompt
+        assert SUPERVISOR_PROMPT_US_DATA not in prompt
+        assert SUPERVISOR_PROMPT_US_FILING not in prompt
+        assert SUPERVISOR_PROMPT_US_NEWS not in prompt
+        assert SUPERVISOR_PROMPT_US_SENTIMENT not in prompt
+        assert SUPERVISOR_PROMPT_REPORT not in prompt
+        assert SUPERVISOR_PROMPT_CODER not in prompt
+        assert SUPERVISOR_PROMPT_KNOWLEDGE not in prompt
+        assert SUPERVISOR_PROMPT_NEWS not in prompt
+        assert SUPERVISOR_PROMPT_SENTIMENT not in prompt
+        assert SUPERVISOR_PROMPT_FUND not in prompt
+        assert SUPERVISOR_PROMPT_DERIVATIVES not in prompt
         assert "  - news_expert" not in prompt
         assert "  - sentiment_expert" not in prompt
-        assert "fund_expert" not in prompt
-        assert "derivatives_expert" not in prompt
 
     def test_us_only_prompt_omits_cn_data_expert(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -393,8 +399,10 @@ class TestSupervisorPrompt:
         )
         assert "us_filing_expert" in prompt
         assert SUPERVISOR_PROMPT_US_FILING in prompt
-        assert "report_expert" not in prompt
+        # 团队区块不含 A 股公告专家；RULES 里可能仍出现名称作「禁止顶替」对照
         assert SUPERVISOR_PROMPT_REPORT not in prompt
+        assert "pdf_parse_pdf_pages" not in prompt
+        assert "巨潮资讯披露 PDF" not in prompt
 
     def test_knowledge_only_prompt_omits_other_experts(self) -> None:
         """针对仅含 knowledge_expert 团队的对称守护测试。"""
@@ -412,13 +420,16 @@ class TestSupervisorPrompt:
         assert "knowledge_expert" in prompt
         assert SUPERVISOR_PROMPT_KNOWLEDGE in prompt
         assert "  - data_expert" not in prompt
-        assert "us_data_expert" not in prompt
-        assert "us_filing_expert" not in prompt
-        assert "report_expert" not in prompt
-        assert "coder_expert" not in prompt
-        assert "news_expert" not in prompt
-        assert "sentiment_expert" not in prompt
-        assert "fund_expert" not in prompt
+        assert SUPERVISOR_PROMPT_DATA not in prompt
+        assert SUPERVISOR_PROMPT_US_DATA not in prompt
+        assert SUPERVISOR_PROMPT_US_FILING not in prompt
+        assert SUPERVISOR_PROMPT_REPORT not in prompt
+        assert SUPERVISOR_PROMPT_CODER not in prompt
+        assert SUPERVISOR_PROMPT_NEWS not in prompt
+        assert SUPERVISOR_PROMPT_SENTIMENT not in prompt
+        assert SUPERVISOR_PROMPT_FUND not in prompt
+        assert "  - news_expert" not in prompt
+        assert "  - sentiment_expert" not in prompt
 
     def test_news_only_prompt_omits_other_experts(self) -> None:
         """针对仅含 news_expert 团队的对称守护测试。"""
@@ -436,15 +447,17 @@ class TestSupervisorPrompt:
         assert "  - news_expert" in prompt
         assert SUPERVISOR_PROMPT_NEWS in prompt
         assert "  - data_expert" not in prompt
-        assert "us_data_expert" not in prompt
-        assert "us_filing_expert" not in prompt
-        assert "us_news_expert" not in prompt
-        assert "us_sentiment_expert" not in prompt
-        assert "report_expert" not in prompt
-        assert "coder_expert" not in prompt
-        assert "knowledge_expert" not in prompt
+        assert SUPERVISOR_PROMPT_DATA not in prompt
+        assert SUPERVISOR_PROMPT_US_DATA not in prompt
+        assert SUPERVISOR_PROMPT_US_FILING not in prompt
+        assert SUPERVISOR_PROMPT_US_NEWS not in prompt
+        assert SUPERVISOR_PROMPT_US_SENTIMENT not in prompt
+        assert SUPERVISOR_PROMPT_REPORT not in prompt
+        assert SUPERVISOR_PROMPT_CODER not in prompt
+        assert SUPERVISOR_PROMPT_KNOWLEDGE not in prompt
+        assert SUPERVISOR_PROMPT_SENTIMENT not in prompt
+        assert SUPERVISOR_PROMPT_FUND not in prompt
         assert "  - sentiment_expert" not in prompt
-        assert "fund_expert" not in prompt
 
     def test_us_news_only_prompt_omits_cn_news_expert(self) -> None:
         prompt = _build_supervisor_prompt(
@@ -620,10 +633,41 @@ class TestSupervisorPrompt:
         assert "多只个股情绪" in prompt
         assert "行情+资金流向+市场情绪" in prompt
 
+    def test_news_sample_handoff_budget_and_no_filing_substitute(self) -> None:
+        """MIXED 要新闻样本时必须抬高预算并强制派两侧新闻专家，禁止披露顶替。"""
+        assert "最多 **6 次**" in SUPERVISOR_PROMPT_RULES
+        assert "新闻样本强制" in SUPERVISOR_PROMPT_RULES
+        assert "未挂载" in SUPERVISOR_PROMPT_RULES
+        assert (
+            "禁止改派 us_filing" in SUPERVISOR_PROMPT_US_NEWS or "禁止" in SUPERVISOR_PROMPT_US_NEWS
+        )
+        prompt = _build_supervisor_prompt(
+            has_data=True,
+            has_report=True,
+            has_coder=False,
+            has_knowledge=False,
+            has_news=True,
+            has_sentiment=True,
+            has_us_filing=True,
+            has_us_news=True,
+            has_us_sentiment=True,
+        )
+        assert "news_expert" in prompt
+        assert "us_news_expert" in prompt
+        assert "新闻样本强制" in prompt
+        assert "get_ticker_news(limit=20)" in prompt or "limit=20" in prompt
+
     def test_sentiment_expert_allows_multi_ticker(self) -> None:
         assert "最多调用 **3 次**工具" in SENTIMENT_EXPERT_PROMPT
         assert "只分析最核心的 1 只" not in SENTIMENT_EXPERT_PROMPT
         assert "盘面涨跌" in SENTIMENT_EXPERT_PROMPT
+
+    def test_news_experts_list_samples_not_filing_fallback(self) -> None:
+        assert "get_stock_news(limit=20)" in NEWS_EXPERT_PROMPT
+        assert "列出 N 条新闻样本" in NEWS_EXPERT_PROMPT
+        assert "最多 **4 次**工具" in US_NEWS_EXPERT_PROMPT
+        assert "禁止" in US_NEWS_EXPERT_PROMPT and "8-K" in US_NEWS_EXPERT_PROMPT
+        assert "未挂载" in US_NEWS_EXPERT_PROMPT
 
 
 # ---------------------------------------------------------------------------
