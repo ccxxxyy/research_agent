@@ -1814,6 +1814,7 @@ const _wlItems = { CN_A: [], US: [] };
 const _wlQuotes = { CN_A: {}, US: {} };
 const _wlSearchTimers = { CN_A: null, US: null };
 const _wlSearchSeq = { CN_A: 0, US: 0 };
+const _wlSearchResults = { CN_A: [], US: [] };
 
 const _WL_ASSET_ZH = {
   equity: '股票',
@@ -1861,6 +1862,7 @@ function onWatchlistInput(market) {
     els.cand.classList.remove('open');
     els.cand.innerHTML = '';
     els.cand._results = [];
+    _wlSearchResults[market] = [];
     return;
   }
   els.cand.classList.add('open');
@@ -1890,7 +1892,7 @@ async function loadWatchlist(market) {
     const data = await resp.json();
     _wlItems[market] = data.items || [];
     _renderWatchlist(market);
-    await refreshWatchlistQuotes(market);
+    refreshWatchlistQuotes(market);
   } catch { /* silent */ }
 }
 
@@ -1916,15 +1918,17 @@ async function searchWatchlist(market) {
       els.cand.innerHTML = '<li style="color:var(--text2)">无匹配结果</li>';
       els.cand.classList.add('open');
       els.cand._results = [];
+      _wlSearchResults[market] = [];
       return;
     }
+    _wlSearchResults[market] = results;
     els.cand.innerHTML = results.map((r, i) => {
       const name = r.name || r.symbol;
       const typeZh = _wlAssetLabel(r.asset_class_zh || r.asset_class);
       const mid = name && name !== r.symbol ? ` · ${escHtml(r.symbol)}` : '';
       const note = r.note ? `<span class="wl-note">${escHtml(r.note)}</span>` : '';
       const label = `${escHtml(name)}${mid} · ${escHtml(typeZh)}${note}`;
-      return `<li onclick="addWatchlistItem('${market}', ${i})">${label}<span class="wl-add">加入</span></li>`;
+      return `<li data-wl-add="${market}:${i}" onclick="addWatchlistItem('${market}', ${i})">${label}<span class="wl-add">加入</span></li>`;
     }).join('');
     els.cand._results = results;
     els.cand.classList.add('open');
@@ -1932,14 +1936,25 @@ async function searchWatchlist(market) {
     if (seq !== _wlSearchSeq[market]) return;
     els.cand.innerHTML = '<li style="color:var(--text2)">搜索失败</li>';
     els.cand.classList.add('open');
+    _wlSearchResults[market] = [];
   }
 }
 
 async function addWatchlistItem(market, idx) {
   const els = _wlEls(market);
-  if (els.cand?._adding) return;
-  const r = (els.cand._results || [])[idx];
-  if (!r) return;
+  if (!els.cand) {
+    showToast('自选面板未就绪，请回到看板后再试');
+    return;
+  }
+  if (els.cand._adding) {
+    showToast('上一只仍在处理，请稍候再点加入');
+    return;
+  }
+  const r = (_wlSearchResults[market] || els.cand._results || [])[idx];
+  if (!r || !r.symbol) {
+    showToast('候选已过期，请重新搜索后再点加入');
+    return;
+  }
   els.cand._adding = true;
   const li = els.cand.querySelectorAll('li')[idx];
   const prevHtml = li ? li.innerHTML : '';
@@ -1962,19 +1977,25 @@ async function addWatchlistItem(market, idx) {
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      showToast(typeof err.detail === 'string' ? err.detail : '加入失败');
-      if (li) li.innerHTML = prevHtml;
+      let detail = '加入失败';
+      if (typeof err.detail === 'string') detail = err.detail;
+      else if (Array.isArray(err.detail) && err.detail[0]?.msg) detail = err.detail[0].msg;
+      showToast(detail);
+      if (li) { li.classList.remove('wl-adding'); li.innerHTML = prevHtml; }
       return;
     }
     els.cand.classList.remove('open');
     els.cand.innerHTML = '';
     els.cand._results = [];
+    _wlSearchResults[market] = [];
     if (els.input) els.input.value = '';
     showToast(`已加入 ${r.symbol}`);
-    await loadWatchlist(market);
-  } catch {
-    showToast('加入失败');
-    if (li) li.innerHTML = prevHtml;
+    // 先解锁再刷列表，避免 SKHY 等无报价标的拖死 quotes 导致无法再点加入
+    els.cand._adding = false;
+    loadWatchlist(market);
+  } catch (e) {
+    showToast('加入失败: ' + (e && e.message ? e.message : '网络错误'));
+    if (li) { li.classList.remove('wl-adding'); li.innerHTML = prevHtml; }
   } finally {
     els.cand._adding = false;
   }
@@ -2019,11 +2040,15 @@ async function refreshWatchlistQuotes(market) {
     _renderWatchlist(market);
     return;
   }
+  const ac = new AbortController();
+  // 多标的逐只回退东财/Yahoo，整批常需 20–40s；过短会整表变 —
+  const timer = setTimeout(() => ac.abort(), 45000);
   try {
     const resp = await fetch('/api/watchlist/quotes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ market, symbols: items.map(i => i.symbol) }),
+      signal: ac.signal,
     });
     if (!resp.ok) return;
     const data = await resp.json();
@@ -2037,7 +2062,10 @@ async function refreshWatchlistQuotes(market) {
       _applyFetchedAt(_dashData.fetched_at);
     }
     _renderWatchlist(market);
-  } catch { /* silent */ }
+  } catch { /* abort / network：保留已有报价 */ }
+  finally {
+    clearTimeout(timer);
+  }
 }
 
 function _renderWatchlist(market) {

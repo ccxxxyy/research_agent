@@ -44,12 +44,47 @@ from __future__ import annotations
 import asyncio
 import collections
 import hashlib
+import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from fastmcp import FastMCP
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+logger = logging.getLogger("news_sentiment_server")
+_T = TypeVar("_T")
+
+# 雪球「最热门」榜常因全量分页卡住整份报告；旁路限时，超时则跳过。
+_XUEQIU_HEAT_TIMEOUT_S = 8.0
+_HOT_KEYWORDS_TIMEOUT_S = 8.0
+_NEWS_FETCH_TIMEOUT_S = 20.0
+_FULL_REPORT_TIMEOUT_S = 45.0
+
+
+def _call_with_timeout[T](fn: Callable[[], _T], *, timeout: float, default: _T) -> _T:
+    """在独立线程跑同步函数；超时返回 default。
+
+    ``shutdown(wait=False)``：超时后不阻塞等待雪球等慢 IO，主流程可带着 partial 结果继续。
+    """
+    pool = ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(fn)
+    try:
+        return fut.result(timeout=timeout)
+    except FuturesTimeout:
+        logger.warning("timed out after %.1fs: %s", timeout, getattr(fn, "__name__", repr(fn)))
+        return default
+    except Exception:  # noqa: BLE001
+        logger.exception("call failed: %s", getattr(fn, "__name__", repr(fn)))
+        return default
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
 
 for _proxy_key in (
     "HTTP_PROXY",
@@ -635,22 +670,34 @@ async def analyze_text_sentiment(texts: list[str]) -> dict:
 # ---------------------------------------------------------------------
 # Tool 2: 一站式个股舆情报告（东财新闻 + 雪球热度 + 热搜词 + 高频词）
 # ---------------------------------------------------------------------
-def _full_report(symbol: str, limit: int) -> dict[str, Any]:
-    """同步：拉新闻 + 打分 + 雪球热度 + 热搜词 + 高频词 + 话题聚类。"""
+def _fetch_eastmoney_news_df(symbol: str):
+    """东财个股新闻 DataFrame；失败返回 None。"""
     import akshare as ak
 
-    timestamp = datetime.now(tz=_SHANGHAI_TZ).isoformat()
-
-    # ── 1. 东财新闻 + 打分 ──
     try:
-        df = ak.stock_news_em(symbol=symbol)
+        return ak.stock_news_em(symbol=symbol)
     except Exception:  # noqa: BLE001
-        df = None
+        return None
+
+
+def _full_report(symbol: str, limit: int) -> dict[str, Any]:
+    """同步：拉新闻 + 打分 +（限时）雪球热度 +（限时）热搜词 + 高频词 + 话题聚类。"""
+    timestamp = datetime.now(tz=_SHANGHAI_TZ).isoformat()
+    notes: list[str] = []
+
+    # ── 1. 东财新闻 + 打分（核心路径，限时）──
+    df = _call_with_timeout(
+        lambda: _fetch_eastmoney_news_df(symbol),
+        timeout=_NEWS_FETCH_TIMEOUT_S,
+        default=None,
+    )
+    if df is None:
+        notes.append(f"eastmoney_news_timeout_or_empty>{_NEWS_FETCH_TIMEOUT_S:.0f}s")
 
     items: list[dict[str, Any]] = []
     all_texts: list[str] = []
 
-    if df is not None and not df.empty:
+    if df is not None and not getattr(df, "empty", True):
         for _, row in df.head(limit).iterrows():
             title = str(row.get("新闻标题", ""))
             content = str(row.get("新闻内容", ""))
@@ -672,15 +719,29 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
     # ── 3. 话题聚类 ──
     topic_clusters = _build_topic_clusters(items)
 
-    # ── 4. 雪球热度 ──
-    xueqiu_heat = _fetch_xueqiu_heat(symbol)
+    # ── 4. 雪球热度（旁路；超时跳过，避免整工具挂死）──
+    xueqiu_heat = _call_with_timeout(
+        lambda: _fetch_xueqiu_heat(symbol),
+        timeout=_XUEQIU_HEAT_TIMEOUT_S,
+        default=None,
+    )
+    if xueqiu_heat is None:
+        notes.append(f"xueqiu_heat_skipped_timeout>{_XUEQIU_HEAT_TIMEOUT_S:.0f}s")
+        xueqiu_heat = {"on_list": False, "skipped": True, "reason": "timeout_or_error"}
 
-    # ── 5. 东财热搜词 ──
-    eastmoney_keywords = _fetch_hot_keywords(symbol)
+    # ── 5. 东财热搜词（旁路限时）──
+    eastmoney_keywords = _call_with_timeout(
+        lambda: _fetch_hot_keywords(symbol),
+        timeout=_HOT_KEYWORDS_TIMEOUT_S,
+        default=[],
+    )
+    if not eastmoney_keywords:
+        notes.append(f"eastmoney_keywords_empty_or_timeout>{_HOT_KEYWORDS_TIMEOUT_S:.0f}s")
 
-    return {
+    out: dict[str, Any] = {
         "symbol": symbol,
         "source": "eastmoney+xueqiu",
+        "source_url": f"https://so.eastmoney.com/news/s?keyword={symbol}",
         "model_version": _MODEL_VERSION,
         "timestamp": timestamp,
         "items": items,
@@ -690,30 +751,43 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
         "xueqiu_heat": xueqiu_heat,
         "eastmoney_trending_keywords": eastmoney_keywords,
     }
+    if notes:
+        out["partial_notes"] = notes
+    return out
 
 
 @mcp.tool()
-async def get_stock_sentiment_report(symbol: str, limit: int = 30) -> dict:
+async def get_stock_sentiment_report(symbol: str, limit: int = 20) -> dict:
     """一站式个股舆情报告（多源融合）。
 
     拉东财新闻 → 逐条打分 → 提取高频词 → 话题分组 → 查雪球热度 → 拉东财热搜词 → 汇总成结构化报告。
+    雪球/热搜为旁路：超时会跳过并在 ``partial_notes`` 说明，仍返回新闻打分主结果。
 
     返回内容：
     - ``items``: 逐条新闻（标题/摘要/时间/分数/标签/关键词/指纹）
     - ``aggregate``: 聚合统计（正负比例/均分/样本量/总体标签）
     - ``hot_words``: 高频讨论词 top-15（词 + 出现次数 + 情感权重）
     - ``topic_clusters``: 按正/负/中性分组的代表性标题（各 3 条）
-    - ``xueqiu_heat``: 雪球讨论热度（排名/讨论量，如在榜）
+    - ``xueqiu_heat``: 雪球讨论热度（排名/讨论量，如在榜；超时则 skipped）
     - ``eastmoney_trending_keywords``: 东财热搜关联词 top-10
     - 审计：model_version / timestamp / text_fingerprint
 
     Args:
         symbol: 6 位 A 股代码，如 ``"300750"``。
-        limit: 分析新闻条数上限（默认 30，上限 50）。
+        limit: 分析新闻条数上限（默认 20，上限 50）。多标的时建议 15–20。
     """
     limit = _coerce_limit(limit)
     try:
-        return await asyncio.to_thread(_full_report, symbol, limit)
+        return await asyncio.wait_for(
+            asyncio.to_thread(_full_report, symbol, limit),
+            timeout=_FULL_REPORT_TIMEOUT_S,
+        )
+    except TimeoutError:
+        return {
+            "error": f"TimeoutError: 舆情报告超过 {_FULL_REPORT_TIMEOUT_S:.0f}s",
+            "context": f"get_stock_sentiment_report(symbol={symbol!r}, limit={limit})",
+            "symbol": symbol,
+        }
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,
