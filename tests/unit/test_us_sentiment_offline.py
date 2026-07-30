@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -147,28 +147,48 @@ async def test_analyze_text_sentiment():
 async def test_get_ticker_sentiment_report_mocked():
     from research_agent.mcp_servers import us_sentiment_server as mod
 
-    fake_news = [
+    fake_yahoo = [
         {
-            "content": {
-                "title": "NVDA upgraded on AI demand",
-                "summary": (
-                    "Wall Street analysts raise guidance outlook on sustained AI demand "
-                    "and data center growth across enterprise customers this quarter."
-                ),
-                "pubDate": "2024-06-01T12:00:00Z",
-                "provider": {"displayName": "Bloomberg"},
-                "clickThroughUrl": {"url": "https://example.com/n"},
-            }
+            "title": "NVDA upgraded on AI demand",
+            "summary": (
+                "Wall Street analysts raise guidance outlook on sustained AI demand "
+                "and data center growth across enterprise customers this quarter."
+            ),
+            "published_at": "2024-06-01T12:00:00Z",
+            "publisher": "Bloomberg",
+            "url": "https://example.com/n",
+            "provider": "yfinance",
+            "source": "yfinance",
         }
     ]
-    mock_ticker = MagicMock()
-    mock_ticker.news = fake_news
 
-    # 强制走 yfinance 回退；摘要足够长则不应再抓正文
+    # 强制走已限时的 yahoo 合并结果；摘要足够长则不应再抓正文
     with (
-        patch.object(mod, "_fetch_news_via_yahoo_search", return_value=[]),
+        patch(
+            "research_agent.mcp_servers.us_news_server._fetch_yahoo_news_raw",
+            return_value=fake_yahoo,
+        ),
         patch.object(mod, "_fetch_article_snippet", return_value="") as body_fetch,
-        patch("yfinance.Ticker", return_value=mock_ticker),
+        patch.object(
+            mod,
+            "_fetch_board_proxy",
+            return_value={
+                "available": True,
+                "price": 100.0,
+                "previous_close": 98.0,
+                "change_percent": 2.04,
+                "volume": 1_000_000,
+            },
+        ),
+        patch.object(
+            mod,
+            "_fetch_analyst_us",
+            return_value={
+                "available": True,
+                "recommendations": [{"period": "0m", "strongBuy": 10}],
+                "price_targets": {"mean": 120.0},
+            },
+        ),
     ):
         result = await mod.get_ticker_sentiment_report("NVDA", limit=5)
 
@@ -177,6 +197,33 @@ async def test_get_ticker_sentiment_report_mocked():
     assert result["model_version"] == "en_vader_finlex_v2"
     assert result["aggregate"]["sample_size"] == 1
     assert result["items"][0]["sentiment_score"] > 0
-    assert result["items"][0]["fetch_source"] == "yfinance"
     assert result["items"][0]["score_text_basis"] == "title+summary"
     body_fetch.assert_not_called()
+    assert result["aux_signals"]["social"]["used"] is False
+    assert result["aux_signals"]["fund_flow"]["used"] is True
+    assert result["aux_signals"]["analyst"]["used"] is True
+    assert result["signal_notes"]
+    assert any("盘面" in n for n in result["signal_notes"])
+    assert any("分析师" in n for n in result["signal_notes"])
+
+
+def test_build_us_aux_signals_notes_only_when_used():
+    from research_agent.mcp_servers import us_sentiment_server as mod
+
+    aux, notes = mod._build_us_aux_signals(
+        board={"available": False},
+        analyst={"available": False},
+    )
+    assert notes == []
+    assert aux["social"]["used"] is False
+    assert aux["fund_flow"]["used"] is False
+    assert aux["analyst"]["used"] is False
+
+    aux2, notes2 = mod._build_us_aux_signals(
+        board={"available": True, "change_percent": 1.2},
+        analyst={"available": True, "price_targets": {"mean": 10}},
+    )
+    assert len(notes2) == 2
+    assert aux2["fund_flow"]["used"] is True
+    assert "盘面" in aux2["fund_flow"]["what"] or "涨跌" in aux2["fund_flow"]["what"]
+    assert "分析师" in aux2["analyst"]["what"] or "评级" in aux2["analyst"]["what"]

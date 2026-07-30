@@ -43,6 +43,7 @@ import json
 import logging
 import os
 import re
+import sys
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -54,7 +55,7 @@ from research_agent.cache import TTL_DAILY, TTL_LONG, cached_tool
 
 logger = logging.getLogger("us_filing_server")
 if not logger.handlers:
-    _handler = logging.StreamHandler()
+    _handler = logging.StreamHandler(stream=sys.stderr)
     _handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s %(message)s"))
     logger.addHandler(_handler)
     logger.setLevel(logging.INFO)

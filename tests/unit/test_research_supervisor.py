@@ -658,16 +658,29 @@ class TestSupervisorPrompt:
         assert "get_ticker_news(limit=20)" in prompt or "limit=20" in prompt
 
     def test_sentiment_expert_allows_multi_ticker(self) -> None:
-        assert "最多调用 **3 次**工具" in SENTIMENT_EXPERT_PROMPT
+        assert "最多 **3 次**工具" in SENTIMENT_EXPERT_PROMPT
         assert "只分析最核心的 1 只" not in SENTIMENT_EXPERT_PROMPT
-        assert "盘面涨跌" in SENTIMENT_EXPERT_PROMPT
+        assert "signal_notes" in SENTIMENT_EXPERT_PROMPT
+        assert "aux_signals" in SENTIMENT_EXPERT_PROMPT
+        assert "资金盘面" in SENTIMENT_EXPERT_PROMPT or "主力资金" in SENTIMENT_EXPERT_PROMPT
+
+    def test_us_sentiment_multi_ticker_and_etf_covered(self) -> None:
+        from research_agent.agents.specialists import US_SENTIMENT_EXPERT_PROMPT
+
+        assert "多标的" in US_SENTIMENT_EXPERT_PROMPT
+        assert "每一只" in US_SENTIMENT_EXPERT_PROMPT or "各调用一次" in US_SENTIMENT_EXPERT_PROMPT
+        assert "QQQ" in US_SENTIMENT_EXPERT_PROMPT
+        assert "us_news" in US_SENTIMENT_EXPERT_PROMPT  # 禁止改推新闻工具
+        assert "多只美股/ETF 情绪" in SUPERVISOR_PROMPT_US_SENTIMENT
+        assert "QQQ、TSM、AMD" in SUPERVISOR_PROMPT_RULES
 
     def test_news_experts_list_samples_not_filing_fallback(self) -> None:
         assert "get_stock_news(limit=20)" in NEWS_EXPERT_PROMPT
         assert "列出 N 条新闻样本" in NEWS_EXPERT_PROMPT
-        assert "最多 **4 次**工具" in US_NEWS_EXPERT_PROMPT
+        assert "最多 **2 次**工具" in US_NEWS_EXPERT_PROMPT
         assert "禁止" in US_NEWS_EXPERT_PROMPT and "8-K" in US_NEWS_EXPERT_PROMPT
         assert "未挂载" in US_NEWS_EXPERT_PROMPT
+        assert "立即停止" in US_NEWS_EXPERT_PROMPT or "不要再连打" in US_NEWS_EXPERT_PROMPT
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,14 @@ _THIN_SUMMARY_CHARS = 80
 _BODY_SNIPPET_CHARS = 900
 _BODY_FETCH_TIMEOUT = 4.0
 _BODY_FETCH_WORKERS = 4
+_AUX_SIGNAL_TIMEOUT_S = 10.0
+
+_US_SIGNAL_WHAT = {
+    "news": "Yahoo/Finnhub 新闻标题与摘要：VADER 打分的主样本（文本情绪）。",
+    "social": "美股社交讨论（Reddit/Stocktwits）：本仓库尚未接入，故社交源通常为空。",
+    "fund_flow": "报价涨跌与成交额（盘面代理）：资金情绪的间接信号，不是文本舆情分。",
+    "analyst": "Yahoo 分析师评级/目标价：机构观点，不是散户讨论情绪。",
+}
 
 _POSITIVE_THRESHOLD = 0.15
 _NEGATIVE_THRESHOLD = -0.15
@@ -510,6 +518,8 @@ def _enrich_thin_summaries(news_list: list[dict[str, Any]]) -> None:
         url = (news.get("url") or "").strip()
         if url and len(summary) < _THIN_SUMMARY_CHARS:
             need.append((i, url))
+        if len(need) >= 5:  # 最多补 5 条，避免拖垮整单舆情超时
+            break
     if not need:
         return
 
@@ -521,14 +531,17 @@ def _enrich_thin_summaries(news_list: list[dict[str, Any]]) -> None:
 
     with ThreadPoolExecutor(max_workers=_BODY_FETCH_WORKERS) as pool:
         futures = {pool.submit(_one, url): idx for idx, url in need}
-        for fut in as_completed(futures):
-            idx = futures[fut]
-            try:
-                snippet = fut.result()
-            except Exception:  # noqa: BLE001
-                snippet = ""
-            if snippet:
-                news_list[idx]["body_snippet"] = snippet
+        try:
+            for fut in as_completed(futures, timeout=12.0):
+                idx = futures[fut]
+                try:
+                    snippet = fut.result(timeout=0.1)
+                except Exception:  # noqa: BLE001
+                    snippet = ""
+                if snippet:
+                    news_list[idx]["body_snippet"] = snippet
+        except TimeoutError:
+            logger.warning("body enrichment truncated after 12s (%s urls)", len(need))
 
 
 def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]]:
@@ -611,26 +624,11 @@ def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], l
     logger.info("fetching sentiment news for %s limit=%s", ticker, limit)
 
     pull = min(40, max(limit * 2, limit + 5))
-    # 与 us_news_server 一致：Search（快）+ yfinance（常有 summary）合并
-    from research_agent.mcp_servers.us_news_server import (
-        _fetch_yfinance_news,
-        _merge_yahoo_news_prefer_summary,
-    )
+    # 复用 us_news 分源限时拉取，避免本处再串行挂死 yfinance
+    from research_agent.mcp_servers.us_news_server import _fetch_yahoo_news_raw
 
-    search_items = _fetch_news_via_yahoo_search(ticker, pull)
-    for n in search_items:
-        n.setdefault("provider", "yahoo_search")
-        n.setdefault("source", "yahoo_search")
-    yf_items = _fetch_yfinance_news(ticker, pull)
-    if search_items and yf_items:
-        yahoo = _merge_yahoo_news_prefer_summary(search_items, yf_items, limit=pull)
-        source = "yahoo_search+yfinance"
-    elif search_items:
-        yahoo = search_items
-        source = "yahoo_search"
-    else:
-        yahoo = yf_items
-        source = "yfinance"
+    yahoo = _fetch_yahoo_news_raw(ticker, pull)
+    source = "yahoo"
 
     bundle = collect_us_news(ticker, yahoo_items=yahoo, limit=limit)
     news_list = bundle.get("news") or []
@@ -676,6 +674,133 @@ def _fetch_scored_news(symbol: str, limit: int) -> tuple[list[dict[str, Any]], l
         items.append(scored)
     logger.info("sentiment news ready for %s: %s items via %s", ticker, len(items), source)
     return items, texts
+
+
+def _call_aux_timeout(fn, *, timeout: float, default, label: str = ""):
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeoutError
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = pool.submit(fn)
+        try:
+            return fut.result(timeout=max(0.1, float(timeout)))
+        except FuturesTimeoutError:
+            logger.warning("%s timed out after %.1fs", label or "aux", timeout)
+            fut.cancel()
+            return default
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s failed: %s", label or "aux", exc)
+            return default
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _fetch_board_proxy(symbol: str) -> dict[str, Any]:
+    """用近价涨跌/成交额作盘面代理（非 Level-2 资金流）。"""
+    import yfinance as yf
+
+    t = yf.Ticker(_normalize_ticker(symbol))
+    fi = getattr(t, "fast_info", None)
+    price = getattr(fi, "last_price", None) if fi is not None else None
+    prev = getattr(fi, "previous_close", None) if fi is not None else None
+    volume = getattr(fi, "last_volume", None) if fi is not None else None
+    chg_pct = None
+    if price is not None and prev not in (None, 0):
+        try:
+            chg_pct = (float(price) - float(prev)) / float(prev) * 100.0
+        except Exception:  # noqa: BLE001
+            chg_pct = None
+    if price is None and prev is None:
+        return {"available": False, "reason": "empty_quote"}
+    return {
+        "available": True,
+        "price": price,
+        "previous_close": prev,
+        "change_percent": round(chg_pct, 4) if chg_pct is not None else None,
+        "volume": volume,
+        "source": "yfinance_fast_info",
+        "source_url": f"https://finance.yahoo.com/quote/{_normalize_ticker(symbol)}",
+    }
+
+
+def _fetch_analyst_us(symbol: str) -> dict[str, Any]:
+    """Yahoo 分析师摘要 / 目标价（旁路）。"""
+    import yfinance as yf
+
+    ticker = _normalize_ticker(symbol)
+    t = yf.Ticker(ticker)
+    summary = None
+    targets = None
+    try:
+        summary = t.recommendations_summary
+    except Exception:  # noqa: BLE001
+        summary = None
+    try:
+        targets = t.analyst_price_targets
+    except Exception:  # noqa: BLE001
+        targets = None
+
+    summary_rows: list[dict[str, Any]] = []
+    if summary is not None and hasattr(summary, "empty") and not summary.empty:
+        for _, row in summary.head(6).iterrows():
+            summary_rows.append({str(k): v for k, v in row.items()})
+
+    target_info: dict[str, Any] = {}
+    if isinstance(targets, dict):
+        for k in ("current", "low", "high", "mean", "median"):
+            if k in targets:
+                target_info[k] = targets.get(k)
+    elif targets is not None and hasattr(targets, "to_dict"):
+        try:
+            target_info = {str(k): v for k, v in dict(targets).items()}
+        except Exception:  # noqa: BLE001
+            target_info = {}
+
+    if not summary_rows and not target_info:
+        return {"available": False, "reason": "empty", "recommendations": [], "price_targets": {}}
+    return {
+        "available": True,
+        "recommendations": summary_rows,
+        "price_targets": target_info,
+        "source": "yfinance_analyst",
+        "source_url": f"https://finance.yahoo.com/quote/{ticker}/analysis",
+    }
+
+
+def _build_us_aux_signals(
+    *,
+    board: dict[str, Any] | None,
+    analyst: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    notes: list[str] = []
+    social = {
+        "what": _US_SIGNAL_WHAT["social"],
+        "used": False,
+        "available": False,
+        "skipped": True,
+        "reason": "reddit_stocktwits_not_wired",
+    }
+
+    b = board or {"available": False}
+    board_block = {"what": _US_SIGNAL_WHAT["fund_flow"], **b, "used": bool(b.get("available"))}
+    if board_block["used"]:
+        notes.append("已纳入盘面代理（近价涨跌/成交额）：属资金情绪间接信号，不是文本舆情分。")
+
+    a = analyst or {"available": False}
+    analyst_block = {"what": _US_SIGNAL_WHAT["analyst"], **a, "used": bool(a.get("available"))}
+    if analyst_block["used"]:
+        notes.append("已纳入分析师信号（Yahoo 评级/目标价）：表示机构观点，不是散户舆情。")
+
+    return (
+        {
+            "news_what": _US_SIGNAL_WHAT["news"],
+            "social": social,
+            "fund_flow": board_block,
+            "analyst": analyst_block,
+        },
+        notes,
+    )
 
 
 @mcp.tool()
@@ -742,6 +867,25 @@ async def get_ticker_sentiment_report(symbol: str, limit: int = 30) -> dict:
     def _work() -> dict[str, Any]:
         items, texts = _fetch_scored_news(ticker, limit)
         fetch_src = (items[0].get("fetch_source") if items else None) or "yahoo_search"
+        board = _call_aux_timeout(
+            lambda: _fetch_board_proxy(ticker),
+            timeout=_AUX_SIGNAL_TIMEOUT_S,
+            default={"available": False, "skipped": True, "reason": "timeout_or_error"},
+            label=f"board_proxy({ticker})",
+        )
+        analyst = _call_aux_timeout(
+            lambda: _fetch_analyst_us(ticker),
+            timeout=_AUX_SIGNAL_TIMEOUT_S,
+            default={
+                "available": False,
+                "skipped": True,
+                "reason": "timeout_or_error",
+                "recommendations": [],
+                "price_targets": {},
+            },
+            label=f"analyst_us({ticker})",
+        )
+        aux_signals, signal_notes = _build_us_aux_signals(board=board, analyst=analyst)
         return {
             "symbol": ticker,
             "model_version": _MODEL_VERSION,
@@ -753,13 +897,15 @@ async def get_ticker_sentiment_report(symbol: str, limit: int = 30) -> dict:
             "source_url": f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}/news",
             "language": "en",
             "available_off_hours": True,
+            "aux_signals": aux_signals,
+            "signal_notes": signal_notes,
         }
 
     try:
         return await asyncio.wait_for(asyncio.to_thread(_work), timeout=90.0)
     except TimeoutError:
         return {
-            "error": "TimeoutError: Yahoo 舆情拉取超过 45s",
+            "error": "TimeoutError: Yahoo 舆情拉取超过 90s",
             "context": f"get_ticker_sentiment_report(symbol={symbol!r})",
             "symbol": ticker,
         }

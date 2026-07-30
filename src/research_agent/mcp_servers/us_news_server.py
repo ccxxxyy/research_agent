@@ -23,6 +23,8 @@ import asyncio
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 import httpx
@@ -39,8 +41,10 @@ if not logger.handlers:
 
 mcp = FastMCP("UsNewsServer")
 
-# Yahoo Search + yfinance 串行拉取的总硬超时（国内到 Yahoo 常偏慢，过短会空结果）
+# 整单硬超时（兜底）。各源另有短超时，避免 yfinance 挂死把已成功的 Search 结果一起丢掉。
 _YF_NEWS_TIMEOUT_SECONDS = 90.0
+_YAHOO_SEARCH_TIMEOUT_S = 15.0
+_YFINANCE_NEWS_TIMEOUT_S = 12.0
 
 _MAJOR_INDEX_TICKERS: dict[str, str] = {
     "S&P 500": "^GSPC",
@@ -48,6 +52,28 @@ _MAJOR_INDEX_TICKERS: dict[str, str] = {
     "Nasdaq Composite": "^IXIC",
     "VIX": "^VIX",
 }
+
+
+def _call_with_timeout(fn, *, timeout: float, default, label: str = ""):
+    """在独立线程跑 ``fn``，超时返回 ``default``（不抛）。
+
+    注意：``ThreadPoolExecutor`` 默认 ``shutdown(wait=True)`` 会在超时后仍阻塞等待
+    挂起的 yfinance 线程，从而把整单拖到外层 90s。必须 ``wait=False``。
+    """
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = pool.submit(fn)
+        try:
+            return fut.result(timeout=max(0.1, float(timeout)))
+        except FuturesTimeoutError:
+            logger.warning("%s timed out after %.1fs (abandon worker)", label or "call", timeout)
+            fut.cancel()
+            return default
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s failed: %s", label or "call", exc)
+            return default
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 async def _news_call(fn, *, context: str, timeout: float = _YF_NEWS_TIMEOUT_SECONDS) -> dict:
@@ -173,7 +199,7 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
     try:
         from curl_cffi import requests as curl_requests
 
-        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=20)
+        resp = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=12)
         if resp.status_code == 200:
             payload = resp.json()
     except Exception:  # noqa: BLE001
@@ -185,7 +211,7 @@ def _fetch_news_via_yahoo_search(symbol: str, limit: int) -> list[dict[str, Any]
             sess = requests.Session()
             sess.trust_env = False
             try:
-                resp = sess.get(url, headers=headers, timeout=20)
+                resp = sess.get(url, headers=headers, timeout=12)
                 if resp.status_code == 200:
                     payload = resp.json()
             finally:
@@ -284,17 +310,41 @@ def _fetch_yfinance_news(symbol: str, limit: int) -> list[dict[str, Any]]:
 
 
 def _fetch_yahoo_news_raw(symbol: str, limit: int) -> list[dict[str, Any]]:
-    """Yahoo Search HTTP **与** yfinance.news 双路合并（未经聚类）。
+    """Yahoo Search 与 yfinance **分源限时**合并；任一路超时不拖死另一路。
 
-    Search 快但常无 ``summary``；yfinance 常带概要。不再「Search 成功就跳过 yfinance」。
+    旧逻辑串行且 yfinance 无超时：Search 已成功时仍可能被 yfinance 挂到整单超时，
+    导致已拉到的新闻整包丢弃（表现为 NVDA「0 条 + TimeoutError」）。
     """
     pull = max(1, min(int(limit), 40))
-    search_items = _fetch_news_via_yahoo_search(symbol, pull)
-    for it in search_items:
+    ticker = _normalize_ticker(symbol)
+    logger.info("yahoo news begin %s pull=%s", ticker, pull)
+
+    search_items = _call_with_timeout(
+        lambda: _fetch_news_via_yahoo_search(ticker, pull),
+        timeout=_YAHOO_SEARCH_TIMEOUT_S,
+        default=[],
+        label=f"yahoo_search({ticker})",
+    )
+    for it in search_items or []:
         it.setdefault("provider", "yahoo_search")
         it.setdefault("source", "yahoo_search")
 
-    yf_items = _fetch_yfinance_news(symbol, pull)
+    # Search 已够用时仍尝试 yfinance 补摘要，但严格短超时，失败则只用 Search
+    yf_items = _call_with_timeout(
+        lambda: _fetch_yfinance_news(ticker, pull),
+        timeout=_YFINANCE_NEWS_TIMEOUT_S,
+        default=[],
+        label=f"yfinance.news({ticker})",
+    )
+
+    search_items = list(search_items or [])
+    yf_items = list(yf_items or [])
+    logger.info(
+        "yahoo news done %s search=%s yfinance=%s",
+        ticker,
+        len(search_items),
+        len(yf_items),
+    )
     if not search_items and not yf_items:
         return []
     if not search_items:

@@ -311,7 +311,10 @@ SUPERVISOR_PROMPT_US_SENTIMENT = """\
     工具集（前缀 us_sentiment_）：
         * us_sentiment_get_ticker_sentiment_report
         * us_sentiment_analyze_text_sentiment
-    当用户询问美股市场情绪、英文新闻情感打分、AAPL/TSLA 舆情量化时委派。
+    当用户询问美股市场情绪、英文新闻情感打分、AAPL/TSLA/QQQ 等舆情量化时委派。
+    **多只美股/ETF 情绪（≤3）**：一次 ``transfer_to_us_sentiment_expert``，指令里列齐全部 ticker，
+    要求对每只各调用一次 ``us_sentiment_get_ticker_sentiment_report``（多标的 limit=15；该专家单次最多 3 次工具）；
+    **禁止**只查部分标的后对其余写「本轮未拉取」或改派 ``us_news_expert`` 顶替舆情分。
     禁止把英文舆情交给中文 SnowNLP 工具链。
 """
 
@@ -391,7 +394,8 @@ P1b. **新闻样本强制（不可用披露顶替）**：用户明确要求新�
     - **禁止**用 A 股披露（巨潮）/ 美股披露（EDGAR）/ 年报 / 10-K / 8-K 标题冒充「新闻样本」；
     - 披露类专家仅在用户同时要「公告/披露正文/年报/10-K」时另派，**不能替代**新闻移交。
 P1c. **舆情与资金流**：用户要「舆情量化 / 情绪打分」→ 分侧派 ``sentiment_expert`` / ``us_sentiment_expert``；
-    要「资金流向」→ 派对应侧行情/基金专家。均不可用披露正文代替。
+    多只（≤3）时指令必须列齐全部代码/ticker，要求各调一次报告；ETF（如 QQQ）与个股同等覆盖。
+    要「资金流向」→ 派对应侧行情/基金专家。均不可用披露正文或新闻列表代替舆情打分。
 P2. **宏观/板块问题不要硬套个股**：当用户问"大盘走势"、"今天市场怎样"、"收盘分析"时，
     优先使用指数行情(get_index_quotes)、板块资金流(get_sector_fund_flow)、涨跌排行(get_stock_rank)等宏观工具，
     不要自作主张替用户选几只蓝筹股来"代表"大盘。只有在需要具体个股细节时才查个股。
@@ -401,6 +405,7 @@ P3. **给专家的指令要精确**：移交时明确告诉专家用哪些工具
     好的指令（美股）："只用 get_market_status + get_index_quotes，对比标普与纳指今日涨跌，禁止再查 SPY/QQQ history"
     好的指令（A股）："用 get_index_quotes 查主要指数，再用 get_sector_fund_flow 查最强行业"
     好的指令（多只情绪）："对 300308、688256、603986 各调用一次 sentiment_get_stock_sentiment_report，分标的汇报均分/样本量/2条标题"
+    好的指令（美股多只情绪）："对 QQQ、TSM、AMD 各调用一次 us_sentiment_get_ticker_sentiment_report(limit=15)，分标的汇报；禁止漏查或改派 us_news"
     坏的指令："查一下市场行情所有相关信息"
 P4. **不要为「锦上添花」追加移交**：单市场场景下若已有 1-2 个专家结果可答清主问题，勿再追新闻。
     **例外：MIXED / MixedOrchestration 清单上尚未覆盖的一侧，必须补移交，不得用文字代替。**

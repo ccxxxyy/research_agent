@@ -164,3 +164,35 @@ async def test_get_recent_8k_headlines_mocked():
     assert "error" not in result
     assert result["count"] == 1
     assert result["headlines"][0]["form"] == "8-K"
+
+
+def test_yahoo_news_raw_keeps_search_when_yfinance_hangs():
+    """yfinance 挂起时不得把已成功的 Search 结果整包丢掉。"""
+    import time
+
+    from research_agent.mcp_servers import us_news_server as mod
+
+    search = [
+        {
+            "title": "NVDA rises on AI",
+            "summary": "",
+            "url": "https://example.com/a",
+            "provider": "yahoo_search",
+            "source": "yahoo_search",
+        }
+    ]
+
+    def _hang(_symbol, _limit):
+        time.sleep(5.0)
+        return [{"title": "late", "summary": "x", "url": "https://example.com/b"}]
+
+    with (
+        patch.object(mod, "_fetch_news_via_yahoo_search", return_value=search),
+        patch.object(mod, "_fetch_yfinance_news", side_effect=_hang),
+        patch.object(mod, "_YFINANCE_NEWS_TIMEOUT_S", 0.2),
+        patch.object(mod, "_YAHOO_SEARCH_TIMEOUT_S", 2.0),
+    ):
+        out = mod._fetch_yahoo_news_raw("NVDA", 10)
+
+    assert len(out) >= 1
+    assert out[0]["title"] == "NVDA rises on AI"

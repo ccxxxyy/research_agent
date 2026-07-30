@@ -430,6 +430,21 @@ def _sse_heartbeat_interval_seconds() -> float:
     return float(get_settings().sse_research_heartbeat_seconds)
 
 
+def _format_stream_error(exc: BaseException) -> str:
+    """把 ExceptionGroup / MCP Connection closed 展成可读短句。"""
+    if isinstance(exc, BaseExceptionGroup):
+        parts = [_format_stream_error(e) for e in exc.exceptions]
+        return "; ".join(p for p in parts if p)[:1024]
+    text = str(exc).strip() or type(exc).__name__
+    if "Connection closed" in text or type(exc).__name__ == "McpError":
+        return (
+            "披露/MCP 子进程连接中断（常见于开发热重载或 8000 端口残留进程）。"
+            "请关掉所有 research_agent 进程后只启动一个，再重试。"
+            f" 原始错误: {text}"
+        )[:1024]
+    return text[:1024]
+
+
 def _format_sse(event: ResearchSupervisorSSEEvent) -> str:
     """将一个 SSE 事件渲染为规范的 ``data: ...\\n\\n`` 格式。"""
     return f"data: {event.model_dump_json()}\n\n"
@@ -1075,7 +1090,7 @@ async def _research_event_stream(
                         ResearchSupervisorSSEEvent(
                             phase=ResearchSupervisorSSEPhase.ERROR,
                             node="supervisor",
-                            content=str(exc)[:1024],
+                            content=_format_stream_error(exc),
                         )
                     )
                 )
