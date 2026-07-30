@@ -219,6 +219,11 @@ async def _build_user_context_messages(
                 watchlist_text = raw
         if watchlist_text:
             context_parts.append(watchlist_text)
+            context_parts.append(
+                "【自选用途】仅当用户点名或追问某自选股时展开个股分析；"
+                "若用户问大盘/指数/今日走势/前因后果/板块，优先宏观工具，"
+                "**不要**用自选股代表大盘，也不要在数据缺口罗列自选股的中报明细或「未调用舆情」。"
+            )
 
     messages.append(SystemMessage(content="\n\n".join(context_parts)))
     messages.append(HumanMessage(content=query))

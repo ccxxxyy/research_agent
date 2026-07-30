@@ -629,9 +629,11 @@ class TestSupervisorPrompt:
             has_sentiment=True,
         )
         assert "专家结果缺失时禁止脑补" in prompt
-        assert "已派发但尚未返回" in prompt
+        assert "未调用 sentiment_expert" in prompt
         assert "多只个股情绪" in prompt
         assert "行情+资金流向+市场情绪" in prompt
+        assert "未调用 sentiment_expert" in SUPERVISOR_PROMPT_RULES
+        assert "自选股" in RESEARCH_BRIEF_TEMPLATE or "禁止罗列" in RESEARCH_BRIEF_TEMPLATE
 
     def test_news_sample_handoff_budget_and_no_filing_substitute(self) -> None:
         """MIXED 要新闻样本时必须抬高预算并强制派两侧新闻专家，禁止披露顶替。"""

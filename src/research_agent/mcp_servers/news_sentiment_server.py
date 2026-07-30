@@ -60,13 +60,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger("news_sentiment_server")
 _T = TypeVar("_T")
 
-# 雪球「最热门」榜常因全量分页卡住整份报告；旁路限时，超时则跳过。
-_XUEQIU_HEAT_TIMEOUT_S = 15.0
-_HOT_KEYWORDS_TIMEOUT_S = 15.0
-_NEWS_FETCH_TIMEOUT_S = 40.0
-_FULL_REPORT_TIMEOUT_S = 90.0
-# 资金流 / 研报旁路：短超时，失败不影响新闻主结果
-_AUX_SIGNAL_TIMEOUT_S = 12.0
+# 雪球「最热门」榜常因全量分页卡住；旁路限时且并行，超时则跳过。
+_XUEQIU_HEAT_TIMEOUT_S = 5.0
+_HOT_KEYWORDS_TIMEOUT_S = 10.0
+_NEWS_FETCH_TIMEOUT_S = 35.0
+# 外层预算：新闻 + 旁路并行 + 打分；留余量给 MCP 冷启动
+_FULL_REPORT_TIMEOUT_S = 120.0
+# 资金流 / 研报旁路（研报已改为单页直连，通常 <3s）
+_AUX_SIGNAL_TIMEOUT_S = 18.0
 
 _SIGNAL_WHAT = {
     "news": "东财个股新闻标题/摘要：本地 SnowNLP 打分的主样本（文本情绪）。",
@@ -647,7 +648,10 @@ def _fetch_fund_flow_signal(symbol: str, *, days: int = 5) -> dict[str, Any]:
     """个股近期资金流向摘要（旁路）。"""
     import akshare as ak
 
-    df = ak.stock_individual_fund_flow(stock=symbol, market=_exchange_prefix_simple(symbol))
+    try:
+        df = ak.stock_individual_fund_flow(stock=symbol, market=_exchange_prefix_simple(symbol))
+    except Exception as exc:  # noqa: BLE001 — 东财偶发断连，旁路失败即可
+        return {"available": False, "reason": f"error:{type(exc).__name__}"}
     if df is None or getattr(df, "empty", True):
         return {"available": False, "reason": "empty"}
     tail = df.tail(max(1, min(int(days), 10)))
@@ -670,26 +674,90 @@ def _fetch_fund_flow_signal(symbol: str, *, days: int = 5) -> dict[str, Any]:
     }
 
 
-def _fetch_analyst_reports(symbol: str, *, limit: int = 8) -> dict[str, Any]:
-    """东财个股研报列表（旁路，机构评级）。"""
-    import akshare as ak
+def _http_get_json(url: str, *, params: dict[str, str], timeout: float = 10.0) -> dict[str, Any]:
+    """东财 JSON GET：优先 curl_cffi（Chrome 指纹），回退 requests。"""
+    try:
+        from curl_cffi import requests as curl_requests
 
-    df = ak.stock_research_report_em(symbol=symbol)
-    if df is None or getattr(df, "empty", True):
+        resp = curl_requests.get(url, params=params, impersonate="chrome", timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict):
+            return data
+    except Exception:  # noqa: BLE001
+        logger.debug("curl_cffi get failed for %s; fallback requests", url, exc_info=True)
+
+    import requests
+
+    resp = requests.get(url, params=params, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise TypeError(f"expected JSON object from {url}")
+    return data
+
+
+def _fetch_analyst_reports(symbol: str, *, limit: int = 8) -> dict[str, Any]:
+    """东财个股研报列表（旁路，机构评级）。
+
+    注意：不要用 ``ak.stock_research_report_em``——它会按 TotalPage 翻完全部历史页
+    （热门股可达数十页），轻易超过旁路超时。这里只请求第 1 页、``pageSize=limit``。
+    """
+    page_size = max(1, min(int(limit), 15))
+    end_year = datetime.now(tz=_SHANGHAI_TZ).year + 1
+    params = {
+        "industryCode": "*",
+        "pageSize": str(page_size),
+        "industry": "*",
+        "rating": "*",
+        "ratingChange": "*",
+        "beginTime": "2018-01-01",
+        "endTime": f"{end_year}-01-01",
+        "pageNo": "1",
+        "fields": "",
+        "qType": "0",
+        "orgCode": "",
+        "code": str(symbol).zfill(6),
+        "rcode": "",
+        "p": "1",
+        "pageNum": "1",
+        "pageNumber": "1",
+    }
+    try:
+        data_json = _http_get_json(
+            "https://reportapi.eastmoney.com/report/list",
+            params=params,
+            timeout=10.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "available": False,
+            "reason": f"http_error:{type(exc).__name__}",
+            "reports": [],
+        }
+
+    raw_rows = data_json.get("data") or []
+    if not isinstance(raw_rows, list) or not raw_rows:
         return {"available": False, "reason": "empty", "reports": []}
+
     rows: list[dict[str, Any]] = []
-    for _, row in df.head(max(1, min(int(limit), 15))).iterrows():
+    for item in raw_rows[:page_size]:
+        if not isinstance(item, dict):
+            continue
+        info_code = str(item.get("infoCode") or "")
         rows.append(
             {
-                "title": str(row.get("报告名称") or ""),
-                "rating": str(row.get("东财评级") or ""),
-                "institution": str(row.get("机构") or ""),
-                "date": str(row.get("日期") or ""),
-                "industry": str(row.get("行业") or ""),
-                "pdf_url": str(row.get("报告PDF链接") or ""),
+                "title": str(item.get("title") or ""),
+                "rating": str(item.get("emRatingName") or item.get("sRatingName") or ""),
+                "institution": str(item.get("orgSName") or item.get("orgName") or ""),
+                "date": str(item.get("publishDate") or ""),
+                "industry": str(item.get("indvInduName") or item.get("industryName") or ""),
+                "pdf_url": (f"https://pdf.dfcfw.com/pdf/H3_{info_code}_1.pdf" if info_code else ""),
             }
         )
-    ratings = [r["rating"] for r in rows if r.get("rating") and r["rating"] not in ("", "nan")]
+    ratings = [
+        r["rating"] for r in rows if r.get("rating") and r["rating"] not in ("", "nan", "None")
+    ]
     return {
         "available": bool(rows),
         "count": len(rows),
@@ -804,7 +872,7 @@ def _fetch_eastmoney_news_df(symbol: str):
 
 
 def _full_report(symbol: str, limit: int) -> dict[str, Any]:
-    """同步：拉新闻 + 打分 +（限时）雪球热度 +（限时）热搜词 + 高频词 + 话题聚类。"""
+    """同步：拉新闻 + 打分 + 旁路并行（雪球/热搜/资金/研报）。"""
     timestamp = datetime.now(tz=_SHANGHAI_TZ).isoformat()
     notes: list[str] = []
 
@@ -836,50 +904,87 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
             info["text_fingerprint"] = _text_fingerprint(combined)
             items.append(info)
 
-    # ── 2. 高频讨论词 ──
+    # ── 2. 高频讨论词 / 话题聚类（本地，快）──
     hot_words = _extract_keywords_from_texts(all_texts) if all_texts else []
-
-    # ── 3. 话题聚类 ──
     topic_clusters = _build_topic_clusters(items)
 
-    # ── 4. 雪球热度（旁路；超时跳过，避免整工具挂死）──
-    xueqiu_heat = _call_with_timeout(
-        lambda: _fetch_xueqiu_heat(symbol),
-        timeout=_XUEQIU_HEAT_TIMEOUT_S,
-        default=None,
-    )
-    if xueqiu_heat is None:
-        notes.append(f"xueqiu_heat_skipped_timeout>{_XUEQIU_HEAT_TIMEOUT_S:.0f}s")
-        xueqiu_heat = {"on_list": False, "skipped": True, "reason": "timeout_or_error"}
+    # ── 3. 旁路并行（总耗时约等于最慢一路）
+    # 注意：不可用 ``with ThreadPoolExecutor()``（退出时 shutdown(wait=True)），
+    # 否则已超时仍在跑的雪球/东财线程会把整份报告堵死数十分钟。
+    xueqiu_heat: dict[str, Any] = {
+        "on_list": False,
+        "skipped": True,
+        "reason": "timeout_or_error",
+    }
+    eastmoney_keywords: list[dict[str, Any]] = []
+    fund_flow: dict[str, Any] = {"available": False, "skipped": True, "reason": "timeout_or_error"}
+    analyst: dict[str, Any] = {
+        "available": False,
+        "skipped": True,
+        "reason": "timeout_or_error",
+        "reports": [],
+    }
 
-    # ── 5. 东财热搜词（旁路限时）──
-    eastmoney_keywords = _call_with_timeout(
-        lambda: _fetch_hot_keywords(symbol),
-        timeout=_HOT_KEYWORDS_TIMEOUT_S,
-        default=[],
-    )
-    if not eastmoney_keywords:
-        notes.append(f"eastmoney_keywords_empty_or_timeout>{_HOT_KEYWORDS_TIMEOUT_S:.0f}s")
+    pool = ThreadPoolExecutor(max_workers=4)
+    try:
+        fut_map = {
+            "xueqiu": pool.submit(_fetch_xueqiu_heat, symbol),
+            "keywords": pool.submit(_fetch_hot_keywords, symbol),
+            "fund": pool.submit(_fetch_fund_flow_signal, symbol),
+            "analyst": pool.submit(_fetch_analyst_reports, symbol),
+        }
+        try:
+            got = fut_map["xueqiu"].result(timeout=_XUEQIU_HEAT_TIMEOUT_S)
+            if got is not None:
+                xueqiu_heat = got
+            else:
+                notes.append(f"xueqiu_heat_skipped_timeout>{_XUEQIU_HEAT_TIMEOUT_S:.0f}s")
+        except FuturesTimeout:
+            notes.append(f"xueqiu_heat_skipped_timeout>{_XUEQIU_HEAT_TIMEOUT_S:.0f}s")
+            fut_map["xueqiu"].cancel()
+        except Exception:  # noqa: BLE001
+            notes.append("xueqiu_heat_error")
+            logger.exception("xueqiu_heat failed for %s", symbol)
 
-    # ── 6. 资金流向（旁路限时）──
-    fund_flow = _call_with_timeout(
-        lambda: _fetch_fund_flow_signal(symbol),
-        timeout=_AUX_SIGNAL_TIMEOUT_S,
-        default=None,
-    )
-    if fund_flow is None:
-        notes.append(f"fund_flow_skipped_timeout>{_AUX_SIGNAL_TIMEOUT_S:.0f}s")
-        fund_flow = {"available": False, "skipped": True, "reason": "timeout_or_error"}
+        try:
+            got_kw = fut_map["keywords"].result(timeout=_HOT_KEYWORDS_TIMEOUT_S)
+            eastmoney_keywords = got_kw if isinstance(got_kw, list) else []
+            if not eastmoney_keywords:
+                notes.append(f"eastmoney_keywords_empty_or_timeout>{_HOT_KEYWORDS_TIMEOUT_S:.0f}s")
+        except FuturesTimeout:
+            notes.append(f"eastmoney_keywords_empty_or_timeout>{_HOT_KEYWORDS_TIMEOUT_S:.0f}s")
+            fut_map["keywords"].cancel()
+        except Exception:  # noqa: BLE001
+            notes.append("eastmoney_keywords_error")
+            logger.exception("hot_keywords failed for %s", symbol)
 
-    # ── 7. 分析师研报（旁路限时）──
-    analyst = _call_with_timeout(
-        lambda: _fetch_analyst_reports(symbol),
-        timeout=_AUX_SIGNAL_TIMEOUT_S,
-        default=None,
-    )
-    if analyst is None:
-        notes.append(f"analyst_skipped_timeout>{_AUX_SIGNAL_TIMEOUT_S:.0f}s")
-        analyst = {"available": False, "skipped": True, "reason": "timeout_or_error", "reports": []}
+        try:
+            got_ff = fut_map["fund"].result(timeout=_AUX_SIGNAL_TIMEOUT_S)
+            if isinstance(got_ff, dict):
+                fund_flow = got_ff
+            else:
+                notes.append(f"fund_flow_skipped_timeout>{_AUX_SIGNAL_TIMEOUT_S:.0f}s")
+        except FuturesTimeout:
+            notes.append(f"fund_flow_skipped_timeout>{_AUX_SIGNAL_TIMEOUT_S:.0f}s")
+            fut_map["fund"].cancel()
+        except Exception:  # noqa: BLE001
+            notes.append("fund_flow_error")
+            logger.exception("fund_flow failed for %s", symbol)
+
+        try:
+            got_an = fut_map["analyst"].result(timeout=_AUX_SIGNAL_TIMEOUT_S)
+            if isinstance(got_an, dict):
+                analyst = got_an
+            else:
+                notes.append(f"analyst_skipped_timeout>{_AUX_SIGNAL_TIMEOUT_S:.0f}s")
+        except FuturesTimeout:
+            notes.append(f"analyst_skipped_timeout>{_AUX_SIGNAL_TIMEOUT_S:.0f}s")
+            fut_map["analyst"].cancel()
+        except Exception:  # noqa: BLE001
+            notes.append("analyst_error")
+            logger.exception("analyst_reports failed for %s", symbol)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     aux_signals, signal_notes = _build_aux_signals(
         xueqiu_heat=xueqiu_heat,
@@ -906,6 +1011,60 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
     if notes:
         out["partial_notes"] = notes
     return out
+
+
+def _news_only_report(symbol: str, limit: int) -> dict[str, Any]:
+    """外层超时兜底：只保留东财新闻打分，旁路一律 skipped。"""
+    timestamp = datetime.now(tz=_SHANGHAI_TZ).isoformat()
+    df = _fetch_eastmoney_news_df(symbol)
+    items: list[dict[str, Any]] = []
+    all_texts: list[str] = []
+    if df is not None and not getattr(df, "empty", True):
+        for _, row in df.head(limit).iterrows():
+            title = str(row.get("新闻标题", ""))
+            content = str(row.get("新闻内容", ""))
+            combined = f"{title}。{content}" if content else title
+            all_texts.append(combined)
+            info = _score_single(combined)
+            info["title"] = title
+            info["content_preview"] = content[:200] if content else ""
+            info["publish_time"] = str(row.get("发布时间", ""))
+            info["source_site"] = str(row.get("文章来源", ""))
+            info["news_url"] = str(row.get("新闻链接", ""))
+            info["text_fingerprint"] = _text_fingerprint(combined)
+            items.append(info)
+    empty_heat = {"on_list": False, "skipped": True, "reason": "outer_timeout_fallback"}
+    empty_ff = {"available": False, "skipped": True, "reason": "outer_timeout_fallback"}
+    empty_an = {
+        "available": False,
+        "skipped": True,
+        "reason": "outer_timeout_fallback",
+        "reports": [],
+    }
+    aux_signals, signal_notes = _build_aux_signals(
+        xueqiu_heat=empty_heat,
+        eastmoney_keywords=[],
+        fund_flow=empty_ff,
+        analyst=empty_an,
+    )
+    return {
+        "symbol": symbol,
+        "source": "eastmoney_news_only_fallback",
+        "source_url": f"https://so.eastmoney.com/news/s?keyword={symbol}",
+        "model_version": _MODEL_VERSION,
+        "timestamp": timestamp,
+        "items": items,
+        "aggregate": _aggregate_scores(items),
+        "hot_words": _extract_keywords_from_texts(all_texts) if all_texts else [],
+        "topic_clusters": _build_topic_clusters(items),
+        "xueqiu_heat": empty_heat,
+        "eastmoney_trending_keywords": [],
+        "aux_signals": aux_signals,
+        "signal_notes": signal_notes,
+        "partial_notes": [
+            f"full_report_outer_timeout>{_FULL_REPORT_TIMEOUT_S:.0f}s_fallback_news_only"
+        ],
+    }
 
 
 @mcp.tool()
@@ -939,11 +1098,22 @@ async def get_stock_sentiment_report(symbol: str, limit: int = 20) -> dict:
             timeout=_FULL_REPORT_TIMEOUT_S,
         )
     except TimeoutError:
-        return {
-            "error": f"TimeoutError: 舆情报告超过 {_FULL_REPORT_TIMEOUT_S:.0f}s",
-            "context": f"get_stock_sentiment_report(symbol={symbol!r}, limit={limit})",
-            "symbol": symbol,
-        }
+        logger.warning(
+            "get_stock_sentiment_report outer timeout %.0fs; fallback news-only for %s",
+            _FULL_REPORT_TIMEOUT_S,
+            symbol,
+        )
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_news_only_report, symbol, limit),
+                timeout=_NEWS_FETCH_TIMEOUT_S + 15.0,
+            )
+        except Exception:  # noqa: BLE001
+            return {
+                "error": f"TimeoutError: 舆情报告超过 {_FULL_REPORT_TIMEOUT_S:.0f}s",
+                "context": f"get_stock_sentiment_report(symbol={symbol!r}, limit={limit})",
+                "symbol": symbol,
+            }
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,

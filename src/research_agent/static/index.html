@@ -170,6 +170,8 @@ body.resizing-sidebar{cursor:col-resize;user-select:none}
 .msg .tool-call-line .tc-tool{color:var(--green,#4ade80)}
 .msg .tool-call-line .tc-source{font-size:10px;color:var(--accent);text-decoration:none;border:1px solid var(--border);border-radius:3px;padding:1px 5px;margin-left:4px;white-space:nowrap;transition:border-color .15s,background .15s}
 .msg .tool-call-line .tc-source:hover{border-color:var(--accent);background:rgba(108,99,255,0.1)}
+.msg .process-log{display:none;margin:0 0 8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,0.03)}
+.msg .process-log.visible,.msg .process-log.done{display:block;max-height:none;overflow:visible}
 
 .md-table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px}
 .md-table th,.md-table td{border:1px solid var(--border);padding:6px 10px;text-align:left}
@@ -2887,7 +2889,7 @@ function _appendUserMsg(container, text) {
 function _appendAssistantMsg(container) {
   const d = document.createElement('div');
   d.className = 'msg assistant';
-  d.innerHTML = '<div class="phase-tag"><span class="phase-label">思考中</span></div><div class="handoffs"></div><div class="content"></div><div class="typing"><span></span><span></span><span></span></div>';
+  d.innerHTML = '<div class="phase-tag"><span class="phase-label">思考中</span></div><div class="handoffs"></div><div class="process-log"></div><div class="content"></div><div class="typing"><span></span><span></span><span></span></div>';
   container.appendChild(d);
   return d;
 }
@@ -2998,6 +3000,20 @@ async function _runStream(query, sendThreadId, userId) {
     const handoffsEl = msgEl.querySelector('.handoffs');
     const contentEl = msgEl.querySelector('.content');
     const typingEl = msgEl.querySelector('.typing');
+    const processLogEl = msgEl.querySelector('.process-log');
+
+    const _hideProcessLog = () => {
+      // 答完后仍完整展示全部调用行（不限高、不内部滚动）；仅去掉 pending 态
+      if (!processLogEl) return;
+      processLogEl.classList.add('done');
+      processLogEl.classList.add('visible');
+      processLogEl.querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
+        el.classList.remove('tc-pending');
+        const ic = el.querySelector('.tc-icon');
+        if (ic && ic.textContent === '⚙') ic.textContent = '✓';
+      });
+    };
+    const _processRoot = () => processLogEl || contentEl;
 
     if (hdrMarket) {
       applyMarketBadgeSafely(hdrMarket, hdrMarketSource, msgEl, threadData.get(threadId));
@@ -3083,11 +3099,14 @@ async function _runStream(query, sendThreadId, userId) {
 
           case 'tool_call': {
             // 上一行停止转圈，但仍可在后续 tool_done 补真实来源标签
-            contentEl.querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
+            const root = _processRoot();
+            root.querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
               el.classList.remove('tc-pending');
               const ic = el.querySelector('.tc-icon');
               if (ic) ic.textContent = '✓';
             });
+            // 正文已开始生成后不再追加调用行（避免终稿底部残留过程）
+            if (tokenStreamStarted || finalText) break;
             const tcLine = document.createElement('div');
             tcLine.className = 'tool-call-line tc-pending';
             const sp = evt.metadata?.specialist || evt.node || '';
@@ -3108,7 +3127,13 @@ async function _runStream(query, sendThreadId, userId) {
               `<span class="tc-tool">${_escapeHtml(tool)}</span>` +
               (callContent ? `<span>(${_escapeHtml(callContent.split('(').slice(1).join('('))})</span>` : '') +
               provisional;
-            contentEl.appendChild(tcLine);
+            if (processLogEl) {
+              processLogEl.classList.add('visible');
+              processLogEl.classList.remove('done');
+              processLogEl.appendChild(tcLine);
+            } else {
+              contentEl.appendChild(tcLine);
+            }
             _scrollIfViewing(threadId);
             break;
           }
@@ -3117,7 +3142,7 @@ async function _runStream(query, sendThreadId, userId) {
             const tool = evt.metadata?.tool || '';
             const source = evt.metadata?.source || '';
             const sourceUrl = evt.metadata?.source_url || '';
-            const lines = Array.from(contentEl.querySelectorAll('.tool-call-line'));
+            const lines = Array.from(_processRoot().querySelectorAll('.tool-call-line'));
             let target = null;
             if (tool) {
               for (let i = lines.length - 1; i >= 0; i--) {
@@ -3152,7 +3177,7 @@ async function _runStream(query, sendThreadId, userId) {
                 target.dataset.sourceResolved = '1';
               }
             } else {
-              contentEl.querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
+              _processRoot().querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
                 el.classList.remove('tc-pending');
                 const ic = el.querySelector('.tc-icon');
                 if (ic) ic.textContent = '✓';
@@ -3162,7 +3187,7 @@ async function _runStream(query, sendThreadId, userId) {
           }
 
           case 'token': {
-            contentEl.querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
+            _processRoot().querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
               el.classList.remove('tc-pending');
               const ic = el.querySelector('.tc-icon');
               if (ic) ic.textContent = '✓';
@@ -3170,9 +3195,10 @@ async function _runStream(query, sendThreadId, userId) {
             if (!tokenStreamStarted) {
               tokenStreamStarted = true;
               _setPhaseText(phaseTag, '回答中', 'var(--green)');
-              // 进入正文生成后停止侧栏「调度中」脉冲，避免专家条一直待着
+              // 进入正文生成后停止侧栏「调度中」脉冲，并收起过程区
               td._activeSpecialist = null;
               if (viewing) clearHighlights();
+              _hideProcessLog();
               contentEl.innerHTML = '';
               tokenStreamEl = document.createElement('div');
               tokenStreamEl.className = 'token-stream';
@@ -3185,11 +3211,8 @@ async function _runStream(query, sendThreadId, userId) {
           }
 
           case 'final':
-            contentEl.querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
-              el.classList.remove('tc-pending');
-              const ic = el.querySelector('.tc-icon');
-              if (ic) ic.textContent = '✓';
-            });
+            _hideProcessLog();
+            contentEl.querySelectorAll('.tool-call-line').forEach(el => el.remove());
             _setPhaseText(phaseTag, '回答完成');
             finalText = evt.content || '';
             const sidesDone = _marketFromHandoffs(msgEl);
@@ -3239,11 +3262,12 @@ async function _runStream(query, sendThreadId, userId) {
           }
 
           case 'error':
-            contentEl.querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
+            _processRoot().querySelectorAll('.tool-call-line.tc-pending').forEach(el => {
               el.classList.remove('tc-pending');
               const ic = el.querySelector('.tc-icon');
               if (ic) ic.textContent = '✗';
             });
+            _hideProcessLog();
             _setPhaseText(phaseTag, '出错', 'var(--red)');
             contentEl.textContent = evt.content || '未知错误';
             typingEl.style.display = 'none';
@@ -3266,7 +3290,8 @@ async function _runStream(query, sendThreadId, userId) {
           case 'done':
             typingEl.style.display = 'none';
             if (!finalText && tokenBuf) finalText = tokenBuf;
-            if (!finalText && contentEl.textContent) finalText = contentEl.textContent;
+            _hideProcessLog();
+            // 勿用 contentEl.textContent 兜底：其中可能混有 .tool-call-line 过程文本
             td._activeSpecialist = null;
             if (viewing) clearHighlights();
             break;
@@ -3274,6 +3299,7 @@ async function _runStream(query, sendThreadId, userId) {
       }
     }
 
+    _hideProcessLog();
     if (finalText) {
       const sidesFinal = _marketFromHandoffs(msgEl);
       if (sidesFinal === 'MIXED') {
@@ -3282,6 +3308,8 @@ async function _runStream(query, sendThreadId, userId) {
         applyMarketBadgeSafely('US', 'content_heuristic', msgEl, td);
       }
       contentEl.innerHTML = renderMarkdown(finalText, { market: td.market });
+    } else {
+      contentEl.querySelectorAll('.tool-call-line').forEach(el => el.remove());
     }
     typingEl.style.display = 'none';
 

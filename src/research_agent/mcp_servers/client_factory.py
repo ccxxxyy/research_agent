@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -43,6 +44,38 @@ if TYPE_CHECKING:
 # （Connection closed / ExceptionGroup）。自动重试，仍失败则返回 error dict，避免整图崩掉。
 _MCP_RETRY_ATTEMPTS = 3
 _MCP_RETRY_BASE_DELAY_S = 0.35
+# 父进程硬超时：子进程若因线程池 wait=True / 东财挂死不返回，避免 UI 转圈数十分钟
+_MCP_CALL_TIMEOUT_S = 150.0
+_MCP_CALL_TIMEOUT_BY_PREFIX: dict[str, float] = {
+    "sentiment_": 140.0,
+    "us_sentiment_": 140.0,
+    "news_": 100.0,
+    "us_news_": 100.0,
+}
+
+
+def _mcp_call_timeout_for(tool_name: str) -> float:
+    for prefix, sec in _MCP_CALL_TIMEOUT_BY_PREFIX.items():
+        if tool_name.startswith(prefix):
+            return sec
+    return _MCP_CALL_TIMEOUT_S
+
+
+def _harden_error_result(
+    payload: dict[str, Any],
+    *,
+    response_format: str,
+) -> Any:
+    """按工具 ``response_format`` 包装错误，避免 content_and_artifact 收到裸 dict 崩图。
+
+    langchain-mcp-adapters 的 MCP 工具默认 ``response_format='content_and_artifact'``，
+    成功路径返回 ``(content, artifact)``；硬化层超时/断连时必须同形，否则 ToolNode 报：
+    ``a two-tuple ... is expected. Instead, generated response is of type: <class 'dict'>``.
+    """
+    if response_format == "content_and_artifact":
+        content = json.dumps(payload, ensure_ascii=False)
+        return content, {"structured_content": payload}
+    return payload
 
 
 def _stdio_server_spec(module: str) -> dict[str, Any]:
@@ -80,23 +113,43 @@ def _is_mcp_connection_error(exc: BaseException) -> bool:
 
 
 def _harden_mcp_tool(tool: BaseTool) -> BaseTool:
-    """给单个 MCP 工具包一层 Connection-closed 重试；耗尽后返回 error 字典。"""
+    """给单个 MCP 工具包一层 Connection-closed 重试；耗尽后返回可被 ToolNode 消费的错误。"""
     if not isinstance(tool, StructuredTool):
         return tool
 
     name = tool.name
     original_coro = tool.coroutine
     original_func = tool.func
+    response_format = getattr(tool, "response_format", "content") or "content"
 
     async def _arun(*args: Any, **kwargs: Any) -> Any:
         last: BaseException | None = None
+        call_timeout = _mcp_call_timeout_for(name)
         for attempt in range(1, _MCP_RETRY_ATTEMPTS + 1):
             try:
                 if original_coro is not None:
-                    return await original_coro(*args, **kwargs)
+                    return await asyncio.wait_for(
+                        original_coro(*args, **kwargs),
+                        timeout=call_timeout,
+                    )
                 if original_func is None:
                     raise RuntimeError(f"MCP tool {name!r} has no callable")
-                return await asyncio.to_thread(original_func, *args, **kwargs)
+                return await asyncio.wait_for(
+                    asyncio.to_thread(original_func, *args, **kwargs),
+                    timeout=call_timeout,
+                )
+            except TimeoutError:
+                return _harden_error_result(
+                    {
+                        "error": (
+                            f"MCP 工具调用超过 {call_timeout:.0f}s（父进程硬超时）。"
+                            "子进程可能卡在东财/雪球；请重试或缩小 limit。"
+                        ),
+                        "context": name,
+                        "timeout_s": call_timeout,
+                    },
+                    response_format=response_format,
+                )
             except BaseException as exc:  # noqa: BLE001 — 需捕获 ExceptionGroup
                 if not _is_mcp_connection_error(exc):
                     raise
@@ -104,15 +157,18 @@ def _harden_mcp_tool(tool: BaseTool) -> BaseTool:
                 if attempt >= _MCP_RETRY_ATTEMPTS:
                     break
                 await asyncio.sleep(_MCP_RETRY_BASE_DELAY_S * attempt)
-        return {
-            "error": (
-                f"MCP stdio Connection closed（已重试 {_MCP_RETRY_ATTEMPTS} 次）。"
-                "常见原因：开发热重载杀掉子进程、8000 端口残留旧进程。"
-                "请只保留一个 API 进程后重试。"
-            ),
-            "context": name,
-            "detail": repr(last)[:500] if last else "",
-        }
+        return _harden_error_result(
+            {
+                "error": (
+                    f"MCP stdio Connection closed（已重试 {_MCP_RETRY_ATTEMPTS} 次）。"
+                    "常见原因：开发热重载杀掉子进程、8000 端口残留旧进程。"
+                    "请只保留一个 API 进程后重试。"
+                ),
+                "context": name,
+                "detail": repr(last)[:500] if last else "",
+            },
+            response_format=response_format,
+        )
 
     def _run(*args: Any, **kwargs: Any) -> Any:
         last: BaseException | None = None
@@ -128,14 +184,17 @@ def _harden_mcp_tool(tool: BaseTool) -> BaseTool:
                 if attempt >= _MCP_RETRY_ATTEMPTS:
                     break
                 time.sleep(_MCP_RETRY_BASE_DELAY_S * attempt)
-        return {
-            "error": (
-                f"MCP stdio Connection closed（已重试 {_MCP_RETRY_ATTEMPTS} 次）。"
-                "请只保留一个 API 进程后重试。"
-            ),
-            "context": name,
-            "detail": repr(last)[:500] if last else "",
-        }
+        return _harden_error_result(
+            {
+                "error": (
+                    f"MCP stdio Connection closed（已重试 {_MCP_RETRY_ATTEMPTS} 次）。"
+                    "请只保留一个 API 进程后重试。"
+                ),
+                "context": name,
+                "detail": repr(last)[:500] if last else "",
+            },
+            response_format=response_format,
+        )
 
     return StructuredTool(
         name=tool.name,
@@ -143,7 +202,7 @@ def _harden_mcp_tool(tool: BaseTool) -> BaseTool:
         args_schema=tool.args_schema,
         coroutine=_arun if original_coro is not None else None,
         func=_run if original_func is not None else None,
-        response_format=getattr(tool, "response_format", "content"),
+        response_format=response_format,
         metadata=getattr(tool, "metadata", None),
         tags=getattr(tool, "tags", None),
     )
