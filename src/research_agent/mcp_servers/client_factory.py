@@ -27,14 +27,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
+import time
 from typing import TYPE_CHECKING, Any
 
+from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
+
+# Windows + uvicorn --reload 下，stdio MCP 子进程偶发在 initialize 阶段被掐掉
+# （Connection closed / ExceptionGroup）。自动重试，仍失败则返回 error dict，避免整图崩掉。
+_MCP_RETRY_ATTEMPTS = 3
+_MCP_RETRY_BASE_DELAY_S = 0.35
 
 
 def _stdio_server_spec(module: str) -> dict[str, Any]:
@@ -49,12 +57,100 @@ def _stdio_server_spec(module: str) -> dict[str, Any]:
     for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         clean_env.pop(k, None)
     clean_env["NO_PROXY"] = "*"
+    # 禁止 FastMCP 横幅 / 富日志 / 更新检查拖慢或干扰 stdio 握手
+    clean_env["FASTMCP_SHOW_SERVER_BANNER"] = "false"
+    clean_env["FASTMCP_LOG_ENABLED"] = "false"
+    clean_env["FASTMCP_CHECK_FOR_UPDATES"] = "off"  # Literal: stable|prerelease|off（不能用 false）
     return {
         "command": sys.executable,
         "args": ["-m", module],
         "transport": "stdio",
         "env": clean_env,
     }
+
+
+def _is_mcp_connection_error(exc: BaseException) -> bool:
+    """识别 stdio MCP 握手/会话被掐断的典型异常（含嵌套 ExceptionGroup）。"""
+    if isinstance(exc, BaseExceptionGroup):
+        return any(_is_mcp_connection_error(e) for e in exc.exceptions)
+    text = f"{type(exc).__name__}: {exc}"
+    if "Connection closed" in text or "connection closed" in text:
+        return True
+    return type(exc).__name__ == "McpError" and "Connection" in text
+
+
+def _harden_mcp_tool(tool: BaseTool) -> BaseTool:
+    """给单个 MCP 工具包一层 Connection-closed 重试；耗尽后返回 error 字典。"""
+    if not isinstance(tool, StructuredTool):
+        return tool
+
+    name = tool.name
+    original_coro = tool.coroutine
+    original_func = tool.func
+
+    async def _arun(*args: Any, **kwargs: Any) -> Any:
+        last: BaseException | None = None
+        for attempt in range(1, _MCP_RETRY_ATTEMPTS + 1):
+            try:
+                if original_coro is not None:
+                    return await original_coro(*args, **kwargs)
+                if original_func is None:
+                    raise RuntimeError(f"MCP tool {name!r} has no callable")
+                return await asyncio.to_thread(original_func, *args, **kwargs)
+            except BaseException as exc:  # noqa: BLE001 — 需捕获 ExceptionGroup
+                if not _is_mcp_connection_error(exc):
+                    raise
+                last = exc
+                if attempt >= _MCP_RETRY_ATTEMPTS:
+                    break
+                await asyncio.sleep(_MCP_RETRY_BASE_DELAY_S * attempt)
+        return {
+            "error": (
+                f"MCP stdio Connection closed（已重试 {_MCP_RETRY_ATTEMPTS} 次）。"
+                "常见原因：开发热重载杀掉子进程、8000 端口残留旧进程。"
+                "请只保留一个 API 进程后重试。"
+            ),
+            "context": name,
+            "detail": repr(last)[:500] if last else "",
+        }
+
+    def _run(*args: Any, **kwargs: Any) -> Any:
+        last: BaseException | None = None
+        for attempt in range(1, _MCP_RETRY_ATTEMPTS + 1):
+            try:
+                if original_func is not None:
+                    return original_func(*args, **kwargs)
+                return asyncio.run(_arun(*args, **kwargs))
+            except BaseException as exc:  # noqa: BLE001
+                if not _is_mcp_connection_error(exc):
+                    raise
+                last = exc
+                if attempt >= _MCP_RETRY_ATTEMPTS:
+                    break
+                time.sleep(_MCP_RETRY_BASE_DELAY_S * attempt)
+        return {
+            "error": (
+                f"MCP stdio Connection closed（已重试 {_MCP_RETRY_ATTEMPTS} 次）。"
+                "请只保留一个 API 进程后重试。"
+            ),
+            "context": name,
+            "detail": repr(last)[:500] if last else "",
+        }
+
+    return StructuredTool(
+        name=tool.name,
+        description=tool.description or "",
+        args_schema=tool.args_schema,
+        coroutine=_arun if original_coro is not None else None,
+        func=_run if original_func is not None else None,
+        response_format=getattr(tool, "response_format", "content"),
+        metadata=getattr(tool, "metadata", None),
+        tags=getattr(tool, "tags", None),
+    )
+
+
+def _harden_mcp_tools(tools: list[BaseTool]) -> list[BaseTool]:
+    return [_harden_mcp_tool(t) for t in tools]
 
 
 CODE_SERVER_MODULE = "research_agent.mcp_servers.code_server"
@@ -81,7 +177,7 @@ async def load_code_server_tools() -> list[BaseTool]:
         {"code": _stdio_server_spec(CODE_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_echo_server_tools() -> list[BaseTool]:
@@ -93,7 +189,7 @@ async def load_echo_server_tools() -> list[BaseTool]:
         {"echo": _stdio_server_spec(ECHO_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_fin_data_server_tools() -> list[BaseTool]:
@@ -108,7 +204,7 @@ async def load_fin_data_server_tools() -> list[BaseTool]:
         {"fin": _stdio_server_spec(FIN_DATA_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_us_data_server_tools() -> list[BaseTool]:
@@ -132,7 +228,7 @@ async def load_us_data_server_tools() -> list[BaseTool]:
         {"us": _stdio_server_spec(US_DATA_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_us_filing_server_tools() -> list[BaseTool]:
@@ -149,7 +245,7 @@ async def load_us_filing_server_tools() -> list[BaseTool]:
         {"us_filing": _stdio_server_spec(US_FILING_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_us_news_server_tools() -> list[BaseTool]:
@@ -168,7 +264,7 @@ async def load_us_news_server_tools() -> list[BaseTool]:
         {"us_news": _stdio_server_spec(US_NEWS_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_us_sentiment_server_tools() -> list[BaseTool]:
@@ -185,7 +281,7 @@ async def load_us_sentiment_server_tools() -> list[BaseTool]:
         {"us_sentiment": _stdio_server_spec(US_SENTIMENT_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_news_server_tools() -> list[BaseTool]:
@@ -207,7 +303,7 @@ async def load_news_server_tools() -> list[BaseTool]:
         {"news": _stdio_server_spec(NEWS_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_news_sentiment_server_tools() -> list[BaseTool]:
@@ -225,7 +321,7 @@ async def load_news_sentiment_server_tools() -> list[BaseTool]:
         {"sentiment": _stdio_server_spec(NEWS_SENTIMENT_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_fund_server_tools() -> list[BaseTool]:
@@ -241,7 +337,7 @@ async def load_fund_server_tools() -> list[BaseTool]:
         {"fund": _stdio_server_spec(FUND_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_derivatives_server_tools() -> list[BaseTool]:
@@ -253,7 +349,7 @@ async def load_derivatives_server_tools() -> list[BaseTool]:
         {"derivatives": _stdio_server_spec(DERIVATIVES_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_pdf_report_server_tools() -> list[BaseTool]:
@@ -273,7 +369,7 @@ async def load_pdf_report_server_tools() -> list[BaseTool]:
         {"pdf": _stdio_server_spec(PDF_REPORT_SERVER_MODULE)},
         tool_name_prefix=True,
     )
-    return await client.get_tools()
+    return _harden_mcp_tools(await client.get_tools())
 
 
 async def load_knowledge_server_tools() -> list[BaseTool]:

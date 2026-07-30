@@ -3170,6 +3170,9 @@ async function _runStream(query, sendThreadId, userId) {
             if (!tokenStreamStarted) {
               tokenStreamStarted = true;
               _setPhaseText(phaseTag, '回答中', 'var(--green)');
+              // 进入正文生成后停止侧栏「调度中」脉冲，避免专家条一直待着
+              td._activeSpecialist = null;
+              if (viewing) clearHighlights();
               contentEl.innerHTML = '';
               tokenStreamEl = document.createElement('div');
               tokenStreamEl.className = 'token-stream';

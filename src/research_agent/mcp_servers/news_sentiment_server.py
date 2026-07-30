@@ -65,6 +65,15 @@ _XUEQIU_HEAT_TIMEOUT_S = 15.0
 _HOT_KEYWORDS_TIMEOUT_S = 15.0
 _NEWS_FETCH_TIMEOUT_S = 40.0
 _FULL_REPORT_TIMEOUT_S = 90.0
+# 资金流 / 研报旁路：短超时，失败不影响新闻主结果
+_AUX_SIGNAL_TIMEOUT_S = 12.0
+
+_SIGNAL_WHAT = {
+    "news": "东财个股新闻标题/摘要：本地 SnowNLP 打分的主样本（文本情绪）。",
+    "social": "雪球讨论热度 + 东财热搜词：社交关注度与关联概念，不是逐条情绪分。",
+    "fund_flow": "个股主力资金流向（东财）：盘面资金进退的间接情绪代理，不是社交媒体舆情。",
+    "analyst": "券商研报评级（东财研报）：机构观点/评级，不是散户讨论情绪。",
+}
 
 
 def _call_with_timeout[T](fn: Callable[[], _T], *, timeout: float, default: _T) -> _T:
@@ -621,6 +630,120 @@ def _fetch_hot_keywords(symbol: str) -> list[dict[str, Any]]:
         return []
 
 
+def _exchange_prefix_simple(symbol: str) -> str:
+    return "sh" if str(symbol).startswith("6") else "sz"
+
+
+def _is_na(v: Any) -> bool:
+    try:
+        import pandas as pd
+
+        return bool(pd.isna(v))
+    except Exception:  # noqa: BLE001
+        return v is None
+
+
+def _fetch_fund_flow_signal(symbol: str, *, days: int = 5) -> dict[str, Any]:
+    """个股近期资金流向摘要（旁路）。"""
+    import akshare as ak
+
+    df = ak.stock_individual_fund_flow(stock=symbol, market=_exchange_prefix_simple(symbol))
+    if df is None or getattr(df, "empty", True):
+        return {"available": False, "reason": "empty"}
+    tail = df.tail(max(1, min(int(days), 10)))
+    records: list[dict[str, Any]] = []
+    for _, row in tail.iterrows():
+        records.append({str(k): (None if _is_na(v) else v) for k, v in row.items()})
+    latest = records[-1] if records else {}
+    main_net = None
+    for key in ("主力净流入-净额", "主力净流入净额", "主力净流入"):
+        if key in latest and latest[key] is not None:
+            main_net = latest[key]
+            break
+    return {
+        "available": True,
+        "days": len(records),
+        "latest_main_net_inflow": main_net,
+        "recent": records[-3:],
+        "source": "eastmoney_fund_flow",
+        "source_url": f"https://data.eastmoney.com/zjlx/{symbol}.html",
+    }
+
+
+def _fetch_analyst_reports(symbol: str, *, limit: int = 8) -> dict[str, Any]:
+    """东财个股研报列表（旁路，机构评级）。"""
+    import akshare as ak
+
+    df = ak.stock_research_report_em(symbol=symbol)
+    if df is None or getattr(df, "empty", True):
+        return {"available": False, "reason": "empty", "reports": []}
+    rows: list[dict[str, Any]] = []
+    for _, row in df.head(max(1, min(int(limit), 15))).iterrows():
+        rows.append(
+            {
+                "title": str(row.get("报告名称") or ""),
+                "rating": str(row.get("东财评级") or ""),
+                "institution": str(row.get("机构") or ""),
+                "date": str(row.get("日期") or ""),
+                "industry": str(row.get("行业") or ""),
+                "pdf_url": str(row.get("报告PDF链接") or ""),
+            }
+        )
+    ratings = [r["rating"] for r in rows if r.get("rating") and r["rating"] not in ("", "nan")]
+    return {
+        "available": bool(rows),
+        "count": len(rows),
+        "ratings_sample": ratings[:8],
+        "reports": rows,
+        "source": "eastmoney_research_report",
+        "source_url": f"https://data.eastmoney.com/report/stock.jshtml?stockcode={symbol}",
+    }
+
+
+def _build_aux_signals(
+    *,
+    xueqiu_heat: dict[str, Any],
+    eastmoney_keywords: list[dict[str, Any]],
+    fund_flow: dict[str, Any] | None,
+    analyst: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """组装旁路信号 + 白话说明（用到才提示）。"""
+    notes: list[str] = []
+    social_used = bool(
+        (isinstance(xueqiu_heat, dict) and xueqiu_heat.get("on_list")) or eastmoney_keywords
+    )
+    social = {
+        "what": _SIGNAL_WHAT["social"],
+        "xueqiu_heat": xueqiu_heat,
+        "eastmoney_trending_keywords": eastmoney_keywords[:10],
+        "used": social_used,
+    }
+    if social_used:
+        notes.append(
+            "已纳入社交关注信号（雪球热度/东财热搜）：表示讨论热度与关联概念，不是新闻正文情绪分。"
+        )
+
+    ff = fund_flow or {"available": False}
+    fund_block = {"what": _SIGNAL_WHAT["fund_flow"], **ff, "used": bool(ff.get("available"))}
+    if fund_block["used"]:
+        notes.append("已纳入资金/盘面信号（个股主力资金流向）：表示资金进退，属间接情绪代理。")
+
+    an = analyst or {"available": False}
+    analyst_block = {"what": _SIGNAL_WHAT["analyst"], **an, "used": bool(an.get("available"))}
+    if analyst_block["used"]:
+        notes.append("已纳入分析师/研报信号（东财研报评级）：表示机构观点，不是散户舆情。")
+
+    return (
+        {
+            "news_what": _SIGNAL_WHAT["news"],
+            "social": social,
+            "fund_flow": fund_block,
+            "analyst": analyst_block,
+        },
+        notes,
+    )
+
+
 # ---------------------------------------------------------------------
 # Tool 1: 纯文本情感打分
 # ---------------------------------------------------------------------
@@ -738,9 +861,36 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
     if not eastmoney_keywords:
         notes.append(f"eastmoney_keywords_empty_or_timeout>{_HOT_KEYWORDS_TIMEOUT_S:.0f}s")
 
+    # ── 6. 资金流向（旁路限时）──
+    fund_flow = _call_with_timeout(
+        lambda: _fetch_fund_flow_signal(symbol),
+        timeout=_AUX_SIGNAL_TIMEOUT_S,
+        default=None,
+    )
+    if fund_flow is None:
+        notes.append(f"fund_flow_skipped_timeout>{_AUX_SIGNAL_TIMEOUT_S:.0f}s")
+        fund_flow = {"available": False, "skipped": True, "reason": "timeout_or_error"}
+
+    # ── 7. 分析师研报（旁路限时）──
+    analyst = _call_with_timeout(
+        lambda: _fetch_analyst_reports(symbol),
+        timeout=_AUX_SIGNAL_TIMEOUT_S,
+        default=None,
+    )
+    if analyst is None:
+        notes.append(f"analyst_skipped_timeout>{_AUX_SIGNAL_TIMEOUT_S:.0f}s")
+        analyst = {"available": False, "skipped": True, "reason": "timeout_or_error", "reports": []}
+
+    aux_signals, signal_notes = _build_aux_signals(
+        xueqiu_heat=xueqiu_heat,
+        eastmoney_keywords=eastmoney_keywords or [],
+        fund_flow=fund_flow,
+        analyst=analyst,
+    )
+
     out: dict[str, Any] = {
         "symbol": symbol,
-        "source": "eastmoney+xueqiu",
+        "source": "eastmoney+xueqiu+fund_flow+analyst",
         "source_url": f"https://so.eastmoney.com/news/s?keyword={symbol}",
         "model_version": _MODEL_VERSION,
         "timestamp": timestamp,
@@ -750,6 +900,8 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
         "topic_clusters": topic_clusters,
         "xueqiu_heat": xueqiu_heat,
         "eastmoney_trending_keywords": eastmoney_keywords,
+        "aux_signals": aux_signals,
+        "signal_notes": signal_notes,
     }
     if notes:
         out["partial_notes"] = notes
@@ -760,8 +912,10 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
 async def get_stock_sentiment_report(symbol: str, limit: int = 20) -> dict:
     """一站式个股舆情报告（多源融合）。
 
-    拉东财新闻 → 逐条打分 → 提取高频词 → 话题分组 → 查雪球热度 → 拉东财热搜词 → 汇总成结构化报告。
-    雪球/热搜为旁路：超时会跳过并在 ``partial_notes`` 说明，仍返回新闻打分主结果。
+    拉东财新闻 → 逐条打分 → 提取高频词 → 话题分组 → 查雪球热度 → 拉东财热搜词
+    →（旁路）个股资金流向 →（旁路）东财研报评级 → 汇总。
+    雪球/热搜/资金流/研报为旁路：超时跳过并在 ``partial_notes`` 说明，仍返回新闻打分主结果。
+    旁路有数据时 ``signal_notes`` / ``aux_signals.*.what`` 会说明该信号含义。
 
     返回内容：
     - ``items``: 逐条新闻（标题/摘要/时间/分数/标签/关键词/指纹）
@@ -770,6 +924,8 @@ async def get_stock_sentiment_report(symbol: str, limit: int = 20) -> dict:
     - ``topic_clusters``: 按正/负/中性分组的代表性标题（各 3 条）
     - ``xueqiu_heat``: 雪球讨论热度（排名/讨论量，如在榜；超时则 skipped）
     - ``eastmoney_trending_keywords``: 东财热搜关联词 top-10
+    - ``aux_signals``: 社交 / 资金盘面 / 分析师旁路（含 ``what`` 说明）
+    - ``signal_notes``: 本次实际用到的旁路白话提示
     - 审计：model_version / timestamp / text_fingerprint
 
     Args:

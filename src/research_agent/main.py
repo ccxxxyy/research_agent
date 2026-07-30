@@ -2273,12 +2273,17 @@ app = create_app()
 
 
 def cli() -> None:
+    from pathlib import Path as _Path
+
     settings = get_settings()
+    # 仅监视源码包，避免 data/edgar_cache、logs、临时文件触发热重载杀掉 MCP 子进程
+    _pkg_dir = str(_Path(__file__).resolve().parent)
     uvicorn.run(
         "research_agent.main:app",
         host=settings.app_host,
         port=settings.app_port,
         reload=settings.is_dev,
+        reload_dirs=[_pkg_dir] if settings.is_dev else None,
         access_log=True,
         log_level=str(settings.observability.log_level or "info").lower(),
     )
