@@ -1687,35 +1687,110 @@ async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
 # =====================================================================
 # 工具 18: 港股通（北向/南向资金流）
 # =====================================================================
+_HSGT_DIRECTION_MAP: dict[str, tuple[str, str]] = {
+    "north": ("5", "北向资金"),
+    "south": ("6", "南向资金"),
+}
+
+
+def _fetch_hsgt_hist_page(*, mutual_type: str, limit: int) -> list[dict[str, Any]]:
+    """东财沪深港通历史：只拉第 1 页。
+
+    勿用 ``ak.stock_hsgt_hist_em``——它会按 TotalPage 翻完全部历史（十余页），
+    轻易超时，并诱发模型编造「北向个股流向接口空」之类假缺口。
+    """
+    from urllib.parse import urlencode
+
+    page_size = max(1, min(int(limit), 60))
+    qs = urlencode(
+        {
+            "sortColumns": "TRADE_DATE",
+            "sortTypes": "-1",
+            "pageSize": str(page_size),
+            "pageNumber": "1",
+            "reportName": "RPT_MUTUAL_DEAL_HISTORY",
+            "columns": "ALL",
+            "source": "WEB",
+            "client": "WEB",
+            "filter": f'(MUTUAL_TYPE="00{mutual_type}")',
+        }
+    )
+    url = f"https://datacenter-web.eastmoney.com/api/data/v1/get?{qs}"
+    data_json = _curl_get_json(url, timeout=12)
+    if not isinstance(data_json, dict):
+        import requests
+
+        resp = requests.get(url, timeout=12)
+        resp.raise_for_status()
+        data_json = resp.json()
+    rows = (
+        (data_json.get("result") or {}) if isinstance(data_json.get("result"), dict) else {}
+    ).get("data")
+    if not isinstance(rows, list):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for item in rows[:page_size]:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            {
+                "日期": item.get("TRADE_DATE"),
+                "当日资金流入": item.get("FUND_INFLOW"),
+                "当日成交净买额": item.get("NET_DEAL_AMT"),
+                "买入成交额": item.get("BUY_AMT"),
+                "卖出成交额": item.get("SELL_AMT"),
+                "领涨股": item.get("LEAD_STOCKS_NAME"),
+                "领涨股-代码": item.get("LEAD_STOCKS_CODE"),
+                "领涨股-涨跌幅": item.get("LS_CHANGE_RATE"),
+                "额度余额": item.get("QUOTA_BALANCE"),
+            }
+        )
+    return out
+
+
 @mcp.tool()
 @cached_tool(ttl=TTL_MEDIUM, namespace="fin")
 async def get_hsgt_flow(direction: str = "north", limit: int = 20) -> dict:
-    """返回沪深港通资金流向数据。
+    """返回沪深港通**市场级**资金流向（非个股北向当日买卖）。
 
     Args:
-        direction: ``"north"`` 北向资金（外资流入 A 股）或 ``"south"`` 南向资金（内资流入港股）。
-        limit: 返回条目数（默认 20，上限 60）。
+        direction: ``"north"`` 北向资金（外资流入 A 股整体）或 ``"south"`` 南向资金。
+        limit: 最近交易日条数（默认 20，上限 60）。只请求第 1 页，不做全历史翻页。
 
     Returns:
-        每日资金净流入/流出数据。
+        每日市场级净流入/流出；``scope`` 固定为 ``market``。
+        个股资金请用 ``get_individual_fund_flow``，不要把本工具空结果写成「个股北向接口空」。
     """
     limit = max(1, min(limit, 60))
+    mapped = _HSGT_DIRECTION_MAP.get(direction)
+    if mapped is None:
+        return _fmt_error(
+            ValueError("direction 必须是 'north' 或 'south'"),
+            context=f"get_hsgt_flow(direction={direction!r})",
+        )
+    mutual_type, label = mapped
 
     def _call() -> dict[str, Any]:
-        import akshare as ak
-
-        label = "北向资金" if direction == "north" else "南向资金"
-        df = ak.stock_hsgt_hist_em(symbol=label)
-        df = df.tail(limit)
+        records = _fetch_hsgt_hist_page(mutual_type=mutual_type, limit=limit)
         return {
             "direction": label,
-            "records": _df_to_records(df),
-            "count": len(df),
+            "scope": "market",
+            "records": records,
+            "count": len(records),
             "source": "eastmoney",
+            "source_url": "https://data.eastmoney.com/hsgt/index.html",
+            "note": "市场级沪深港通资金；非单只股票的北向当日成交。",
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        return await asyncio.wait_for(asyncio.to_thread(_call), timeout=25.0)
+    except TimeoutError:
+        return {
+            "error": "TimeoutError: 北向/南向市场资金流超过 25s",
+            "context": f"get_hsgt_flow(direction={direction!r})",
+            "scope": "market",
+        }
     except Exception as e:
         return _fmt_error(e, context=f"get_hsgt_flow(direction={direction!r})")
 

@@ -131,7 +131,7 @@ async def test_market_telegraph_contract() -> None:
             assert "context" in payload, payload
         else:
             assert payload["category"] == "全部"
-            assert payload["source"] == "cls"
+            assert payload["source"] in {"cls", "eastmoney_flash_fallback"}
             assert isinstance(payload["telegraph"], list)
             assert payload["count"] == len(payload["telegraph"])
             assert len(payload["telegraph"]) <= 5

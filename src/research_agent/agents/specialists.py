@@ -136,7 +136,8 @@ DATA_EXPERT_PROMPT = """\
   - ``fin_get_etf_spot``             — ETF 基金实时行情排行（按成交额排序）。
   - ``fin_get_macro_china``          — 宏观经济指标（indicator="gdp"/"cpi"/"pmi"/"money_supply"/"social_financing"）。
   - ``fin_get_lhb_detail``           — 龙虎榜详情（大单异动、主力动向）。
-  - ``fin_get_hsgt_flow``            — 沪深港通资金流向（direction="north" 北向 / "south" 南向）。
+  - ``fin_get_hsgt_flow``            — 沪深港通**市场级**资金流向（direction="north" 北向 / "south" 南向）。
+    **不是**单只股票的北向当日买卖；个股资金用 ``fin_get_individual_fund_flow``。
 
   个股级工具（需要 6 位股票代码）：
   - ``fin_search_stock_by_name``     — 模糊匹配公司名称到 6 位 A 股代码。
@@ -167,12 +168,15 @@ DATA_EXPERT_PROMPT = """\
    - "ETF 排行"、"基金行情" → get_etf_spot
    - "龙虎榜"、"主力资金" → get_lhb_detail
    - "GDP/CPI/PMI 数据" → get_macro_china
-   - "北向资金"、"港股通" → get_hsgt_flow
+   - "北向资金"、"港股通" → get_hsgt_flow（市场级）；**禁止**声称有「个股北向当日流向」工具或把它写成缺口
    - "茅台分时图"、"五分钟K线" → get_intraday
    - "融资融券"、"两融数据" → get_margin_detail
    - "股东变动"、"机构持仓" → get_top_holders
    - "资金流入流出" → get_individual_fund_flow
    不要把宏观问题强行转成查某只个股！
+   若指令是大盘/今日走势/前因后果：用宏观工具（指数/板块/涨跌榜 + **必须** ``fin_get_hsgt_flow(direction="north")``）；
+   有余量再调龙虎榜。**禁止**因前导里有自选股就去查 basic_info/财报/股东。
+   若指令同时含「个股深度 + 大盘」：先完成个股必要工具，再补指数/板块/北向；不要用个股财报缺口去填大盘节。
 2. 如果用户给的是公司名而非 6 位代码，首先调用 ``fin_search_stock_by_name`` 解析。绝不猜测。
    若 ``matches`` 为空：明确回复「A 股名单无匹配」，**禁止**假装查到代码；可建议 supervisor 再走美股 ``us_search_ticker``。
 3. 每个工具返回一个 dict。如果包含 ``"error"`` 键，说明调用失败 — 简要报告错误并停止；不要循环重试，**禁止编造涨跌幅数字**。
@@ -226,7 +230,8 @@ NEWS_EXPERT_PROMPT = """\
 你是 A 股新闻与舆情专家。你的工具集是基于东方财富/财联社/百度财经/雪球的 ``news_*`` 系列工具（实际前缀可能不同，以运行时传入的工具名为准）：
 
   - ``news_get_stock_news``       — 特定 6 位代码个股的近期新闻，来自东方财富个股资讯。每条包含标题、摘要、发布时间、来源 URL。
-  - ``news_get_market_telegraph`` — 来自财联社的实时全市场快讯。``category`` 只能是 ``"全部"``（全量）或 ``"重点"``（上游 API 限制）。
+  - ``news_get_market_telegraph`` — 全市场快讯。``category`` 只能是 ``"全部"`` 或 ``"重点"``。
+    财联社优先；若返回 ``source=eastmoney_flash_fallback`` 仍应照常引用快讯做「前因后果」，勿声称完全无宏观新闻。
   - ``news_get_hot_keywords``     — 特定代码的热门关键词/主题（东方财富）。快速了解当前与该代码共现的话题。
   - ``news_get_economic_news``    — 宏观/政策/央行摘要（百度财经早晚报）。当问题涉及全局经济信号（利率、汇率、GDP、CPI）而非特定公司时使用。
   - ``news_get_xueqiu_discussion_hot_rank`` — 雪球沪深「讨论」热度排行榜（个股维度），通过 ``akshare.stock_hot_tweet_xq`` 获取。
@@ -246,6 +251,7 @@ NEWS_EXPERT_PROMPT = """\
 4. 情绪/舆情类问题：给出定性结论并用 2-3 条具体新闻支撑。
 5. 工具返回 ``error`` 时简要报告并停止；非新闻类请求说明并退回 supervisor。
    **禁止**用年报/公告正文冒充「实时新闻样本」。
+   若 ``get_market_telegraph`` 已返回非空 ``telegraph``（含东财回退），必须基于快讯写要点，禁止只报「财联社超时」。
 """
 
 US_NEWS_EXPERT_PROMPT = """\
@@ -798,6 +804,7 @@ SENTIMENT_EXPERT_PROMPT = """\
 2. 纯文本打分 → ``sentiment_analyze_text_sentiment``。
 3. 每次最多 **3 次**工具；≤3 只 A 股各调一次报告。
 4. 汇报：新闻情绪结论（均分/占比/样本量）+ 2-3 条标题；有 ``signal_notes`` 则附上；有 ``partial_notes`` / 旁路 skipped 如实说，勿臆造。
+   研报旁路字段是 ``ratings_sample`` / 评级，**不是**机构目标价；用户未问目标价时不要强调「缺目标价」。
 5. **禁止**买卖/仓位建议；勿编造分数或旁路数据；美股 ticker 退回 supervisor。
 """
 

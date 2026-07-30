@@ -24,3 +24,16 @@ def test_router_mentions_market_and_priority() -> None:
     assert "CN_A" in RESEARCH_BRIEF_ROUTER
     assert "MIXED" in RESEARCH_BRIEF_ROUTER
     assert "深度 > 大盘板块 > 晨报" in RESEARCH_BRIEF_ROUTER
+
+
+def test_macro_gap_forbids_unrequested_sentiment() -> None:
+    assert "禁止" in RESEARCH_BRIEF_ROUTER and "sentiment_expert" in RESEARCH_BRIEF_ROUTER
+    assert "万得" in RESEARCH_BRIEF_ROUTER or "同花顺" in RESEARCH_BRIEF_ROUTER
+    assert "自选股" in CN_MACRO or "蓝筹" in CN_MACRO
+    assert "目标价" in RESEARCH_BRIEF_ROUTER
+    assert "eastmoney_flash_fallback" in RESEARCH_BRIEF_ROUTER
+    assert "应收账款" in RESEARCH_BRIEF_ROUTER or "中报 PDF" in RESEARCH_BRIEF_ROUTER
+    assert "北向资金个股流向" in RESEARCH_BRIEF_ROUTER or "个股北向" in RESEARCH_BRIEF_ROUTER
+    assert (
+        "巨潮公告 PDF 未提取" in RESEARCH_BRIEF_ROUTER or "巨潮 PDF 未提取" in RESEARCH_BRIEF_ROUTER
+    )

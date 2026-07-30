@@ -251,59 +251,192 @@ async def get_stock_news(symbol: str, limit: int = 20) -> dict:
 
 
 # ---------------------------------------------------------------------
-# 工具 2: 实时市场电报（财联社）
+# 工具 2: 实时市场电报（财联社 → 东财快讯回退）
 # ---------------------------------------------------------------------
 TELEGRAPH_CATEGORIES = {"全部", "重点"}
 """``get_market_telegraph(category=...)`` 的允许值。
 
-以前（1.18 之前）有一个函数 stock_telegraph_cls，支持按"A股"、"宏观"等类别过滤。但 1.18 版本之后这个函数被废弃了，新函数 stock_info_global_cls 只支持"全部"和"重点"两个选项。
-如果 LLM 生成了 get_market_telegraph(category="A股")（用了不支持的类别），立刻返回错误告诉 LLM "只能用全部或重点"。如果不做这个检查，akshare 会返回一个空的 DataFrame，LLM 就会以为"今天没有新闻"——但实际上是参数写错了。快速失败会比静默返回空数据好，因为 LLM 能看到错误信息并修正调用。
-上游 ``akshare.stock_info_global_cls`` 端点仅支持两个过滤器 — ``全部``（全量）和 ``重点``（标记为重要的）。
-旧版 akshare 曾以``stock_telegraph_cls`` 名称暴露更丰富的分类集，但在 1.18+ 中已废弃；
-在此显式约束，使 LLM 生成的 ``A股`` / ``宏观`` 调用能快速失败并给出有用错误，而非静默返回空数据帧。
+上游 ``akshare.stock_info_global_cls`` 仅支持 ``全部`` / ``重点``；旧分类已废弃。
+财联社 ``telegraphList`` 在部分网络环境会 404，且 akshare 内建 ``max_retries=10``
+会拖成数分钟假超时。本工具改为短超时直连，失败则回退东方财富 7×24 快讯。
 """
+
+_TELEGRAPH_TIMEOUT_S = 18.0
+_CLS_HTTP_TIMEOUT_S = 6.0
+_EM_FLASH_HTTP_TIMEOUT_S = 10.0
+
+
+def _http_get_json(
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """优先 curl_cffi，回退 requests。"""
+    try:
+        from curl_cffi import requests as curl_requests
+
+        resp = curl_requests.get(
+            url,
+            params=params or {},
+            headers=headers or {},
+            impersonate="chrome",
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict):
+            return data
+    except Exception:  # noqa: BLE001
+        pass
+
+    import requests
+
+    resp = requests.get(url, params=params or {}, headers=headers or {}, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise TypeError(f"expected JSON object from {url}")
+    return data
+
+
+def _telegraph_from_cls(symbol: str, limit: int) -> dict[str, Any] | None:
+    """直连财联社电报；不可用则返回 None（勿用 akshare 长重试）。"""
+    try:
+        data_json = _http_get_json(
+            "https://www.cls.cn/nodeapi/telegraphList",
+            headers={"Referer": "https://www.cls.cn/telegraph"},
+            timeout=_CLS_HTTP_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+    roll = ((data_json.get("data") or {}) if isinstance(data_json.get("data"), dict) else {}).get(
+        "roll_data"
+    )
+    if not isinstance(roll, list) or not roll:
+        return None
+
+    records: list[dict[str, Any]] = []
+    for item in roll:
+        if not isinstance(item, dict):
+            continue
+        level = str(item.get("level") or "")
+        if symbol == "重点" and level not in {"A", "B"}:
+            continue
+        ctime = item.get("ctime")
+        pub_date = pub_time = None
+        try:
+            if ctime is not None:
+                dt = datetime.fromtimestamp(int(ctime), tz=_SHANGHAI_TZ)
+                pub_date = dt.strftime("%Y-%m-%d")
+                pub_time = dt.strftime("%H:%M:%S")
+        except (TypeError, ValueError, OSError):
+            pass
+        records.append(
+            {
+                "标题": item.get("title") or "",
+                "内容": item.get("content") or "",
+                "发布日期": pub_date,
+                "发布时间": pub_time,
+                "等级": level or None,
+            }
+        )
+        if len(records) >= limit:
+            break
+    if not records:
+        return None
+    return {
+        "category": symbol,
+        "count": len(records),
+        "telegraph": records,
+        "source": "cls",
+        "source_url": "https://www.cls.cn/telegraph",
+    }
+
+
+def _telegraph_from_eastmoney(symbol: str, limit: int) -> dict[str, Any] | None:
+    """东方财富 7×24 快讯回退（财联社不可用时）。"""
+    try:
+        data_json = _http_get_json(
+            "https://np-weblist.eastmoney.com/comm/web/getFastNewsList",
+            params={
+                "client": "web",
+                "biz": "web_724",
+                "fastColumn": "102",
+                "sortEnd": "",
+                "pageSize": str(max(limit, 30)),
+                "req_trace": "1",
+            },
+            timeout=_EM_FLASH_HTTP_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+    items = ((data_json.get("data") or {}) if isinstance(data_json.get("data"), dict) else {}).get(
+        "fastNewsList"
+    )
+    if not isinstance(items, list) or not items:
+        return None
+
+    records: list[dict[str, Any]] = []
+    for item in items[:limit]:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "")
+        records.append(
+            {
+                "标题": item.get("title") or "",
+                "内容": item.get("summary") or item.get("content") or "",
+                "发布日期": None,
+                "发布时间": item.get("showTime") or None,
+                "链接": f"https://finance.eastmoney.com/a/{code}.html" if code else None,
+            }
+        )
+    if not records:
+        return None
+    return {
+        "category": symbol,
+        "count": len(records),
+        "telegraph": records,
+        "source": "eastmoney_flash_fallback",
+        "source_url": "https://kuaixun.eastmoney.com/7_24.html",
+        "note": "财联社电报不可用，已回退东方财富全球财经快讯；仍可用于今日盘面/政策线索。",
+    }
 
 
 def _telegraph_cls(symbol: str, limit: int) -> dict[str, Any]:
-    import akshare as ak
-
-    df = ak.stock_info_global_cls(symbol=symbol)
-    if df is None or df.empty:
-        return {
-            "category": symbol,
-            "count": 0,
-            "telegraph": [],
-            "source": "cls",
-            "warning": f"类别 {symbol!r} 近期无快讯",
-        }
+    """市场快讯：财联社优先，东财快讯回退；全程短超时。"""
+    primary = _telegraph_from_cls(symbol, limit)
+    if primary is not None:
+        return primary
+    fallback = _telegraph_from_eastmoney(symbol, limit)
+    if fallback is not None:
+        return fallback
     return {
         "category": symbol,
-        "count": min(int(len(df)), limit),
-        "telegraph": _df_to_records(df, limit=limit),
-        "source": "cls",
+        "count": 0,
+        "telegraph": [],
+        "source": "cls+eastmoney",
+        "error": "财联社与东方财富快讯均不可用或超时",
+        "context": f"get_market_telegraph(category={symbol!r})",
     }
 
 
 @mcp.tool()
 @cached_tool(ttl=TTL_SHORT, namespace="news")
 async def get_market_telegraph(category: str = "全部", limit: int = 30) -> dict:
-    """从财联社获取实时市场新闻快讯。
-
-    财联社是中国市场版的彭博"FIRST WORD"终端 — 关于市场动向事件的短时间戳快讯（每条约 50-300 字符）。交易时段内每隔数分钟更新。
+    """获取实时市场新闻快讯（财联社优先，失败回退东财 7×24）。
 
     Args:
-        category: 上游数据流的过滤器。调用的 akshare 端点仅支持
-            两个值：
-              - ``"全部"``（默认） — 所有快讯（全量）
-              - ``"重点"``         — 仅标记为重要的
-            其他值返回 ``{"error": ...}``。
-        limit: 最大返回快讯数（默认 30，上限 ``MAX_LIMIT``=100）。
-            超出 ``limit`` 的旧条目被静默丢弃。
+        category: 仅支持 ``"全部"`` 或 ``"重点"``（重点在财联社侧按等级过滤；
+            东财回退时无法同等过滤，仍返回快讯列表并标注 ``source``）。
+        limit: 最大返回条数（默认 30，上限 ``MAX_LIMIT``）。
 
     Returns:
-        包含 ``category``、``count``、``telegraph``（快讯记录列表，每条通常含 ``标题``、``内容``、``发布日期``、``发布时间``）和
-        ``source``（始终为 ``"cls"``）的字典。
-        失败时返回``{"error": ..., "context": ...}``。
+        ``category`` / ``count`` / ``telegraph`` / ``source`` / ``source_url``。
+        ``source`` 可能为 ``cls`` 或 ``eastmoney_flash_fallback``。
     """
     limit = _coerce_limit(limit)
     if category not in TELEGRAPH_CATEGORIES:
@@ -312,7 +445,15 @@ async def get_market_telegraph(category: str = "全部", limit: int = 30) -> dic
             context=f"get_market_telegraph(category={category!r})",
         )
     try:
-        return await asyncio.to_thread(_telegraph_cls, category, limit)
+        return await asyncio.wait_for(
+            asyncio.to_thread(_telegraph_cls, category, limit),
+            timeout=_TELEGRAPH_TIMEOUT_S,
+        )
+    except TimeoutError:
+        return {
+            "error": f"TimeoutError: 市场快讯超过 {_TELEGRAPH_TIMEOUT_S:.0f}s",
+            "context": f"get_market_telegraph(category={category!r}, limit={limit})",
+        }
     except Exception as e:  # noqa: BLE001
         return _fmt_error(
             e,
