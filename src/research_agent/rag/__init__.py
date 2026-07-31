@@ -3,6 +3,7 @@
 本包将 Corrective-RAG 流水线的核心组件导出为可独立测试的类：
 
 * ``BM25Index`` — 基于分词文档的稀疏 BM25 索引。
+* ``BM25ShardedIndex`` — 按 ``metadata.source`` 分片的 BM25，API 与 ``BM25Index`` 同形。
 * ``hybrid_rrf_fuse`` — 稠密检索 + 稀疏检索结果的加权 RRF（Reciprocal-Rank Fusion）融合。
 * ``RetrievalGrader`` — 三档质量分类器（high / medium / low），驱动纠正循环。
 * ``QueryRewriter`` — 基于 LLM 的查询重写器，用于低质量命中场景。
@@ -17,10 +18,11 @@ from research_agent.rag.reranker import (
     DEFAULT_RERANKER_MODEL,
     CrossEncoderReranker,
 )
-from research_agent.rag.retriever import BM25Index, hybrid_rrf_fuse
+from research_agent.rag.retriever import BM25Index, BM25ShardedIndex, hybrid_rrf_fuse
 
 __all__ = [
     "BM25Index",
+    "BM25ShardedIndex",
     "CrossEncoderReranker",
     "DEFAULT_RERANKER_MODEL",
     "QueryRewriter",

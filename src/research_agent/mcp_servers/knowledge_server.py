@@ -61,7 +61,9 @@ research_agent/data/knowledge_db\
 ``./data/knowledge_db/<collection_name>/`` 每个集合持有一个持久化 FAISS 索引。
 每个子文件夹包含标准 LangChain FAISS 文件对：``index.faiss``（二进制索引）加 ``index.pkl``（docstore +``faiss_id -> doc_id`` 映射）。
 因此列出集合只需枚举基路径的子目录（./data/knowledge_db/每个集合一个目录）。
-BM25 在进程启动后首次搜索时（或集合被导入修改后）从持久化 FAISS docstore 在内存中重建，将开销分摊到会话的其余部分。
+BM25 在进程启动后首次搜索时从持久化 FAISS docstore 按 ``source`` 装入
+``BM25ShardedIndex``；后续 ingest / 删单文档在缓存已热时增量改内存语料，
+避免每次整表重扫 FAISS。
 
 为何用 FAISS 而非 Chroma（Chroma 破坏 stdio 管道）？
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -304,25 +306,16 @@ def _invalidate_bm25(collection: str) -> None:
 
 
 # ---------------------------------------------------------------------
-# BM25 索引 — 委托给 rag.retriever.BM25Index
+# BM25 索引 — 委托给 rag.retriever.BM25ShardedIndex（按 source 分片）
 # ---------------------------------------------------------------------
-from research_agent.rag.retriever import BM25Index as _BM25Index  # noqa: E402
+from research_agent.rag.retriever import BM25ShardedIndex as _BM25Index  # noqa: E402
 
 
-def _build_bm25_for_collection(collection: str) -> _BM25Index:
-    """从 FAISS docstore 中当前所有文档构建 BM25。
-
-    LangChain 的 FAISS 将文档对象保存在 ``store.docstore._dict`` 中，
-    ``faiss_id -> doc_id`` 映射在 ``store.index_to_docstore_id`` 中。
-    遍历 docstore 的值以确定性插入顺序产出文档，这对 BM25 已足够（BM25 索引不需要与 FAISS 的内部编号对齐）。
-    对于典型用户库（10–1000 个分块）速度很快（<200 ms）。对于非常大的集合需要分页，留作 TODO，因为 Agent 很少会处理 >10k 个个人 PDF 分块。
-
-    集合未导入时返回空索引 — 调用者须容忍 ``search`` /``BM25Index.search`` 返回零结果（搜索工具已处理 — FAISS 存储缺失时直接返回 ``quality='low'`` 响应）。
-    """
-    store = _load_faiss_store(collection)
+def _docs_from_faiss_store(store: Any) -> list[dict[str, Any]]:
+    """从 LangChain FAISS store 抽出 ``{content, metadata}`` 列表。"""
     docs: list[dict[str, Any]] = []
     if store is None:
-        return _BM25Index(docs)
+        return docs
     docstore = store.docstore
     for doc_id in store.index_to_docstore_id.values():
         doc = docstore.search(doc_id)
@@ -334,7 +327,24 @@ def _build_bm25_for_collection(collection: str) -> _BM25Index:
                 "metadata": dict(getattr(doc, "metadata", None) or {}),
             }
         )
-    return _BM25Index(docs)
+    return docs
+
+
+def _build_bm25_for_collection(collection: str) -> _BM25Index:
+    """从 FAISS docstore 构建按 ``source`` 分片的 BM25。
+
+    LangChain 的 FAISS 将文档对象保存在 ``store.docstore._dict`` 中，
+    ``faiss_id -> doc_id`` 映射在 ``store.index_to_docstore_id`` 中。
+    遍历 docstore 的值以确定性插入顺序产出文档，这对 BM25 已足够（BM25 索引不需要与 FAISS 的内部编号对齐）。
+
+    典型用户库（10–1000 分块）全量构建 <200 ms。更大集合时：
+    * 检索时对各 PDF 分片分别 ``get_scores`` 再合并 top_k；
+    * ingest / 删单文档走 ``add_docs`` / ``remove_source`` 增量更新，避免整库重建。
+
+    集合未导入时返回空索引 — 调用者须容忍 ``search`` 返回零结果（搜索工具已处理 — FAISS 存储缺失时直接返回 ``quality='low'`` 响应）。
+    """
+    store = _load_faiss_store(collection)
+    return _BM25Index(_docs_from_faiss_store(store))
 
 
 def _get_bm25(collection: str) -> _BM25Index:
@@ -344,6 +354,39 @@ def _get_bm25(collection: str) -> _BM25Index:
         bm25 = _build_bm25_for_collection(collection)
         _BM25_CACHE[collection] = bm25
     return bm25
+
+
+def _bm25_add_docs(collection: str, new_docs: list[dict[str, Any]]) -> None:
+    """若缓存已热，增量追加分片；否则保持冷缓存（下次 search 全量构建）。"""
+    if not new_docs:
+        return
+    bm25 = _BM25_CACHE.get(collection)
+    if bm25 is None:
+        return
+    bm25.add_docs(new_docs)
+
+
+def _bm25_remove_source(collection: str, source: str) -> None:
+    """若缓存已热，按 source 摘除分片；否则 invalidate。"""
+    bm25 = _BM25_CACHE.get(collection)
+    if bm25 is None:
+        return
+    # 与 delete_document 的文件名匹配一致：缓存里存的是 FAISS metadata.source
+    # （可能是完整路径或显示名），这里按精确 source 键删除；匹配失败则整表失效。
+    removed = bm25.remove_source(source)
+    if removed == 0:
+        # 尝试用显示名匹配扁平 docs 中的 source
+        matched_keys = {
+            (d.get("metadata") or {}).get("source", "")
+            for d in bm25.docs
+            if _source_matches((d.get("metadata") or {}).get("source", ""), source)
+        }
+        if not matched_keys:
+            _invalidate_bm25(collection)
+            return
+        for key in matched_keys:
+            if key:
+                bm25.remove_source(str(key))
 
 
 # ---------------------------------------------------------------------
@@ -520,7 +563,8 @@ async def ingest_pdf(
             existing.add_texts(texts=texts, metadatas=metadatas)
             store = existing
         _save_faiss_store(collection, store)
-        _invalidate_bm25(collection)
+        # 缓存已热则只重建本 PDF 分片；冷缓存留给下次 search 全量构建。
+        _bm25_add_docs(collection, chunks)
         _save_ingested_hash(collection, file_hash, display_source)
         return {
             "collection": collection,
@@ -888,7 +932,6 @@ async def delete_document(collection: str, source: str) -> dict:
         )
 
         _FAISS_STORES.pop(collection, None)
-        _invalidate_bm25(collection)
         if keep_texts:
             from langchain_community.vectorstores import FAISS
 
@@ -899,11 +942,13 @@ async def delete_document(collection: str, source: str) -> dict:
                 metadatas=keep_metas,
             )
             _save_faiss_store(collection, new_store)
+            _bm25_remove_source(collection, source)
         else:
             import shutil
 
             if cdir.exists():
                 shutil.rmtree(cdir)
+            _invalidate_bm25(collection)
 
         return {
             "collection": collection,

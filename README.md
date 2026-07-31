@@ -775,7 +775,7 @@ python scripts/benchmark_e2e.py --concurrency 1,5,10 --iterations 30
 ### 待做 / 可选
 
 - 增加更多业务 specialist（如 `bond_expert` 债券）；美国期权/期货与国内衍生品已接入 `us_data` / `derivatives_expert`
-- Polygon / 可配置 `US_QUOTE_PROVIDERS` 行情链（Finnhub 新闻+报价已可选；见 data-sources §5/§8）
+- Polygon 行情源（可选）；`US_QUOTE_PROVIDERS` 已可排序现有四源（见 data-sources §5.3）
 - RAG 专项评估（retriever recall@k、reranker NDCG）
 - knowledge_server 主路径接入 `vector_backend` 抽象层（当前仍直接走 FAISS）
 - 通用联网搜索（可选辅助，**不能**替代行情 API；当前未挂载）

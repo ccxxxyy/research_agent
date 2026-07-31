@@ -187,6 +187,63 @@ def test_quote_via_finnhub_skips_without_key_and_indices():
         http.assert_not_called()
 
 
+def test_parse_us_quote_providers_default_and_custom(monkeypatch: pytest.MonkeyPatch):
+    from research_agent.mcp_servers import us_data_server as mod
+
+    monkeypatch.delenv("US_QUOTE_PROVIDERS", raising=False)
+    assert mod._parse_us_quote_providers() == [
+        "yahoo_chart",
+        "finnhub",
+        "eastmoney",
+        "yfinance",
+    ]
+
+    monkeypatch.setenv("US_QUOTE_PROVIDERS", "eastmoney_us, yfinance, yahoo_chart")
+    assert mod._parse_us_quote_providers() == ["eastmoney", "yfinance", "yahoo_chart"]
+
+    monkeypatch.setenv("US_QUOTE_PROVIDERS", "polygon,finnhub,not_a_source")
+    assert mod._parse_us_quote_providers() == ["finnhub"]
+
+    monkeypatch.setenv("US_QUOTE_PROVIDERS", "polygon")
+    assert mod._parse_us_quote_providers() == list(mod._DEFAULT_US_QUOTE_PROVIDERS)
+
+
+@pytest.mark.asyncio
+async def test_get_quote_respects_us_quote_providers_order(monkeypatch: pytest.MonkeyPatch):
+    from research_agent.mcp_servers import us_data_server as mod
+
+    monkeypatch.setenv("US_QUOTE_PROVIDERS", "finnhub,yahoo_chart")
+    fh = {
+        "price": 210.5,
+        "previous_close": 200.0,
+        "change": 10.5,
+        "change_percent": 5.25,
+        "source": "finnhub",
+    }
+    chart = {
+        "symbol": "AAPL",
+        "price": 200.0,
+        "previous_close": 190.0,
+        "change": 10.0,
+        "change_percent": 5.2632,
+        "source": "yahoo_chart",
+    }
+    with (
+        patch.object(mod, "_quote_via_finnhub", return_value=fh) as fh_fn,
+        patch.object(mod, "_quote_via_yahoo_chart", return_value=chart) as chart_fn,
+        patch.object(mod, "_quote_via_eastmoney_us") as em_fn,
+        patch.object(mod, "_quote_via_yfinance") as yf_fn,
+    ):
+        result = await mod.get_quote("aapl")
+
+    assert result["source"] == "finnhub"
+    assert result["price"] == 210.5
+    fh_fn.assert_called()
+    chart_fn.assert_not_called()
+    em_fn.assert_not_called()
+    yf_fn.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_get_price_history_mocked():
     from research_agent.mcp_servers import us_data_server as mod
