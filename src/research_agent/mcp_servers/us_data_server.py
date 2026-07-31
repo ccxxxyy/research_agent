@@ -836,11 +836,116 @@ def _quote_via_finnhub(symbol: str) -> dict[str, Any] | None:
     }
 
 
+_DEFAULT_US_QUOTE_PROVIDERS: tuple[str, ...] = (
+    "yahoo_chart",
+    "finnhub",
+    "eastmoney",
+    "yfinance",
+)
+_KNOWN_US_QUOTE_PROVIDERS = frozenset(_DEFAULT_US_QUOTE_PROVIDERS)
+# 允许 env 里写 eastmoney_us（与响应 source 字段一致）映射到内部名 eastmoney
+_US_QUOTE_PROVIDER_ALIASES: dict[str, str] = {
+    "eastmoney_us": "eastmoney",
+}
+
+
+def _parse_us_quote_providers() -> list[str]:
+    """解析 ``US_QUOTE_PROVIDERS``（逗号分隔）。
+
+    未设置时默认 ``yahoo_chart,finnhub,eastmoney,yfinance``。
+    未知名 / ``polygon``（未接入）跳过并打日志；解析结果为空则回退默认链。
+    """
+    import os
+
+    raw = (os.environ.get("US_QUOTE_PROVIDERS") or "").strip()
+    if not raw:
+        return list(_DEFAULT_US_QUOTE_PROVIDERS)
+    out: list[str] = []
+    for part in raw.split(","):
+        name = part.strip().lower()
+        if not name:
+            continue
+        name = _US_QUOTE_PROVIDER_ALIASES.get(name, name)
+        if name == "polygon":
+            logger.warning("US_QUOTE_PROVIDERS: polygon is not supported; skipping")
+            continue
+        if name not in _KNOWN_US_QUOTE_PROVIDERS:
+            logger.warning("US_QUOTE_PROVIDERS: unknown provider %r; skipping", name)
+            continue
+        if name not in out:
+            out.append(name)
+    return out or list(_DEFAULT_US_QUOTE_PROVIDERS)
+
+
+def _quote_via_yfinance(symbol: str) -> dict[str, Any] | None:
+    """yfinance 回退报价（可能慢/限流；国内常与 Chart 一同失败）。"""
+    import yfinance as yf
+
+    ticker = _normalize_ticker(symbol)
+    t = yf.Ticker(ticker)
+    price: Any = None
+    prev: Any = None
+    try:
+        fi = t.fast_info
+        if fi is not None:
+            price = _num_or_none(getattr(fi, "last_price", None))
+            prev = _num_or_none(getattr(fi, "previous_close", None)) or _num_or_none(
+                getattr(fi, "regular_market_previous_close", None)
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    if price is None:
+        try:
+            h1 = t.history(period="1d", auto_adjust=False)
+            if h1 is not None and not h1.empty and "Close" in h1.columns:
+                c1 = h1["Close"].dropna()
+                if len(c1) >= 1:
+                    price = float(c1.iloc[-1])
+        except Exception:  # noqa: BLE001
+            pass
+    if prev is None:
+        try:
+            hist = t.history(period="5d", auto_adjust=False)
+            if hist is not None and not hist.empty and "Close" in hist.columns:
+                closes = hist["Close"].dropna()
+                if len(closes) >= 2:
+                    last = float(closes.iloc[-1])
+                    prev_candidate = float(closes.iloc[-2])
+                    if price is not None and abs(last - float(price)) < 1e-6:
+                        prev = prev_candidate
+                    else:
+                        prev = last
+                elif len(closes) == 1 and price is None:
+                    price = float(closes.iloc[-1])
+        except Exception:  # noqa: BLE001
+            pass
+
+    if price is None:
+        return None
+
+    change_pct = None
+    change = None
+    if prev not in (None, 0):
+        try:
+            change = float(price) - float(prev)
+            change_pct = round(change / float(prev) * 100, 4)
+        except (TypeError, ValueError, ZeroDivisionError):
+            change_pct = None
+
+    return {
+        "price": price,
+        "previous_close": prev,
+        "change": round(change, 4) if change is not None else None,
+        "change_percent": change_pct,
+        "source": "yfinance",
+    }
+
+
 def _quote_from_ticker(symbol: str) -> dict[str, Any]:
-    """报价：Yahoo Chart → Finnhub（若已配 Key）→ 东财美股 → yfinance。
+    """报价：按 ``US_QUOTE_PROVIDERS`` 顺序尝试（默认 Chart → Finnhub → 东财 → yfinance）。
 
     国内网络下 Yahoo 常返回 403 / ``Too Many Requests``；东财 ulist 作稳定回退。
-    配置 ``FINNHUB_API_KEY`` 后自动启用 Finnhub 报价（与新闻第二源共用同一 Key）。
+    配置 ``FINNHUB_API_KEY`` 后 Finnhub 报价才会成功（与新闻第二源共用同一 Key）。
     """
     ticker = _normalize_ticker(symbol)
     display = {
@@ -898,23 +1003,29 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
             )
         return out
 
-    chart = _quote_via_yahoo_chart(ticker)
-    if chart and chart.get("price") is not None:
-        return _pack(
-            chart,
-            source_url=f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
-        )
+    def _try_yahoo_chart() -> dict[str, Any] | None:
+        chart = _quote_via_yahoo_chart(ticker)
+        if chart and chart.get("price") is not None:
+            return _pack(
+                chart,
+                source_url=f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
+            )
+        return None
 
-    fh = _quote_via_finnhub(ticker)
-    if fh and fh.get("price") is not None:
-        return _pack(
-            fh,
-            source_url="https://finnhub.io/docs/api/quote",
-            note=f"{as_of_note}；来源 Finnhub quote",
-        )
+    def _try_finnhub() -> dict[str, Any] | None:
+        fh = _quote_via_finnhub(ticker)
+        if fh and fh.get("price") is not None:
+            return _pack(
+                fh,
+                source_url="https://finnhub.io/docs/api/quote",
+                note=f"{as_of_note}；来源 Finnhub quote",
+            )
+        return None
 
-    em = _quote_via_eastmoney_us(ticker)
-    if em and em.get("price") is not None:
+    def _try_eastmoney() -> dict[str, Any] | None:
+        em = _quote_via_eastmoney_us(ticker)
+        if not (em and em.get("price") is not None):
+            return None
         proxy_name = _EM_US_PROXY_LABELS.get(ticker)
         proxy_inst = _EM_US_PROXY_INSTRUMENTS.get(ticker)
         packed = _pack(
@@ -939,62 +1050,41 @@ def _quote_from_ticker(symbol: str) -> dict[str, Any]:
             packed["name_em"] = em["name_cn"]
         return packed
 
-    # 回退 yfinance（可能慢/限流；国内常与 Chart 一同失败）
-    import yfinance as yf
-
-    t = yf.Ticker(ticker)
-    price: Any = None
-    prev: Any = None
-    try:
-        fi = t.fast_info
-        if fi is not None:
-            price = _num_or_none(getattr(fi, "last_price", None))
-            prev = _num_or_none(getattr(fi, "previous_close", None)) or _num_or_none(
-                getattr(fi, "regular_market_previous_close", None)
+    def _try_yfinance() -> dict[str, Any] | None:
+        yf_q = _quote_via_yfinance(ticker)
+        if yf_q and yf_q.get("price") is not None:
+            return _pack(
+                yf_q,
+                source_url=f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
             )
-    except Exception:  # noqa: BLE001
-        pass
-    if price is None:
-        try:
-            h1 = t.history(period="1d", auto_adjust=False)
-            if h1 is not None and not h1.empty and "Close" in h1.columns:
-                c1 = h1["Close"].dropna()
-                if len(c1) >= 1:
-                    price = float(c1.iloc[-1])
-        except Exception:  # noqa: BLE001
-            pass
-    if prev is None:
-        try:
-            hist = t.history(period="5d", auto_adjust=False)
-            if hist is not None and not hist.empty and "Close" in hist.columns:
-                closes = hist["Close"].dropna()
-                if len(closes) >= 2:
-                    last = float(closes.iloc[-1])
-                    prev_candidate = float(closes.iloc[-2])
-                    if price is not None and abs(last - float(price)) < 1e-6:
-                        prev = prev_candidate
-                    else:
-                        prev = last
-                elif len(closes) == 1 and price is None:
-                    price = float(closes.iloc[-1])
-        except Exception:  # noqa: BLE001
-            pass
+        return None
 
-    change_pct = None
-    change = None
-    if price is not None and prev not in (None, 0):
-        try:
-            change = float(price) - float(prev)
-            change_pct = round(change / float(prev) * 100, 4)
-        except (TypeError, ValueError, ZeroDivisionError):
-            change_pct = None
+    providers = {
+        "yahoo_chart": _try_yahoo_chart,
+        "finnhub": _try_finnhub,
+        "eastmoney": _try_eastmoney,
+        "yfinance": _try_yfinance,
+    }
+    last: dict[str, Any] | None = None
+    for name in _parse_us_quote_providers():
+        fn = providers.get(name)
+        if fn is None:
+            continue
+        packed = fn()
+        if packed is not None and packed.get("price") is not None:
+            return packed
+        if packed is not None:
+            last = packed
 
+    # 全部失败：仍返回 yfinance 形状的空价包（与历史行为一致，便于上层展示）
+    if last is not None:
+        return last
     return _pack(
         {
-            "price": price,
-            "previous_close": prev,
-            "change": round(change, 4) if change is not None else None,
-            "change_percent": change_pct,
+            "price": None,
+            "previous_close": None,
+            "change": None,
+            "change_percent": None,
             "source": "yfinance",
         },
         source_url=f"https://finance.yahoo.com/quote/{ticker.lstrip('^')}",
