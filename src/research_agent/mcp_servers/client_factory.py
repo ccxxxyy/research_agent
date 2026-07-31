@@ -112,6 +112,69 @@ def _is_mcp_connection_error(exc: BaseException) -> bool:
     return type(exc).__name__ == "McpError" and "Connection" in text
 
 
+def _compact_sentiment_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """压缩舆情工具返回：保留 digest/评级/资金/聚合，新闻只留少量标题。
+
+    supervisor 使用 ``last_message`` 时，专家只能靠正文把评级带上去；
+    过大 JSON 易导致模型漏读 ``analyst_summary`` 并误写「研报评级未取得」。
+    """
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    slim_items = []
+    for it in items[:5]:
+        if not isinstance(it, dict):
+            continue
+        slim_items.append(
+            {
+                "title": it.get("title"),
+                "sentiment_label": it.get("sentiment_label"),
+                "sentiment_score": it.get("sentiment_score"),
+                "publish_time": it.get("publish_time"),
+            }
+        )
+    return {
+        "llm_digest": data.get("llm_digest"),
+        "symbol": data.get("symbol"),
+        "analyst_summary": data.get("analyst_summary"),
+        "ratings_sample": data.get("ratings_sample"),
+        "fund_flow_summary": data.get("fund_flow_summary"),
+        "aggregate": data.get("aggregate"),
+        "signal_notes": data.get("signal_notes"),
+        "partial_notes": data.get("partial_notes"),
+        "source": data.get("source"),
+        "source_url": data.get("source_url"),
+        "items": slim_items,
+        "note": "完整旁路已压缩；写研报务必用 llm_digest / analyst_summary，禁止写「评级未取得」。",
+    }
+
+
+def _maybe_compact_sentiment_result(name: str, result: Any, *, response_format: str) -> Any:
+    if not name.startswith("sentiment_get_stock_sentiment_report"):
+        return result
+    payload: dict[str, Any] | None = None
+    if isinstance(result, tuple) and len(result) == 2:
+        content, artifact = result
+        if isinstance(artifact, dict) and isinstance(artifact.get("structured_content"), dict):
+            payload = artifact["structured_content"]
+        elif isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except json.JSONDecodeError:
+                payload = None
+        elif isinstance(content, dict):
+            payload = content
+        if not isinstance(payload, dict) or payload.get("error"):
+            return result
+        compact = _compact_sentiment_payload(payload)
+        if response_format == "content_and_artifact":
+            return json.dumps(compact, ensure_ascii=False), {"structured_content": compact}
+        return compact
+    if isinstance(result, dict) and not result.get("error"):
+        return _compact_sentiment_payload(result)
+    return result
+
+
 def _harden_mcp_tool(tool: BaseTool) -> BaseTool:
     """给单个 MCP 工具包一层 Connection-closed 重试；耗尽后返回可被 ToolNode 消费的错误。"""
     if not isinstance(tool, StructuredTool):
@@ -128,25 +191,32 @@ def _harden_mcp_tool(tool: BaseTool) -> BaseTool:
         for attempt in range(1, _MCP_RETRY_ATTEMPTS + 1):
             try:
                 if original_coro is not None:
-                    return await asyncio.wait_for(
+                    result = await asyncio.wait_for(
                         original_coro(*args, **kwargs),
                         timeout=call_timeout,
                     )
-                if original_func is None:
+                elif original_func is None:
                     raise RuntimeError(f"MCP tool {name!r} has no callable")
-                return await asyncio.wait_for(
-                    asyncio.to_thread(original_func, *args, **kwargs),
-                    timeout=call_timeout,
+                else:
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(original_func, *args, **kwargs),
+                        timeout=call_timeout,
+                    )
+                return _maybe_compact_sentiment_result(
+                    name, result, response_format=response_format
                 )
             except TimeoutError:
+                # 超时不重试：sentiment 等工具本身已有内部旁路超时；再连打只会放大成「三次超时」
                 return _harden_error_result(
                     {
                         "error": (
                             f"MCP 工具调用超过 {call_timeout:.0f}s（父进程硬超时）。"
-                            "子进程可能卡在东财/雪球；请重试或缩小 limit。"
+                            "子进程可能卡在东财网络；请缩小 limit 或稍后单次重试（勿连打三次）。"
                         ),
                         "context": name,
                         "timeout_s": call_timeout,
+                        "retry_exhausted": False,
+                        "hint": "同一标的不要立即重试超过 1 次",
                     },
                     response_format=response_format,
                 )
@@ -175,8 +245,12 @@ def _harden_mcp_tool(tool: BaseTool) -> BaseTool:
         for attempt in range(1, _MCP_RETRY_ATTEMPTS + 1):
             try:
                 if original_func is not None:
-                    return original_func(*args, **kwargs)
-                return asyncio.run(_arun(*args, **kwargs))
+                    result = original_func(*args, **kwargs)
+                else:
+                    result = asyncio.run(_arun(*args, **kwargs))
+                return _maybe_compact_sentiment_result(
+                    name, result, response_format=response_format
+                )
             except BaseException as exc:  # noqa: BLE001
                 if not _is_mcp_connection_error(exc):
                     raise

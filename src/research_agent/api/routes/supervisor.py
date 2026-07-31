@@ -381,7 +381,10 @@ async def supervisor_research(
     messages = result.get("messages", [])
     reply = _final_assistant_text(messages)
 
-    # --- 输出安全过滤 ---
+    # --- 评级回收 + 假缺口清洗 + 置信度脚注 + 免责声明 ---
+    reply = _finalize_reply(reply, messages=messages)
+
+    # --- 输出安全过滤（与 stream FINAL 同口径）---
     out_verdict = _prompt_guard.check_output(reply)
     if out_verdict.level == ThreatLevel.BLOCKED:
         logger.warning(
@@ -390,7 +393,7 @@ async def supervisor_research(
             thread_id,
             out_verdict.triggered_rules,
         )
-        reply = "[输出已过滤：检测到敏感信息泄漏风险]"
+        reply = _OUTPUT_FILTERED
 
     if out_verdict.level == ThreatLevel.SUSPICIOUS:
         logger.info(
@@ -398,9 +401,6 @@ async def supervisor_research(
             user_id,
             out_verdict.triggered_rules,
         )
-
-    # --- 清理 markdown + 统一免责声明（去重） ---
-    reply = _finalize_reply(reply)
 
     # --- 长期记忆：保存研究结果 ---
     if user_id != "anonymous" and reply:
@@ -490,11 +490,55 @@ def _clean_markdown(text: str) -> str:
     return result.strip()
 
 
-def _finalize_reply(text: str) -> str:
-    """清洗正文并只附加一条系统免责声明。"""
-    from research_agent.text.disclaimer import with_financial_disclaimer
+def _finalize_reply(
+    text: str,
+    *,
+    run_output_guard: bool = False,
+    messages: list | None = None,
+) -> str:
+    """清洗正文：评级回收 → 假缺口后处理 → 置信度脚注 → 可选 Guard → 免责声明。"""
+    from research_agent.text.rating_recover import (
+        extract_ratings_from_messages,
+        recover_ratings_in_text,
+    )
+    from research_agent.text.reply_pipeline import polish_research_reply
 
-    return with_financial_disclaimer(_clean_markdown(text))
+    cleaned = _clean_markdown(text)
+    if messages:
+        cleaned = recover_ratings_in_text(cleaned, extract_ratings_from_messages(messages))
+    return polish_research_reply(
+        cleaned,
+        apply_disclaimer=True,
+        apply_confidence=True,
+        apply_gap_sanitize=True,
+        run_output_guard=run_output_guard,
+    )
+
+
+async def _messages_from_graph_state(graph, cfg) -> list:
+    """读取检查点里的 messages，供 FINAL 评级回收（裸编译路径无 confidence_gate）。"""
+    try:
+        state = await graph.aget_state(cfg)
+        values = getattr(state, "values", None) or {}
+        msgs = values.get("messages") if isinstance(values, dict) else None
+        return list(msgs) if msgs else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+_OUTPUT_FILTERED = "[输出已过滤：检测到敏感信息泄漏风险]"
+
+
+def _guard_sse_frame_content(text: str, *, blocked: bool) -> tuple[str, bool]:
+    """SSE TOKEN/FINAL 输出 Guard。若已 blocked 则后续帧继续屏蔽。"""
+    if blocked:
+        return "", True
+    from research_agent.text.reply_pipeline import guard_output_text
+
+    safe, is_blocked = guard_output_text(text)
+    if is_blocked:
+        return _OUTPUT_FILTERED, True
+    return safe, False
 
 
 # Supervisor 路由阶段的「请稍候」类过渡话，绝不能当成 FINAL 发给前端。
@@ -777,6 +821,7 @@ async def _research_event_stream(
             final_emitted_local = False
             final_token_buf: list[str] = []
             streaming_final = False
+            _sse_output_blocked = False
             # supervisor 在路由阶段会生成 "好的，..." 之类的过渡文本然后
             # 才发 tool_call（transfer_to_*）。为避免这些无用文本泄露到前端，
             # 先缓冲 supervisor 的 token，仅当确认不是路由消息后再发送。
@@ -784,6 +829,9 @@ async def _research_event_stream(
             _sup_flushing = False
             _sup_flush_threshold = 120
             handoff_count = 0
+            # 流式过程中累积 messages，供 FINAL 评级回收。
+            # 禁止在 astream 循环内 aget_state——会与检查点锁死锁，UI 一直转圈。
+            collected_msgs: list = list(messages)
 
             try:
                 logger.info("Research graph astream starting: thread={}", thread_id)
@@ -844,16 +892,20 @@ async def _research_event_stream(
                         if is_supervisor_level:
                             if _sup_flushing:
                                 streaming_final = True
-                                final_token_buf.append(chunk_text)
-                                await frames.put(
-                                    _format_sse(
-                                        ResearchSupervisorSSEEvent(
-                                            phase=ResearchSupervisorSSEPhase.TOKEN,
-                                            node="supervisor",
-                                            content=chunk_text,
+                                safe_tok, _sse_output_blocked = _guard_sse_frame_content(
+                                    chunk_text, blocked=_sse_output_blocked
+                                )
+                                if safe_tok:
+                                    final_token_buf.append(safe_tok)
+                                    await frames.put(
+                                        _format_sse(
+                                            ResearchSupervisorSSEEvent(
+                                                phase=ResearchSupervisorSSEPhase.TOKEN,
+                                                node="supervisor",
+                                                content=safe_tok,
+                                            )
                                         )
                                     )
-                                )
                             else:
                                 _sup_pending.append(chunk_text)
                                 pending_text = "".join(_sup_pending)
@@ -867,13 +919,18 @@ async def _research_event_stream(
                                     _sup_flushing = True
                                     streaming_final = True
                                     for buffered in _sup_pending:
-                                        final_token_buf.append(buffered)
+                                        safe_tok, _sse_output_blocked = _guard_sse_frame_content(
+                                            buffered, blocked=_sse_output_blocked
+                                        )
+                                        if not safe_tok:
+                                            continue
+                                        final_token_buf.append(safe_tok)
                                         await frames.put(
                                             _format_sse(
                                                 ResearchSupervisorSSEEvent(
                                                     phase=ResearchSupervisorSSEPhase.TOKEN,
                                                     node="supervisor",
-                                                    content=buffered,
+                                                    content=safe_tok,
                                                 )
                                             )
                                         )
@@ -894,6 +951,9 @@ async def _research_event_stream(
                     for node_name, node_update in chunk.items():
                         if not isinstance(node_update, dict):
                             continue
+
+                        for m in node_update.get("messages") or []:
+                            collected_msgs.append(m)
 
                         if specialist_ns:
                             _emit_specialist_internal(
@@ -916,6 +976,7 @@ async def _research_event_stream(
                             _sup_flushing = False
                             streaming_final = False
                             final_token_buf.clear()
+                            _sse_output_blocked = False
                             await frames.put(
                                 _format_sse(
                                     ResearchSupervisorSSEEvent(
@@ -984,7 +1045,10 @@ async def _research_event_stream(
                                 _sup_pending.clear()
 
                             if not streaming_final and not final_token_buf:
-                                clean = _finalize_reply(snippet)
+                                clean = _finalize_reply(snippet, messages=collected_msgs)
+                                clean, _sse_output_blocked = _guard_sse_frame_content(
+                                    clean, blocked=False
+                                )
                                 await frames.put(
                                     _format_sse(
                                         ResearchSupervisorSSEEvent(
@@ -995,9 +1059,15 @@ async def _research_event_stream(
                                         )
                                     )
                                 )
+                                outcome["last_plain_synthesis"] = clean
                             else:
                                 # 免责只出现在 FINAL 一次，避免 TOKEN 再推一条造成重复
-                                clean_final = _finalize_reply("".join(final_token_buf))
+                                clean_final = _finalize_reply(
+                                    "".join(final_token_buf), messages=collected_msgs
+                                )
+                                clean_final, _sse_output_blocked = _guard_sse_frame_content(
+                                    clean_final, blocked=False
+                                )
                                 await frames.put(
                                     _format_sse(
                                         ResearchSupervisorSSEEvent(
@@ -1008,6 +1078,7 @@ async def _research_event_stream(
                                         )
                                     )
                                 )
+                                outcome["last_plain_synthesis"] = clean_final
                             continue
 
                         if not final_emitted_local:
@@ -1056,7 +1127,11 @@ async def _research_event_stream(
                     last = str(outcome.get("last_plain_synthesis") or "").strip()
                     if last and _looks_like_real_synthesis(last):
                         final_emitted_local = True
-                        clean = _finalize_reply(last)
+                        # astream 已结束，此时 aget_state 安全；优先用流式累积
+                        state_msgs = collected_msgs or await _messages_from_graph_state(graph, cfg)
+                        clean = _finalize_reply(last, messages=state_msgs)
+                        clean, _ = _guard_sse_frame_content(clean, blocked=False)
+                        outcome["last_plain_synthesis"] = clean
                         await frames.put(
                             _format_sse(
                                 ResearchSupervisorSSEEvent(
@@ -1236,6 +1311,7 @@ async def supervisor_research_stream(
     cache_hit = await _try_semantic_knowledge_cache(request.query, market=resolution.market.value)
     if cache_hit is not None:
         reply = _finalize_reply(cache_hit.answer)
+        reply, _ = _guard_sse_frame_content(reply, blocked=False)
 
         async def _cached_event_stream() -> AsyncIterator[str]:
             yield _format_sse(
@@ -1404,7 +1480,7 @@ async def supervisor_research_approve(
         config=cfg,
     )
     messages = result.get("messages", [])
-    reply = _final_assistant_text(messages)
+    reply = _finalize_reply(_final_assistant_text(messages), messages=messages)
 
     return ResearchSupervisorResponse(
         reply=reply,
@@ -1440,7 +1516,7 @@ async def supervisor_research_resume(
         config=cfg,
     )
     messages = result.get("messages", [])
-    reply = _final_assistant_text(messages)
+    reply = _finalize_reply(_final_assistant_text(messages), messages=messages)
 
     return ResearchSupervisorResponse(
         reply=reply,

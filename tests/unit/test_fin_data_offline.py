@@ -573,6 +573,23 @@ async def test_industry_board_stocks():
 async def test_individual_fund_flow():
     import research_agent.mcp_servers.fin_data_server as mod
 
+    mock_records = [
+        {"日期": "2024-06-01", "主力净流入-净额": 1e8, "超大单净流入-净额": 5e7},
+        {"日期": "2024-06-02", "主力净流入-净额": -5e7, "超大单净流入-净额": -3e7},
+    ]
+
+    with patch.object(mod, "_fetch_individual_fund_flow_via_curl", return_value=mock_records):
+        result = await mod.get_individual_fund_flow("300750", limit=5)
+    assert "error" not in result
+    assert result["symbol"] == "300750"
+    assert result["count"] == 2
+    assert result["via"] == "push2his_curl"
+
+
+@pytest.mark.asyncio
+async def test_individual_fund_flow_akshare_fallback():
+    import research_agent.mcp_servers.fin_data_server as mod
+
     mock_df = pd.DataFrame(
         {
             "日期": ["2024-06-01", "2024-06-02"],
@@ -581,10 +598,13 @@ async def test_individual_fund_flow():
         }
     )
 
-    with patch("akshare.stock_individual_fund_flow", return_value=mock_df):
+    with (
+        patch.object(mod, "_fetch_individual_fund_flow_via_curl", return_value=[]),
+        patch("akshare.stock_individual_fund_flow", return_value=mock_df),
+    ):
         result = await mod.get_individual_fund_flow("300750", limit=5)
     assert "error" not in result
-    assert result["symbol"] == "300750"
+    assert result["via"] == "akshare"
 
 
 # ── 工具 18: get_hsgt_flow（沪深港通资金流向）─────────────────────────

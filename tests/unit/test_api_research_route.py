@@ -544,7 +544,7 @@ class TestResearchSSE:
         call = spy.save_calls[0]
         assert call["user_id"] == "alice"
         assert call["query"] == "user original query"
-        assert call["summary"] == "persisted synthesis"
+        assert str(call["summary"]).startswith("persisted synthesis")
         assert call["thread_id"] == "tid-stream-1"
 
     @pytest.mark.asyncio
