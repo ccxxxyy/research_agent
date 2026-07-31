@@ -644,20 +644,64 @@ def _is_na(v: Any) -> bool:
         return v is None
 
 
+def _fetch_fund_flow_daykline(symbol: str, *, days: int = 5) -> list[dict[str, Any]]:
+    """东财 push2his 个股资金流（优先 curl 指纹，避免 akshare ConnectionError）。"""
+    code = str(symbol).zfill(6)
+    secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
+    page = max(1, min(int(days), 10))
+    try:
+        data_json = _http_get_json(
+            "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
+            params={
+                "lmt": str(page),
+                "klt": "101",
+                "fields1": "f1,f2,f3,f7",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+                "ut": "b2884a393a59ad64002292a3e90d46a5",
+                "secid": secid,
+            },
+            timeout=10.0,
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    payload = data_json.get("data") if isinstance(data_json, dict) else None
+    klines = (payload or {}).get("klines") if isinstance(payload, dict) else None
+    if not isinstance(klines, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in klines:
+        if not isinstance(line, str):
+            continue
+        parts = line.split(",")
+        if len(parts) < 7:
+            continue
+        try:
+            main_net = float(parts[1])
+        except ValueError:
+            main_net = None
+        rows.append({"日期": parts[0], "主力净流入-净额": main_net})
+    return rows[-page:]
+
+
 def _fetch_fund_flow_signal(symbol: str, *, days: int = 5) -> dict[str, Any]:
     """个股近期资金流向摘要（旁路）。"""
-    import akshare as ak
+    records = _fetch_fund_flow_daykline(symbol, days=days)
+    if not records:
+        # 回退 akshare；东财偶发断连时旁路失败即可
+        try:
+            import akshare as ak
 
-    try:
-        df = ak.stock_individual_fund_flow(stock=symbol, market=_exchange_prefix_simple(symbol))
-    except Exception as exc:  # noqa: BLE001 — 东财偶发断连，旁路失败即可
-        return {"available": False, "reason": f"error:{type(exc).__name__}"}
-    if df is None or getattr(df, "empty", True):
+            df = ak.stock_individual_fund_flow(stock=symbol, market=_exchange_prefix_simple(symbol))
+        except Exception as exc:  # noqa: BLE001
+            return {"available": False, "reason": f"error:{type(exc).__name__}"}
+        if df is None or getattr(df, "empty", True):
+            return {"available": False, "reason": "empty"}
+        tail = df.tail(max(1, min(int(days), 10)))
+        records = []
+        for _, row in tail.iterrows():
+            records.append({str(k): (None if _is_na(v) else v) for k, v in row.items()})
+    if not records:
         return {"available": False, "reason": "empty"}
-    tail = df.tail(max(1, min(int(days), 10)))
-    records: list[dict[str, Any]] = []
-    for _, row in tail.iterrows():
-        records.append({str(k): (None if _is_na(v) else v) for k, v in row.items()})
     latest = records[-1] if records else {}
     main_net = None
     for key in ("主力净流入-净额", "主力净流入净额", "主力净流入"):
@@ -911,11 +955,13 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
     # ── 3. 旁路并行（总耗时约等于最慢一路）
     # 注意：不可用 ``with ThreadPoolExecutor()``（退出时 shutdown(wait=True)），
     # 否则已超时仍在跑的雪球/东财线程会把整份报告堵死数十分钟。
+    # 雪球热榜默认跳过：全量分页极慢且常超时，拖死 MCP 父进程硬超时。
     xueqiu_heat: dict[str, Any] = {
         "on_list": False,
         "skipped": True,
-        "reason": "timeout_or_error",
+        "reason": "disabled_by_default_slow_rank",
     }
+    notes.append("xueqiu_heat_skipped_default")
     eastmoney_keywords: list[dict[str, Any]] = []
     fund_flow: dict[str, Any] = {"available": False, "skipped": True, "reason": "timeout_or_error"}
     analyst: dict[str, Any] = {
@@ -925,27 +971,13 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
         "reports": [],
     }
 
-    pool = ThreadPoolExecutor(max_workers=4)
+    pool = ThreadPoolExecutor(max_workers=3)
     try:
         fut_map = {
-            "xueqiu": pool.submit(_fetch_xueqiu_heat, symbol),
             "keywords": pool.submit(_fetch_hot_keywords, symbol),
             "fund": pool.submit(_fetch_fund_flow_signal, symbol),
             "analyst": pool.submit(_fetch_analyst_reports, symbol),
         }
-        try:
-            got = fut_map["xueqiu"].result(timeout=_XUEQIU_HEAT_TIMEOUT_S)
-            if got is not None:
-                xueqiu_heat = got
-            else:
-                notes.append(f"xueqiu_heat_skipped_timeout>{_XUEQIU_HEAT_TIMEOUT_S:.0f}s")
-        except FuturesTimeout:
-            notes.append(f"xueqiu_heat_skipped_timeout>{_XUEQIU_HEAT_TIMEOUT_S:.0f}s")
-            fut_map["xueqiu"].cancel()
-        except Exception:  # noqa: BLE001
-            notes.append("xueqiu_heat_error")
-            logger.exception("xueqiu_heat failed for %s", symbol)
-
         try:
             got_kw = fut_map["keywords"].result(timeout=_HOT_KEYWORDS_TIMEOUT_S)
             eastmoney_keywords = got_kw if isinstance(got_kw, list) else []
@@ -993,23 +1025,134 @@ def _full_report(symbol: str, limit: int) -> dict[str, Any]:
         analyst=analyst,
     )
 
+    # 评级/旁路摘要置顶、新闻条目瘦身：避免超大 JSON 把 aux_signals.analyst 挤出模型上下文
+    return _pack_sentiment_report(
+        symbol=symbol,
+        source="eastmoney+xueqiu+fund_flow+analyst",
+        timestamp=timestamp,
+        items=items,
+        hot_words=hot_words,
+        topic_clusters=topic_clusters,
+        xueqiu_heat=xueqiu_heat,
+        eastmoney_keywords=eastmoney_keywords,
+        aux_signals=aux_signals,
+        signal_notes=signal_notes,
+        analyst=analyst,
+        fund_flow=fund_flow,
+        partial_notes=notes,
+    )
+
+
+def _slim_news_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """给 LLM 的新闻条目：去掉长摘要/指纹，保留打分与标题。"""
+    slim: list[dict[str, Any]] = []
+    for it in items:
+        slim.append(
+            {
+                "title": it.get("title"),
+                "publish_time": it.get("publish_time"),
+                "source_site": it.get("source_site"),
+                "sentiment_score": it.get("sentiment_score"),
+                "sentiment_label": it.get("sentiment_label"),
+                "news_url": it.get("news_url"),
+            }
+        )
+    return slim
+
+
+def _analyst_summary_block(analyst: dict[str, Any] | None) -> dict[str, Any]:
+    an = analyst if isinstance(analyst, dict) else {}
+    reports = an.get("reports") if isinstance(an.get("reports"), list) else []
+    institutions: list[dict[str, Any]] = []
+    for r in reports[:6]:
+        if not isinstance(r, dict):
+            continue
+        institutions.append(
+            {
+                "institution": r.get("institution"),
+                "rating": r.get("rating"),
+                "date": str(r.get("date") or "")[:10],
+                "title": (str(r.get("title") or ""))[:80],
+            }
+        )
+    return {
+        "used": bool(an.get("available")),
+        "count": an.get("count") or len(institutions),
+        "ratings_sample": list(an.get("ratings_sample") or [])[:8],
+        "institutions_sample": institutions,
+        "source": an.get("source") or "eastmoney_research_report",
+        "source_url": an.get("source_url"),
+    }
+
+
+def _pack_sentiment_report(
+    *,
+    symbol: str,
+    source: str,
+    timestamp: str,
+    items: list[dict[str, Any]],
+    hot_words: list[Any],
+    topic_clusters: Any,
+    xueqiu_heat: dict[str, Any],
+    eastmoney_keywords: list[Any],
+    aux_signals: dict[str, Any],
+    signal_notes: list[str],
+    analyst: dict[str, Any] | None,
+    fund_flow: dict[str, Any] | None,
+    partial_notes: list[str] | None = None,
+) -> dict[str, Any]:
+    """组装舆情报告：旁路摘要在前，新闻明细在后。"""
+    summary = _analyst_summary_block(analyst)
+    ff = fund_flow if isinstance(fund_flow, dict) else {}
+    agg = _aggregate_scores(items)
+    digest_parts: list[str] = []
+    if summary.get("used"):
+        inst = summary.get("institutions_sample") or []
+        bits = []
+        for row in inst[:3]:
+            if isinstance(row, dict) and row.get("institution") and row.get("rating"):
+                bits.append(f"{row['institution']}{row['rating']}")
+        ratings = summary.get("ratings_sample") or []
+        if bits:
+            digest_parts.append("研报评级：" + "、".join(bits))
+        elif ratings:
+            digest_parts.append("研报评级：" + "、".join(str(x) for x in ratings[:4]))
+    else:
+        digest_parts.append("研报评级：本旁路未取得（勿与新闻情绪混淆）")
+    if ff.get("available") and ff.get("latest_main_net_inflow") is not None:
+        digest_parts.append(f"主力净流入最新：{ff.get('latest_main_net_inflow')}")
+    if agg.get("sample_size"):
+        digest_parts.append(
+            f"新闻情绪：均分{agg.get('mean_score')}，样本{agg.get('sample_size')}，标签{agg.get('overall_label')}"
+        )
     out: dict[str, Any] = {
         "symbol": symbol,
-        "source": "eastmoney+xueqiu+fund_flow+analyst",
+        "source": source,
         "source_url": f"https://so.eastmoney.com/news/s?keyword={symbol}",
         "model_version": _MODEL_VERSION,
         "timestamp": timestamp,
-        "items": items,
-        "aggregate": _aggregate_scores(items),
-        "hot_words": hot_words,
+        # 首字段：给 LLM 一眼可读的中文摘要，避免漏读嵌套 JSON
+        "llm_digest": "；".join(digest_parts),
+        # 顶层捷径：主管/专家不必钻 aux_signals 才能写评级
+        "analyst_summary": summary,
+        "ratings_sample": summary.get("ratings_sample") or [],
+        "fund_flow_summary": {
+            "used": bool(ff.get("available")),
+            "latest_main_net_inflow": ff.get("latest_main_net_inflow"),
+            "days": ff.get("days"),
+            "source_url": ff.get("source_url"),
+        },
+        "signal_notes": signal_notes,
+        "aux_signals": aux_signals,
+        "aggregate": agg,
+        "hot_words": hot_words[:12],
         "topic_clusters": topic_clusters,
         "xueqiu_heat": xueqiu_heat,
-        "eastmoney_trending_keywords": eastmoney_keywords,
-        "aux_signals": aux_signals,
-        "signal_notes": signal_notes,
+        "eastmoney_trending_keywords": (eastmoney_keywords or [])[:8],
+        "items": _slim_news_items(items),
     }
-    if notes:
-        out["partial_notes"] = notes
+    if partial_notes:
+        out["partial_notes"] = partial_notes
     return out
 
 
@@ -1047,24 +1190,23 @@ def _news_only_report(symbol: str, limit: int) -> dict[str, Any]:
         fund_flow=empty_ff,
         analyst=empty_an,
     )
-    return {
-        "symbol": symbol,
-        "source": "eastmoney_news_only_fallback",
-        "source_url": f"https://so.eastmoney.com/news/s?keyword={symbol}",
-        "model_version": _MODEL_VERSION,
-        "timestamp": timestamp,
-        "items": items,
-        "aggregate": _aggregate_scores(items),
-        "hot_words": _extract_keywords_from_texts(all_texts) if all_texts else [],
-        "topic_clusters": _build_topic_clusters(items),
-        "xueqiu_heat": empty_heat,
-        "eastmoney_trending_keywords": [],
-        "aux_signals": aux_signals,
-        "signal_notes": signal_notes,
-        "partial_notes": [
+    return _pack_sentiment_report(
+        symbol=symbol,
+        source="eastmoney_news_only_fallback",
+        timestamp=timestamp,
+        items=items,
+        hot_words=_extract_keywords_from_texts(all_texts) if all_texts else [],
+        topic_clusters=_build_topic_clusters(items),
+        xueqiu_heat=empty_heat,
+        eastmoney_keywords=[],
+        aux_signals=aux_signals,
+        signal_notes=signal_notes,
+        analyst=empty_an,
+        fund_flow=empty_ff,
+        partial_notes=[
             f"full_report_outer_timeout>{_FULL_REPORT_TIMEOUT_S:.0f}s_fallback_news_only"
         ],
-    }
+    )
 
 
 @mcp.tool()
@@ -1076,16 +1218,13 @@ async def get_stock_sentiment_report(symbol: str, limit: int = 20) -> dict:
     雪球/热搜/资金流/研报为旁路：超时跳过并在 ``partial_notes`` 说明，仍返回新闻打分主结果。
     旁路有数据时 ``signal_notes`` / ``aux_signals.*.what`` 会说明该信号含义。
 
-    返回内容：
-    - ``items``: 逐条新闻（标题/摘要/时间/分数/标签/关键词/指纹）
-    - ``aggregate``: 聚合统计（正负比例/均分/样本量/总体标签）
-    - ``hot_words``: 高频讨论词 top-15（词 + 出现次数 + 情感权重）
-    - ``topic_clusters``: 按正/负/中性分组的代表性标题（各 3 条）
-    - ``xueqiu_heat``: 雪球讨论热度（排名/讨论量，如在榜；超时则 skipped）
-    - ``eastmoney_trending_keywords``: 东财热搜关联词 top-10
-    - ``aux_signals``: 社交 / 资金盘面 / 分析师旁路（含 ``what`` 说明）
-    - ``signal_notes``: 本次实际用到的旁路白话提示
-    - 审计：model_version / timestamp / text_fingerprint
+    返回内容（旁路摘要在前，新闻明细在后）：
+    - ``analyst_summary`` / ``ratings_sample``: 东财研报评级捷径（机构名+评级；**无目标价**）
+    - ``fund_flow_summary``: 主力净流入捷径
+    - ``signal_notes`` / ``aux_signals``: 旁路说明
+    - ``aggregate`` / ``items``: 新闻情绪（条目已瘦身，仅标题+分数）
+    - ``hot_words`` / ``topic_clusters`` / ``xueqiu_heat`` / ``eastmoney_trending_keywords``
+    - 审计：model_version / timestamp
 
     Args:
         symbol: 6 位 A 股代码，如 ``"300750"``。

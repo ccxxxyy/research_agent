@@ -447,12 +447,12 @@ MCP 解决 **Agent → Tool**（supervisor 调 fin_data/code 等工具）；A2A 
     - **Prompt 注入**：用户在问题里伪装成系统指令（如 "ignore previous instructions"），试图覆盖 supervisor 的系统提示词或泄漏内部配置。
     - **输入规则**（正则，微秒级）：指令覆盖、角色劫持、系统提示词提取、越狱模板（DAN/developer mode）、间接注入标记、编码绕过等 → 命中则 `ThreatLevel.BLOCKED`，返回 HTTP 400。
     - **输出规则**（正则，LLM 返回后、HTTP 响应前）：系统提示词泄漏、API Key/密码泄漏、内部路径泄漏 → 命中则替换为 `[输出已过滤：检测到敏感信息泄漏风险]`。
-    - **覆盖端点**：`/chat`、`/research` 的输入+输出均检测；`/research/stream` 仅入口输入检测（SSE 流逐帧过滤待实现）。
+    - **覆盖端点**：`/chat`、`/research` 的输入+输出均检测；`/research/stream` 对 `TOKEN`/`FINAL` 帧做输出 Guard（与同步同口径）。
     - 故事：「OWASP Agentic AI Top 10 第一条就是 Prompt Injection —— 金融场景不能让恶意用户把 AI 变成'无限制模式'。」
 
-11. **专家输出置信度校验**（`agents/confidence.py`，可选接入 supervisor）
-    - 规则层：幻觉模式（编造引用、过度推测）、数值合理性（PE/ROE/股价范围）、与源文本数字一致性。
-    - 提供 `build_llm_validation_prompt()` 供 LIGHT 模型做深度语义校验。
+11. **专家输出置信度校验**（`agents/confidence.py` + `graph/confidence_gate.py`）
+    - 规则层：幻觉模式、数值合理性、与源文本一致性；终稿经 `ConfidenceValidator` 打分。
+    - HITL / reflection 包装路径在图节点内门控；裸编译路径由 API `_finalize_reply` / `polish_research_reply` 统一追加可信度脚注。
     - 返回 `ConfidenceVerdict(score, level, recommendation)`：accept / downweight / reject。
 
 ---

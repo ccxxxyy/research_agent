@@ -226,7 +226,7 @@ class TestApproveRoute:
 
         assert r.status_code == 200
         body = r.json()
-        assert body["reply"] == "final after approval"
+        assert body["reply"].startswith("final after approval")
         assert body["thread_id"] == "test-thread-1"
 
     @pytest.mark.asyncio
@@ -244,7 +244,7 @@ class TestApproveRoute:
             )
 
         assert r.status_code == 200
-        assert r.json()["reply"] == "revised answer"
+        assert r.json()["reply"].startswith("revised answer")
 
     @pytest.mark.asyncio
     async def test_approve_409_when_not_interrupted(self) -> None:
@@ -283,7 +283,7 @@ class TestResumeRoute:
 
         assert r.status_code == 200
         body = r.json()
-        assert body["reply"] == "revised with feedback"
+        assert body["reply"].startswith("revised with feedback")
         assert body["thread_id"] == "thread-r1"
 
     @pytest.mark.asyncio
@@ -301,7 +301,7 @@ class TestResumeRoute:
             )
 
         assert r.status_code == 200
-        assert r.json()["reply"] == "approved via resume"
+        assert r.json()["reply"].startswith("approved via resume")
 
     @pytest.mark.asyncio
     async def test_resume_409_when_not_interrupted(self) -> None:

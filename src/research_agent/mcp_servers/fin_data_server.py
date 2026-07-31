@@ -1652,6 +1652,101 @@ async def get_industry_board(board_name: str = "", limit: int = 20) -> dict:
 # =====================================================================
 # 工具 17: 个股资金流向
 # =====================================================================
+def _em_secid(symbol: str) -> str:
+    """东财 secid：沪市 ``1.xxxxxx``，其余 ``0.xxxxxx``。"""
+    code = str(symbol).zfill(6)
+    return f"1.{code}" if code.startswith("6") else f"0.{code}"
+
+
+def _parse_fflow_daykline(klines: list[Any], *, limit: int) -> list[dict[str, Any]]:
+    """解析 push2his ``fflow/daykline`` 的 klines 字符串行。"""
+    rows: list[dict[str, Any]] = []
+    for line in klines:
+        if not isinstance(line, str):
+            continue
+        parts = line.split(",")
+        if len(parts) < 7:
+            continue
+
+        def _num(idx: int, _parts: list[str] = parts) -> float | None:
+            try:
+                return float(_parts[idx])
+            except (ValueError, IndexError):
+                return None
+
+        rows.append(
+            {
+                "日期": parts[0],
+                "主力净流入-净额": _num(1),
+                "小单净流入-净额": _num(2),
+                "中单净流入-净额": _num(3),
+                "大单净流入-净额": _num(4),
+                "超大单净流入-净额": _num(5),
+                "主力净流入-净占比": _num(6),
+                "小单净流入-净占比": _num(7) if len(parts) > 7 else None,
+                "中单净流入-净占比": _num(8) if len(parts) > 8 else None,
+                "大单净流入-净占比": _num(9) if len(parts) > 9 else None,
+                "超大单净流入-净占比": _num(10) if len(parts) > 10 else None,
+                "收盘价": _num(11) if len(parts) > 11 else None,
+                "涨跌幅": _num(12) if len(parts) > 12 else None,
+            }
+        )
+    if not rows:
+        return []
+    return rows[-max(1, min(int(limit), 60)) :]
+
+
+def _fetch_individual_fund_flow_via_curl(symbol: str, *, limit: int) -> list[dict[str, Any]]:
+    """直连东财 push2his 个股资金流（curl_cffi → requests，绕过 akshare 断连）。"""
+    from urllib.parse import urlencode
+
+    page = max(1, min(int(limit), 60))
+    qs = urlencode(
+        {
+            "lmt": str(page),
+            "klt": "101",
+            "fields1": "f1,f2,f3,f7",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+            "ut": "b2884a393a59ad64002292a3e90d46a5",
+            "secid": _em_secid(symbol),
+        }
+    )
+    url = f"https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?{qs}"
+
+    data_json: dict[str, Any] | None = None
+    for _ in range(2):
+        data_json = _curl_get_json(url, timeout=12)
+        if isinstance(data_json, dict) and isinstance(data_json.get("data"), dict):
+            break
+        data_json = None
+    if data_json is None:
+        try:
+            resp = _requests.get(
+                url,
+                timeout=12,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://data.eastmoney.com/",
+                },
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            if isinstance(payload, dict):
+                data_json = payload
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("fflow daykline requests fallback failed: %s", exc)
+
+    if not isinstance(data_json, dict):
+        return []
+    payload = data_json.get("data")
+    if not isinstance(payload, dict):
+        return []
+    klines = payload.get("klines") or []
+    if not isinstance(klines, list):
+        return []
+    return _parse_fflow_daykline(klines, limit=page)
+
+
 @mcp.tool()
 @cached_tool(ttl=TTL_MEDIUM, namespace="fin")
 async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
@@ -1667,6 +1762,17 @@ async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
     limit = max(1, min(limit, 60))
 
     def _call() -> dict[str, Any]:
+        records = _fetch_individual_fund_flow_via_curl(symbol, limit=limit)
+        if records:
+            return {
+                "symbol": symbol,
+                "records": records,
+                "count": len(records),
+                "source": "eastmoney",
+                "source_url": f"https://data.eastmoney.com/zjlx/{symbol}.html",
+                "via": "push2his_curl",
+            }
+
         import akshare as ak
 
         df = ak.stock_individual_fund_flow(stock=symbol, market=_exchange_prefix(symbol))
@@ -1676,10 +1782,17 @@ async def get_individual_fund_flow(symbol: str, limit: int = 20) -> dict:
             "records": _df_to_records(df),
             "count": len(df),
             "source": "eastmoney",
+            "source_url": f"https://data.eastmoney.com/zjlx/{symbol}.html",
+            "via": "akshare",
         }
 
     try:
-        return await asyncio.to_thread(_call)
+        return await asyncio.wait_for(asyncio.to_thread(_call), timeout=25.0)
+    except TimeoutError:
+        return {
+            "error": "TimeoutError: 个股资金流向超过 25s",
+            "context": f"get_individual_fund_flow(symbol={symbol!r})",
+        }
     except Exception as e:
         return _fmt_error(e, context=f"get_individual_fund_flow(symbol={symbol!r})")
 
@@ -1698,6 +1811,9 @@ def _fetch_hsgt_hist_page(*, mutual_type: str, limit: int) -> list[dict[str, Any
 
     勿用 ``ak.stock_hsgt_hist_em``——它会按 TotalPage 翻完全部历史（十余页），
     轻易超时，并诱发模型编造「北向个股流向接口空」之类假缺口。
+
+    字段说明（2026 东财）：北向汇总（MUTUAL_TYPE=005）的 ``FUND_INFLOW``/
+    ``NET_DEAL_AMT`` 常为 null，净买额在 ``DEAL_AMT``；南向仍可能填 ``NET_DEAL_AMT``。
     """
     from urllib.parse import urlencode
 
@@ -1733,17 +1849,28 @@ def _fetch_hsgt_hist_page(*, mutual_type: str, limit: int) -> list[dict[str, Any
     for item in rows[:page_size]:
         if not isinstance(item, dict):
             continue
+        net = item.get("NET_DEAL_AMT")
+        if net is None:
+            net = item.get("DEAL_AMT")
+        inflow = item.get("FUND_INFLOW")
+        if inflow is None:
+            inflow = net
+        quota = item.get("QUOTA_BALANCE")
+        if quota is None:
+            quota = item.get("QUOTA_BALANCE_TEXT")
         out.append(
             {
                 "日期": item.get("TRADE_DATE"),
-                "当日资金流入": item.get("FUND_INFLOW"),
-                "当日成交净买额": item.get("NET_DEAL_AMT"),
+                "当日资金流入": inflow,
+                "当日成交净买额": net,
                 "买入成交额": item.get("BUY_AMT"),
                 "卖出成交额": item.get("SELL_AMT"),
                 "领涨股": item.get("LEAD_STOCKS_NAME"),
                 "领涨股-代码": item.get("LEAD_STOCKS_CODE"),
                 "领涨股-涨跌幅": item.get("LS_CHANGE_RATE"),
-                "额度余额": item.get("QUOTA_BALANCE"),
+                "额度余额": quota,
+                "指数收盘": item.get("INDEX_CLOSE_PRICE"),
+                "指数涨跌幅": item.get("INDEX_CHANGE_RATE"),
             }
         )
     return out
@@ -1780,6 +1907,7 @@ async def get_hsgt_flow(direction: str = "north", limit: int = 20) -> dict:
             "count": len(records),
             "source": "eastmoney",
             "source_url": "https://data.eastmoney.com/hsgt/index.html",
+            "unit_note": "金额字段多为东财口径（常见为万元）；北向汇总优先取 DEAL_AMT 作为净买额。",
             "note": "市场级沪深港通资金；非单只股票的北向当日成交。",
         }
 

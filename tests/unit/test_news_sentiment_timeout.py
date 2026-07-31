@@ -70,6 +70,9 @@ def test_full_report_skips_slow_xueqiu(monkeypatch) -> None:
     assert out["aux_signals"]["social"]["used"] is True  # 热搜词命中
     assert out["aux_signals"]["fund_flow"]["used"] is True
     assert out["aux_signals"]["analyst"]["used"] is True
+    assert out["analyst_summary"]["used"] is True
+    assert out["ratings_sample"] == ["买入"]
+    assert "content_preview" not in (out["items"][0] if out["items"] else {})
     assert out["signal_notes"]
     assert any("社交" in n for n in out["signal_notes"])
     assert any("资金" in n for n in out["signal_notes"])
@@ -240,6 +243,7 @@ def test_fetch_analyst_reports_uses_single_page(monkeypatch) -> None:
 def test_fetch_fund_flow_signal_swallows_connection_error(monkeypatch) -> None:
     import types
 
+    monkeypatch.setattr(ns, "_fetch_fund_flow_daykline", lambda *_a, **_k: [])
     fake_ak = types.SimpleNamespace(
         stock_individual_fund_flow=lambda **_kw: (_ for _ in ()).throw(
             ConnectionError("RemoteDisconnected")
@@ -249,3 +253,16 @@ def test_fetch_fund_flow_signal_swallows_connection_error(monkeypatch) -> None:
     out = ns._fetch_fund_flow_signal("600885")
     assert out["available"] is False
     assert "ConnectionError" in out["reason"]
+
+
+def test_fetch_fund_flow_signal_prefers_daykline(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ns,
+        "_fetch_fund_flow_daykline",
+        lambda *_a, **_k: [
+            {"日期": "2026-07-30", "主力净流入-净额": -1.2e8},
+        ],
+    )
+    out = ns._fetch_fund_flow_signal("600885")
+    assert out["available"] is True
+    assert out["latest_main_net_inflow"] == -1.2e8

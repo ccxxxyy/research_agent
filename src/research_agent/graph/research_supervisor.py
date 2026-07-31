@@ -56,6 +56,7 @@ from research_agent.agents.specialists import (
     build_us_news_expert,
     build_us_sentiment_expert,
 )
+from research_agent.graph.confidence_gate import apply_confidence_gate_to_messages
 from research_agent.graph.reflection import build_reflection_subgraph
 from research_agent.graph.research_briefs import RESEARCH_BRIEF_TEMPLATE
 from research_agent.llm.tier import ModelTier
@@ -448,6 +449,7 @@ E. **别名表不是门禁**：``[MarketResolution].symbols`` 只列解析器认
 F. **无依据不下单话术**：若最终回答出现买入/卖出/加仓/目标价等，却没有对应工具数字与 ``source_url`` 依据行，即为错误——删掉操作句，改为数据观察或「数据不足」。
 G. **专家结果缺失时禁止脑补**：仅当用户**明确要求**舆情/情绪打分，而舆情专家超时、空结果或未返回均分/样本量时，
    最终回答须写明「本轮未取得舆情量化结果」并建议重试；**禁止**用盘面特征脑补正负面叙事、关键词命中或均分。
+   若工具/专家已返回 ``llm_digest`` / ``ratings_sample`` / 机构买入评级：**禁止**在表格或正文写「研报评级未取得」。
    用户未要求舆情时：**不要**为此去调舆情专家，也**不要**在「数据缺口」写「未调用 sentiment_expert」「新闻情绪面待补充」。
 H. **禁止外链终端安利**：工具空结果时只写本系统已尝试的来源（东财/巨潮/Yahoo 等）失败；
    **禁止**写「建议通过万得/同花顺/Bloomberg 补充」。
@@ -570,7 +572,8 @@ def _wrap_with_hitl_only(
         result = await supervisor.ainvoke(
             {"messages": state.get("messages", [])},
         )
-        return {"messages": result.get("messages", [])}
+        msgs = apply_confidence_gate_to_messages(result.get("messages", []))
+        return {"messages": msgs}
 
     parent: StateGraph = StateGraph(_ResearchState)
     parent.add_node("supervisor", supervisor_node)
@@ -616,11 +619,12 @@ def _wrap_with_reflection(
         return {"messages": result.get("messages", [])}
 
     async def reflection_node(state: _ResearchState) -> dict[str, list[BaseMessage]]:
-        """在 supervisor 输出上运行反思子图。"""
+        """在 supervisor 输出上运行反思子图，再做置信度门控。"""
         result = await reflection.ainvoke(
             {"messages": state.get("messages", [])},
         )
-        return {"messages": result.get("messages", [])}
+        msgs = apply_confidence_gate_to_messages(result.get("messages", []))
+        return {"messages": msgs}
 
     parent: StateGraph = StateGraph(_ResearchState)
     parent.add_node("supervisor", supervisor_node)
@@ -800,6 +804,8 @@ def build_research_supervisor(
 
     # 启用反思时，父（包装器）图持有 checkpointer —— 内部 supervisor 无状态编译，避免两层争夺同一 thread_id。
     # 反思关闭时，supervisor 自身持有 checkpointer，行为与之前完全相同。
+    # 置信度门控：HITL / reflection 包装路径在节点内调用；裸编译路径由 API ``_finalize_reply`` 统一抛光
+    # （避免再包一层 ainvoke 打断 SSE TOKEN 流）。
     if enable_reflection:
         inner = workflow.compile()
         compiled = _wrap_with_reflection(
@@ -817,7 +823,7 @@ def build_research_supervisor(
         compiled = workflow.compile(checkpointer=checkpointer)
 
     logger.info(
-        "Research supervisor compiled: tier={} specialists={} reflection={} hitl={}",
+        "Research supervisor compiled: tier={} specialists={} reflection={} hitl={} confidence_gate=on",
         supervisor_tier.value,
         roster,
         enable_reflection,
@@ -843,4 +849,5 @@ __all__ = [
     "SUPERVISOR_PROMPT_KNOWLEDGE",
     "SUPERVISOR_PROMPT_SENTIMENT",
     "SUPERVISOR_PROMPT_RULES",
+    "apply_confidence_gate_to_messages",
 ]

@@ -20,14 +20,16 @@ def test_fetch_hsgt_hist_page_single_request(monkeypatch) -> None:
                 "data": [
                     {
                         "TRADE_DATE": "2026-07-30",
-                        "FUND_INFLOW": 1.2,
-                        "NET_DEAL_AMT": 3.4,
-                        "BUY_AMT": 5,
-                        "SELL_AMT": 1.6,
+                        "FUND_INFLOW": None,
+                        "NET_DEAL_AMT": None,
+                        "DEAL_AMT": 363460.14,
+                        "BUY_AMT": None,
+                        "SELL_AMT": None,
                         "LEAD_STOCKS_NAME": "测试",
                         "LEAD_STOCKS_CODE": "600000",
                         "LS_CHANGE_RATE": 1.0,
-                        "QUOTA_BALANCE": 100,
+                        "QUOTA_BALANCE": None,
+                        "QUOTA_BALANCE_TEXT": "额度用完",
                     }
                 ]
             }
@@ -39,6 +41,9 @@ def test_fetch_hsgt_hist_page_single_request(monkeypatch) -> None:
     assert len(rows) == 1
     assert rows[0]["日期"] == "2026-07-30"
     assert rows[0]["领涨股"] == "测试"
+    assert rows[0]["当日成交净买额"] == 363460.14
+    assert rows[0]["当日资金流入"] == 363460.14
+    assert rows[0]["额度余额"] == "额度用完"
 
 
 @pytest.mark.asyncio
