@@ -107,6 +107,103 @@ class BM25Index:
         return ranked[:top_k]
 
 
+def _bm25_source_key(doc: dict[str, Any]) -> str:
+    """分片键：PDF ``metadata.source``，缺失时归入 ``_unknown``。"""
+    meta = doc.get("metadata") or {}
+    src = meta.get("source")
+    if src is None or str(src).strip() == "":
+        return "_unknown"
+    return str(src)
+
+
+class BM25ShardedIndex:
+    """按 ``metadata.source`` 管理的 BM25 索引，对外 API 与 :class:`BM25Index` 同形。
+
+    * ``docs`` — 扁平文档列表（全局下标）
+    * ``search(query, top_k)`` — 与单库 ``BM25Index`` 相同的全局 IDF 检索
+    * ``add_docs`` / ``remove_source`` — 按 PDF source 增量改内存语料后重建 Okapi
+
+    分片的价值在**生命周期**而非检索打分：ingest / 删单文档时只改内存中的
+    ``docs`` 并重建 Okapi，无需重新遍历 FAISS docstore。检索始终用全局语料
+    统计量，避免「每 PDF 一个小分片 → IDF 退化、分数全 0」的问题。
+
+    当 ``len(docs) >= shard_search_threshold`` 且 source 数 ≥ 2 时，``search``
+    改为各 source 分片检索再按分数合并（大库降低单次 ``get_scores`` 峰值）；
+    小库仍走全局索引以保证质量。
+    """
+
+    _tokenize = BM25Index._tokenize
+    # 低于此分块数时强制全局检索（小库 IDF 更稳）
+    _SHARD_SEARCH_THRESHOLD = 200
+
+    def __init__(self, docs: list[dict[str, Any]]) -> None:
+        self.docs: list[dict[str, Any]] = list(docs)
+        self._is_empty: bool = not self.docs
+        # source -> 该 source 在 docs 中的全局下标（供大库分片检索）
+        self._shard_indices: dict[str, list[int]] = {}
+        self._shard_indexes: dict[str, BM25Index] = {}
+        self._flat: BM25Index = BM25Index([])
+        self._reindex()
+
+    def _reindex(self) -> None:
+        self._is_empty = not self.docs
+        self._flat = BM25Index(self.docs)
+        by_source: dict[str, list[int]] = {}
+        for i, doc in enumerate(self.docs):
+            by_source.setdefault(_bm25_source_key(doc), []).append(i)
+        self._shard_indices = by_source
+        self._shard_indexes = {
+            key: BM25Index([self.docs[i] for i in idxs]) for key, idxs in by_source.items()
+        }
+
+    @property
+    def _shards(self) -> dict[str, BM25Index]:
+        """测试与调试用：source → 分片索引。"""
+        return self._shard_indexes
+
+    def add_docs(self, new_docs: list[dict[str, Any]]) -> None:
+        """追加文档并重建内存 BM25（不读 FAISS）。"""
+        if not new_docs:
+            return
+        self.docs.extend(new_docs)
+        self._reindex()
+
+    def remove_source(self, source: str) -> int:
+        """移除某 source 的全部分块并重建。返回移除条数。"""
+        if not source:
+            return 0
+        key = source if source.strip() else "_unknown"
+        before = len(self.docs)
+        self.docs = [d for d in self.docs if _bm25_source_key(d) != key]
+        removed = before - len(self.docs)
+        if removed:
+            self._reindex()
+        else:
+            self._is_empty = not self.docs
+        return removed
+
+    def search(self, query: str, top_k: int) -> list[tuple[int, float]]:
+        """返回 ``[(global_index, bm25_score)]``，与 :class:`BM25Index` 同形。"""
+        if self._is_empty or top_k < 1:
+            return []
+        use_sharded = (
+            len(self.docs) >= self._SHARD_SEARCH_THRESHOLD and len(self._shard_indexes) >= 2
+        )
+        if not use_sharded:
+            return self._flat.search(query, top_k=top_k)
+
+        merged: list[tuple[int, float]] = []
+        for key, shard in self._shard_indexes.items():
+            if shard._is_empty:
+                continue
+            offsets = self._shard_indices[key]
+            for local_idx, score in shard.search(query, top_k=top_k):
+                if 0 <= local_idx < len(offsets):
+                    merged.append((offsets[local_idx], float(score)))
+        merged.sort(key=lambda x: x[1], reverse=True)
+        return merged[:top_k]
+
+
 def hybrid_rrf_fuse(
     vector_hits: list[tuple[dict[str, Any], float]],
     bm25_hits: list[tuple[int, float, dict[str, Any]]],
@@ -185,4 +282,4 @@ def hybrid_rrf_fuse(
     return sorted(fused.values(), key=lambda r: r["rrf_score"], reverse=True)
 
 
-__all__ = ["BM25Index", "hybrid_rrf_fuse"]
+__all__ = ["BM25Index", "BM25ShardedIndex", "hybrid_rrf_fuse"]

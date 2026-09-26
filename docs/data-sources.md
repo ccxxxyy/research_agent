@@ -311,8 +311,8 @@ uv run pytest tests/unit/test_us_news_pipeline.py tests/unit/test_us_data_offlin
 | 接入形态 | Chart → Finnhub `/quote` → 东财 → yfinance | Yahoo Search + Finnhub company-news | 正式 REST + 多 Key + 配额编排 |
 | 主备含义 | 配 Key 即启用 Finnhub 报价；无 Key 行为不变 | 新闻异源已可选 Finnhub | 报价/历史/期权等整链可切换供应商顺序 |
 
-「真·多源」在**行情全链**（含历史 K 线、期权链、可配置 `US_QUOTE_PROVIDERS`）上仍可继续扩展。  
-**新闻 + 实时报价**已可共用 `FINNHUB_API_KEY` 即用；**Polygon 与可配置 provider 链**仍属后续（见 §5.3）。
+「真·多源」在**行情全链**（含历史 K 线、期权链）上仍可继续扩展。  
+**新闻 + 实时报价**已可共用 `FINNHUB_API_KEY`；现有四源顺序可由 `US_QUOTE_PROVIDERS` 配置（见 §5.3）；**Polygon** 仍属后续。
 
 ### 5.2 是否一定更准确？
 
@@ -329,25 +329,24 @@ uv run pytest tests/unit/test_us_news_pipeline.py tests/unit/test_us_data_offlin
 因此：引入 Finnhub 等，主要价值是 **稳定性、配额、延迟、字段完整性与可运维的主备**，而不是默认「数字一定比 Yahoo 更对」。  
 日线研究 PoC 用 Yahoo 通常够用；要做生产级实时或强 SLA，再上多源更合适。
 
-### 5.3 若未来接入**可配置**行情多源（尚未实现）
+### 5.3 可配置报价链 `US_QUOTE_PROVIDERS`
 
-Finnhub 报价已按固定顺序挂入（Chart → Finnhub → 东财 → yfinance）；下表是**可配置 provider 链 + Polygon** 的目标形态（当前仓库**无** `US_QUOTE_PROVIDERS`）：
+`get_quote` 按环境变量顺序尝试现有四源（**不含 Polygon**）：
 
 ```
 get_quote(symbol)
-  → provider_chain: [polygon, finnhub, yahoo_chart, yfinance]
-  → 第一个成功且字段完整者胜出
-  → 响应带 source / as_of / latency
+  → provider_chain from US_QUOTE_PROVIDERS
+  → 默认: yahoo_chart → finnhub → eastmoney → yfinance
+  → 第一个返回有效 price 者胜出（响应带 source）
 ```
-
-配置示例（示意）：
 
 ```env
-US_QUOTE_PROVIDERS=polygon,finnhub,yahoo_chart
-POLYGON_API_KEY=...
-# FINNHUB_API_KEY 已用于新闻 + 报价第二源；未来可参与可排序链
-FINNHUB_API_KEY=...
+# 可选；未设置则用默认顺序
+US_QUOTE_PROVIDERS=yahoo_chart,finnhub,eastmoney,yfinance
+FINNHUB_API_KEY=...   # finnhub 出现在链中时仍需 Key，否则自动跳过
 ```
+
+合法名：`yahoo_chart` / `finnhub` / `eastmoney`（别名 `eastmoney_us`）/ `yfinance`。未知名与 `polygon` 会被忽略并打日志。
 
 ---
 
@@ -368,7 +367,7 @@ FINNHUB_API_KEY=...
 
 | 主题 | 路径 |
 |------|------|
-| 美股报价主备 | `mcp_servers/us_data_server.py`（Chart → 可选 Finnhub → 东财 → yfinance） |
+| 美股报价主备 | `mcp_servers/us_data_server.py`（`US_QUOTE_PROVIDERS`，默认 Chart → Finnhub → 东财 → yfinance） |
 | 国内期货/期权 | `mcp_servers/derivatives_server.py` |
 | 看板扩展（期货/ETF/QDII/共同基金） | `market/dashboard_extras.py` + `main.py` `/api/dashboard` |
 | 看板自选 | `memory/watchlist_store.py` + `market/watchlist_resolve.py` + `api/routes/watchlist.py` |
@@ -390,7 +389,7 @@ FINNHUB_API_KEY=...
 | 项 | 现状 |
 |----|------|
 | 通用联网搜索（Tavily 等） | 未挂载；仅有 `retriever.py` 文案；**不应用作行情主源** |
-| Finnhub / Polygon **可配置**行情 provider 链 | Finnhub 报价已可选（同 Key）；Polygon / `US_QUOTE_PROVIDERS` 未接入 |
+| Polygon 行情源 | 未接入；`US_QUOTE_PROVIDERS` 已可排序 yahoo_chart / finnhub / eastmoney / yfinance |
 | 英文舆情 FinBERT / 专用 Transformer | 可选；当前为 VADER + 金融词表 + 标题/摘要/正文前段（`en_vader_finlex_v2`） |
 | 知识库按市场自动分集合 | 无；靠用户手填 collection 名 |
 | 左侧知识库栏按「当前集合」过滤显示 | 无；列出该用户全部集合的 PDF |
